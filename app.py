@@ -1002,6 +1002,14 @@ def api_update_atom(atom_id):
     return _store_call(update)
 
 
+@app.route("/api/projects/<project_id>/atoms/bulk", methods=["POST"])
+def api_bulk_atoms(project_id):
+    """Accept / reject / return to review / retype many atoms at once (items = [{id, status?, type?}])."""
+    items = (request.get_json(silent=True) or {}).get("items")
+    return _store_call(lambda: {"changed": library.bulk_update_atoms(project_id, items),
+                                "stats": library.atom_stats(project_id)})
+
+
 @app.route("/api/atoms/<atom_id>/merge", methods=["POST"])
 def api_merge_atom(atom_id):
     into = (request.get_json(silent=True) or {}).get("into")
