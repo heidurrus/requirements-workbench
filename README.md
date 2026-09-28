@@ -18,8 +18,10 @@ Audio stays on your machine. Speech recognition runs locally with
 [GigaAM](https://github.com/salute-developers/GigaAM); the text stages can use
 Claude or a built-in local model (one-click download, nothing else to install), and a project can be set to *local only*.
 
-> **Status: 3.0.** The whole pipeline works end to end: record → transcribe → atoms →
-> FRD → backlog → Jira. Version 3.0 brings a redesigned interface (light and dark).
+> **Status: 3.1.** The whole pipeline works end to end: record → transcribe → atoms →
+> FRD → backlog → Jira. It stays in sync through later rounds too: changes flow downstream,
+> Jira issues are updated rather than duplicated, and approved versions keep a list of
+> change requests. Open questions and action items get their own follow-up with the client.
 > The app grew out of the *GigaAM Transcriber* this repository started as; see
 > [Roadmap](#roadmap) and [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -38,6 +40,7 @@ current UI: [`docs/design/`](docs/design/README.md).
 | 2 | Atoms | AI extraction of requirement atoms with source quotes, review (accept / edit / reject, keyboard), duplicates, conflicts between sources, open questions | ✅ **2.4.0** |
 | 3 | FRD & skills | Document built from accepted atoms, versions and diff, stale-section detection, quality check, DOCX export; editable/shareable skills for every AI step, per-project choice, Word templates with your own layout | ✅ **2.6.0 / 2.7.0** |
 | 4 | Backlog & Jira | Epics / stories / acceptance criteria, INVEST check, dry-run preview and push to Jira Cloud through the Atlassian MCP | ✅ **2.8.0 / 2.9.0** |
+| 6 | After the product review | Jira identity across rebuilds, downstream staleness, the client loop (questions, action items, follow-up email), sign-off and change requests, traceability matrix, rules learned from review. See [`docs/product/`](docs/product/implementation.md) | ✅ **3.1.0** |
 | 5 | New design | Redesign of every screen: sidebar with step badges, one toolbar per screen, document as paper, backlog tree, dark theme, keyboard shortcuts everywhere | ✅ **3.0.0** |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.

@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.1.0 (2026-09-29): After the product review
+
+Acts on the whole product review in `docs/product/pm-review.md`. Item-by-item status and the decisions taken on its open questions are in `docs/product/implementation.md`.
+
+- **Jira stays in sync after changes.**
+  - Rebuilding the backlog keeps each story's link to its Jira issue, so pushing again updates the issues instead of duplicating them.
+  - Issues whose requirement disappeared are listed as orphans. The app never deletes anything in Jira.
+  - A change to an atom now shows downstream: the document, the backlog and the Jira step turn amber, and the Jira ✓ only means Jira matches.
+  - A new per-project setting, **Что уходит в Jira** (what goes to Jira), controls quotes. "Local only" projects send references, not the client's words.
+- **Conflicts and questions.**
+  - "Все атомы разобраны" (all atoms reviewed) says when a conflict is still open.
+  - Bulk **Принять** (accept) leaves atoms in a conflict for review.
+  - Accepting a question no longer closes its conflict. Questions go open → asked → answered, and the answer can settle the conflict.
+- **Для заказчика** (for the client), a new tab on Atoms: open questions, action items from the calls (no longer thrown away) and **Письмо заказчику** (email to the client).
+- **Review at scale:**
+  - search and grouping, with filters remembered per project
+  - reject reasons ("вне рамок" / out of scope feeds FRD section 5)
+  - MoSCoW priority on keys 1–4, pushed to Jira as a label
+  - **＋ Атом** for your own requirements
+  - a history per atom
+- **The app learns from review:** repeated rejects and rewrites become a suggested rule for the project's extraction skill. **Уточнить…** (refine) gives a one-off instruction to an extraction, a document build or a backlog build.
+- **Capture:**
+  - a setup checklist
+  - **Дальше: …** (what's next) and "since last time" on Sources
+  - multi-file import
+  - a consent reminder before recording
+  - requirements extracted automatically after a recording is transcribed, with an ETA and a notification
+  - progress text in the interface language
+- **Transcript:** lines that became atoms are highlighted. A line can be corrected: the original is kept, and quotes that no longer match are flagged. **Скопировать как письмо** copies the summary as a recap email.
+- **Document:**
+  - clearer **Обновить изменённое** (update what changed) and **Пересобрать весь документ…** (asks first)
+  - **Исправить всё и обновить** (fix all and update)
+  - version sign-off (Черновик / На согласовании / Согласовано), with change requests against the approved version
+  - Jira keys on requirements
+  - export to Markdown and a traceability matrix (XLSX)
+  - loading the client's reviewed .docx back as a source
+- **Projects:** save a whole project as one file and open it on another computer. The default project is now "Мой проект".
+- **Other:**
+  - "Транскрипт" is no longer a pipeline step (⌘1–⌘5).
+  - Undo lasts at least 10 s, and ⌘Z undoes the last action.
+  - Settings offers a way back to where you came from.
+
 ## 3.0.0 (2026-09-28): New design
 
 A redesign of every screen, following `docs/design/`. All features and shortcuts stay where
