@@ -533,6 +533,14 @@ def ollama_reachable(timeout=0.5):
         return False
 
 
+def app_version():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
 @app.route("/health")
 def health():
     """Environment checks for the UI (spec FR-SET-01)."""
@@ -543,6 +551,7 @@ def health():
         "ollama": ollama_reachable(),
         "platform": sys.platform,
         "system_audio_capture": system_audio_support()[0],
+        "version": app_version(),
     })
 
 

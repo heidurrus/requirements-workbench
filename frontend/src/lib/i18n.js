@@ -3,7 +3,6 @@
 
 const ru = {
   "app.name": "Requirements Workbench",
-  "app.local": "локально",
   "nav.sources": "Источники",
   "nav.transcript": "Транскрипт",
   "nav.atoms": "Атомы",
@@ -73,6 +72,7 @@ const ru = {
   "rec.mic": "Микрофон",
   "rec.mic_default": "Микрофон по умолчанию",
   "rec.start": "Начать запись",
+  "rec.start_hint": "Нажмите, чтобы начать",
   "rec.stop": "Остановить",
   "rec.recording": "Идёт запись",
   "rec.problems": "Запись с проблемами",
@@ -214,7 +214,6 @@ const ru = {
 
 const en = {
   "app.name": "Requirements Workbench",
-  "app.local": "local",
   "nav.sources": "Sources",
   "nav.transcript": "Transcript",
   "nav.atoms": "Atoms",
@@ -284,6 +283,7 @@ const en = {
   "rec.mic": "Microphone",
   "rec.mic_default": "Default microphone",
   "rec.start": "Start recording",
+  "rec.start_hint": "Click to start",
   "rec.stop": "Stop",
   "rec.recording": "Recording",
   "rec.problems": "Recording with problems",

@@ -299,8 +299,16 @@
   .scrub { flex: 1; min-width: 80px; accent-color: var(--accent); }
 
   .layout { display: grid; gap: var(--s-4); grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); align-items: start; }
-  .side-col { position: sticky; top: calc(var(--control-h) + var(--s-5)); }
-  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } .side-col { position: static; order: -1; } }
+  /* Sticky, but never taller than the window: a long summary scrolls inside its column. */
+  .side-col { position: sticky; top: calc(var(--control-h) + var(--s-5));
+    max-height: calc(100vh - var(--control-h) - var(--s-5) - var(--s-4)); overflow-y: auto; overscroll-behavior: contain;
+    border-radius: var(--r-lg); scrollbar-width: thin; }
+  .side-col :global(details.block > summary) { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+  .side-col :global(details.block > summary:hover) { background: var(--sunk); }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; }
+    .side-col { position: static; order: -1; max-height: none; overflow: visible; }
+  }
 
   .speakers { display: grid; gap: var(--s-2); grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
   .speaker { display: flex; align-items: center; gap: var(--s-2); }

@@ -48,7 +48,7 @@
 <nav class="rail" aria-label="Main">
   <div class="brand">
     <b>{t("app.name")}</b>
-    <span>{t("app.local")}</span>
+    {#if app.health?.version}<span class="mono">v{app.health.version}</span>{/if}
   </div>
 
   <div class="proj-wrap">

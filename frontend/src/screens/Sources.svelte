@@ -179,33 +179,34 @@
 
   <div class="stack">
     <div class="grid-2">
-      <section class="panel">
+      <section class="panel card">
         <h2 class="panel-title">{t("sources.record.title")}</h2>
         <p class="panel-desc">{app.device.desktop ? t("sources.record.desc") : t("sources.record.desc_browser")}</p>
-        <div class="stack-sm">
-          <div class="field">
-            <label class="label" for="mic">{t("rec.mic")}</label>
-            <select class="select" id="mic" bind:value={mic} disabled={recording}>
-              <option value="">{t("rec.mic_default")}</option>
-              {#each mics as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
-            </select>
-          </div>
-          <div class="actions">
-            {#if !recording}
-              <button class="btn btn-primary" onclick={startRecording}><Icon name="mic" /> {t("rec.start")}</button>
-            {:else}
-              <button class="btn btn-danger" onclick={stopRecording}>{t("rec.stop")}</button>
-              <span class="rec-live"><span class="dot"></span>{t("rec.recording")} <span class="mono">{clock(elapsed)}</span></span>
-            {/if}
-          </div>
-          {#if recProblems.length}
-            <p class="note warn">{recording ? t("rec.problems") : t("rec.saved_partial")}: {recProblems.join(" · ")}</p>
+        <div class="stage" class:live={recording}>
+          <button class="rec-btn" class:on={recording} onclick={recording ? stopRecording : startRecording}
+                  aria-label={recording ? t("rec.stop") : t("rec.start")} title={recording ? t("rec.stop") : t("rec.start")}>
+            <span class="rec-glyph"></span>
+          </button>
+          {#if recording}
+            <span class="rec-live"><span class="dot"></span>{t("rec.recording")} <span class="mono">{clock(elapsed)}</span></span>
+          {:else}
+            <span class="stage-hint">{t("rec.start_hint")}</span>
           {/if}
-          {#if recError}<p class="note danger">{recError}</p>{/if}
         </div>
+        <label class="mic-pick" title={t("rec.mic")}>
+          <Icon name="mic" />
+          <select class="select" bind:value={mic} disabled={recording} aria-label={t("rec.mic")}>
+            <option value="">{t("rec.mic_default")}</option>
+            {#each mics as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+          </select>
+        </label>
+        {#if recProblems.length}
+          <p class="note warn below">{recording ? t("rec.problems") : t("rec.saved_partial")}: {recProblems.join(" · ")}</p>
+        {/if}
+        {#if recError}<p class="note danger below">{recError}</p>{/if}
       </section>
 
-      <section class="panel">
+      <section class="panel card">
         <h2 class="panel-title">{t("sources.upload.title")}</h2>
         <p class="panel-desc">{t("sources.upload.desc")}</p>
         <label class="drop" class:dragging
@@ -218,13 +219,13 @@
           <span class="hint">{t("sources.upload.formats")}</span>
           {#if file}<span class="file">{file.name}{#if fileIsTranscript} · {t("sources.upload.is_transcript")}{/if}</span>{/if}
         </label>
-        <div class="actions" style="margin-top: var(--s-3)">
+        <div class="actions bottom">
           <button class="btn btn-primary btn-block" disabled={!file || uploading} onclick={() => submitUpload()}>
             {#if uploading}<span class="spinner"></span>{/if}
             {fileIsTranscript ? t("sources.upload.summarize") : t("sources.upload.transcribe")}
           </button>
         </div>
-        {#if uploadError}<p class="note danger" style="margin-top: var(--s-3)">{uploadError}</p>{/if}
+        {#if uploadError}<p class="note danger below">{uploadError}</p>{/if}
       </section>
     </div>
 
@@ -303,11 +304,34 @@
 </div>
 
 <style>
+  /* Both cards: same height, the drop zone / record stage stretch, so their bottom rows line up. */
+  .card { display: flex; flex-direction: column; }
+  .stage, .drop { flex: 1; min-height: 132px; }
+  .bottom, .mic-pick { margin-top: var(--s-3); }
+  .below { margin-top: var(--s-3); }
+
+  .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s-2);
+    border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--sunk); padding: var(--s-4); }
+  .stage.live { border-color: var(--danger); background: var(--danger-bg); }
+  .stage-hint { font-size: var(--t-sm); color: var(--ink-2); }
+  .rec-btn { --size: 64px; width: var(--size); height: var(--size); border-radius: 50%; flex: none; cursor: pointer;
+    display: grid; place-items: center; background: var(--panel); border: 2px solid var(--rule-2);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: transform .12s ease, border-color .12s ease; }
+  .rec-btn:hover { border-color: var(--danger); transform: scale(1.04); }
+  .rec-btn:active { transform: scale(.97); }
+  .rec-glyph { width: 40px; height: 40px; border-radius: 50%; background: #D93A2B; transition: all .18s ease; }
+  .rec-btn.on { border-color: var(--danger); animation: ring 1.6s ease-out infinite; }
+  .rec-btn.on .rec-glyph { width: 22px; height: 22px; border-radius: 4px; }
+  @keyframes ring { 0% { box-shadow: 0 0 0 0 rgba(217,58,43,.35); } 100% { box-shadow: 0 0 0 14px rgba(217,58,43,0); } }
+  .mic-pick { position: relative; display: flex; align-items: center; color: var(--ink-3); }
+  .mic-pick :global(.icon) { position: absolute; left: var(--s-3); pointer-events: none; }
+  .mic-pick .select { color: var(--ink); padding-left: calc(var(--s-3) + 16px + var(--s-2)); }
+
   .rec-live { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--danger); font-weight: 500; font-size: var(--t-sm); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
 
-  .drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: var(--s-1); text-align: center;
+  .drop { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s-1); text-align: center;
     border: 1px dashed var(--rule-2); border-radius: var(--r-md); padding: var(--s-5) var(--s-4); background: var(--sunk); cursor: pointer; }
   .drop:hover, .drop.dragging { border-color: var(--accent); background: var(--accent-bg); }
   .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }

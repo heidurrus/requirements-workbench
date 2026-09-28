@@ -19,6 +19,10 @@
   ones stay.
 - "Local only" projects extract with the local model. Every decision goes into the audit log.
 - Libraries from 2.3.0 are upgraded automatically.
+- **UI fixes:** a long summary next to the transcript now scrolls on its own, with its
+  header pinned. Recording has a big record button with the microphone menu right under it,
+  and the record and upload cards line up. The rail shows the app version instead of
+  "local".
 
 ## 2.3.0 (2026-09-23): Increment 1 complete
 
