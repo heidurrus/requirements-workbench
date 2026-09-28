@@ -18,18 +18,18 @@ Audio stays on your machine. Speech recognition runs locally with
 [GigaAM](https://github.com/salute-developers/GigaAM); the text stages can use
 Claude or a built-in local model (one-click download, nothing else to install), and a project can be set to *local only*.
 
-> **Status: early development.** The app currently does **stage 1** of the
-> pipeline, recording and transcribing calls, and it grew out of the
-> *GigaAM Transcriber* app this repository started as. The rest is specified
-> and being built increment by increment; see [Roadmap](#roadmap).
+> **Status: 3.0.** The whole pipeline works end to end: record → transcribe → atoms →
+> FRD → backlog → Jira. Version 3.0 brings a redesigned interface (light and dark).
+> The app grew out of the *GigaAM Transcriber* this repository started as; see
+> [Roadmap](#roadmap) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
 ## Roadmap
 
 Full requirements: [`docs/specs/requirements-workbench-spec.md`](docs/specs/requirements-workbench-spec.md)
-(decisions in §13, delivery plan in §12). Clickable prototype of the target UI:
-[`docs/prototype/ba-helper-prototype.html`](docs/prototype/ba-helper-prototype.html).
+(decisions in §13, delivery plan in §12). Design system and clickable prototype of the
+current UI: [`docs/design/`](docs/design/README.md).
 
 | # | Increment | What you get | Status |
 |---|---|---|---|
@@ -38,13 +38,15 @@ Full requirements: [`docs/specs/requirements-workbench-spec.md`](docs/specs/requ
 | 2 | Atoms | AI extraction of requirement atoms with source quotes, review (accept / edit / reject, keyboard), duplicates, conflicts between sources, open questions | ✅ **2.4.0** |
 | 3 | FRD & skills | Document built from accepted atoms, versions and diff, stale-section detection, quality check, DOCX export; editable/shareable skills for every AI step, per-project choice, Word templates with your own layout | ✅ **2.6.0 / 2.7.0** |
 | 4 | Backlog & Jira | Epics / stories / acceptance criteria, INVEST check, dry-run preview and push to Jira Cloud through the Atlassian MCP | ✅ **2.8.0 / 2.9.0** |
+| 5 | New design | Redesign of every screen: sidebar with step badges, one toolbar per screen, document as paper, backlog tree, dark theme, keyboard shortcuts everywhere | ✅ **3.0.0** |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
 
 ---
 
-## What works today (stage 1)
+## What it does
 
+**Capture**
 - **Call recording** from Teams, Zoom, Discord, etc. Your microphone and the other side of
   the call are recorded as **separate channels** and streamed to disk, so a crash
   doesn't lose the call.
@@ -53,27 +55,60 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
     virtual audio driver needed
 - **Transcription** of recordings or uploaded files (WAV, MP3, FLAC, OGG, M4A, WebM, video…)
   with every GigaAM model, including long files and word timestamps
+- **Speaker separation** (who said what) with pyannote. Rename a speaker once and the name
+  appears everywhere
 - **Import existing transcripts**: Teams (`.vtt`, `.docx`), Zoom / Meet (`.vtt`), `.srt`,
-  PDF (with a text layer), plain text with `Name: text` lines. They open instantly, with speakers and timestamps kept
-- **Emails and documents** as sources: `.eml`, Outlook `.msg`, earlier specs and notes (`.docx`, `.pdf`, `.txt`, `.md`)
-- **Projects and a saved library**: everything you record, upload or import is kept, per project.
-  "Local only" projects never use a cloud model
-- **Requirement atoms**: the AI extracts small, testable requirements and open questions from
-  any source. Each has an exact quote that is checked against the text. Review them with the
-  keyboard, merge duplicates, and resolve conflicts between sources
-- **FRD document** built from accepted requirements: versions, diff, quality check, Word export
-  (standard or GOST) with sources as footnotes
+  PDF (with a text layer), plain text with `Name: text` lines. They open instantly, with
+  speakers and timestamps kept
+- **Emails and documents** as sources: `.eml`, Outlook `.msg`, earlier specs and notes
+  (`.docx`, `.pdf`, `.txt`, `.md`)
+- **Projects and a saved library**: everything you record, upload or import is kept, per project
+
+**Analyse**
+- **Summaries** of any source: key points, requirements, decisions, open questions,
+  action items, each citing speaker and timestamp
+- **Requirement atoms**: the AI extracts small, testable requirements and open questions.
+  - Each atom has an exact quote that is checked against the source text.
+  - Action items like "send the email" are left out.
+  - Review with the keyboard (J/K, A, X, E), or tick hundreds of atoms and accept, reject,
+    retype or delete them at once, with undo.
+  - Duplicates are merged, and conflicts between sources are shown side by side.
+- **FRD document** built from accepted atoms:
+  - stable requirement IDs, versions and diff
+  - detection of stale sections after atoms change
+  - a quality check with one-click fixes
+  - pinned text of your own
+  - Word export (standard or GOST) with sources as footnotes
+- **Decomposition**: epics, user stories ("As a… I want… so that…") with Given / When / Then
+  criteria and sub-tasks, an INVEST check with suggested fixes, NFRs moved into acceptance
+  criteria. Your edits survive rebuilds
+- **Output language** per project: Russian, English or the language of the sources
+
+**Deliver**
+- **Jira Cloud** through the Atlassian Remote MCP:
+  - Sign in in a private browser window, so you choose the account.
+  - Pick the site and project, and map issue types.
+  - The read-only preview shows exactly what will be created or updated.
+  - The push goes parents first, after a confirmation that names the project.
+  - Re-pushing updates the issues it created instead of duplicating them, and flags issues
+    that were edited in Jira.
+
+**Control the AI**
 - **Skills**: editable instructions for every AI step (what counts as a requirement, document
-  sections, quality rules, house terminology), shared as .zip, chosen per project; Word templates
-  you design yourself with placeholders
-- **Speaker separation** (who said what) with pyannote
-- **AI summaries** of any transcript: key points, requirements, decisions, open questions,
-  action items, each citing speaker and timestamp. Uses **Claude** (add your Anthropic API key
-  in Settings; only text is sent) or the **built-in local model**: one click in Settings
-  downloads it (Gemma 4 12B or Qwen3.5 4B, chosen to fit your computer), and it runs offline
+  sections, quality rules, house terminology). Try a draft on your own data before saving,
+  keep a history, share as `.zip`, choose globally or per project. Word templates with your own
+  layout and placeholders
+- **Models**: **Claude** (your Anthropic API key; only text is sent) or the **built-in local
+  model**. One click downloads Gemma 4 12B or Qwen3.5 4B, sized to your RAM/GPU, and it
+  runs offline. **Ollama** works too. "Local only" projects never use a cloud model
+
+**App**
+- Russian and English interface, light and dark theme (⌘⇧L), a collapsible sidebar (⌘\\),
+  ⌘1–⌘6 to jump between steps
 - Runs on **CPU or GPU**: NVIDIA CUDA on Windows, Apple GPU on Apple Silicon
 - One transcription at a time, with a queue and live progress
-- The local server only accepts connections from your own computer
+- The local server only accepts connections from your own computer; keys and tokens are kept
+  in private files in your user folder, never in the app or in exports
 
 ---
 
@@ -85,7 +120,7 @@ everything else itself on first launch (Setup screen with progress).
 ### Windows 10/11 (x64)
 
 1. Download **RequirementsWorkbench-<version>-Setup.exe** from
-   [Releases](https://github.com/heidurrus/gigaam-transcriber/releases)
+   [Releases](https://github.com/heidurrus/requirements-workbench/releases/latest)
    (or from the latest *build installers* run under Actions → Artifacts)
 2. Run it: no admin rights needed. It installs the Microsoft WebView2 runtime if your PC
    lacks it, and upgrades an existing *GigaAM Transcriber 1.0* in place
@@ -113,11 +148,11 @@ model licences. Setup lists it as optional:
 2. Accept the terms of [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0),
    [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and
    [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
-3. Paste the token in **Settings** (⚙) in the app. It's stored privately in your user folder
+3. Paste the token in **Settings → Speaker separation**. It's stored privately in your user folder
 
-### AI summaries
+### AI model
 
-Open **Settings (⚙) → AI summaries** and choose one:
+Open **Settings → AI** and choose one:
 
 - **Claude**: paste an API key from [console.anthropic.com](https://console.anthropic.com/settings/keys).
   Default model: Claude Opus 5 (best quality); Sonnet 5 and Haiku 4.5 are faster and cheaper.
@@ -127,14 +162,28 @@ Open **Settings (⚙) → AI summaries** and choose one:
   use it.
 - **Ollama**: if you already run [Ollama](https://ollama.com/download), choose it and enter the model name.
 
+### Jira
+
+On **Export**, click **Connect Jira**. The Atlassian sign-in opens in a private window of
+Chrome, Edge, Brave or Firefox, so you can pick the right account even if the browser is
+logged into another one. The app keeps the sign-in in a private file in its data folder (not
+the Keychain); **Disconnect** removes it. Then choose the site and project, check the
+preview and push.
+
 ---
 
-## Recording a call
+## A typical session
 
-1. Click **Start Recording** in the desktop app and hold your call
-2. Click **Stop**, then **Transcribe recording**
+1. **Sources**: press the red record button (pick the microphone next to it) and hold the
+   call, or drop a recording, transcript, email or document on the window
+2. **Transcript**: check speakers, read the summary, then **Extract requirements**
+3. **Atoms**: accept, edit, reject or delete, one by one with the keyboard or in bulk;
+   resolve conflicts
+4. **Document**: build the FRD, fix quality findings, export to Word
+5. **Decomposition**: build the backlog, run the INVEST check, tick what goes to Jira
+6. **Export**: preview and push to Jira
 
-If a channel can't be captured (no permission, device unplugged), the app tells you
+If a recording channel can't be captured (no permission, device unplugged), the app tells you
 which one and still saves the other.
 
 **Browser mode** (optional, *Browser Mode* shortcut or `--browser`): works in Chrome or Edge.
@@ -162,8 +211,8 @@ Other models download on first use and are cached with the app's data.
 ## Development
 
 ```bash
-git clone https://github.com/heidurrus/gigaam-transcriber.git
-cd gigaam-transcriber
+git clone https://github.com/heidurrus/requirements-workbench.git
+cd requirements-workbench
 python3 -m pip install -r requirements.txt   # small base layer (Python 3.10+)
 python3 launcher.py                          # desktop window; --browser for the browser
 ```
@@ -198,7 +247,8 @@ CI runs the tests on Windows, macOS and Linux, and builds both installers on eve
 **Layout:** `launcher.py` (entry point, setup → app handoff) · `boot.py` (bundled-Python
 first stage) · `app.py` (Flask app + API) · `core/` (store, recorder, jobs, setup, security,
 platform audio, summaries) · `frontend/` (Svelte UI, built into `static/app` and committed) ·
-`static/` (setup screen, classic page) · `packaging/`, `installer/` (builds) · `docs/` (spec, brief, prototype).
+`static/` (setup screen, classic page) · `skills/` (built-in skills) · `packaging/`, `installer/` (builds) ·
+`docs/` (spec, brief, design system and prototype).
 
 **UI development:**
 
@@ -206,8 +256,17 @@ platform audio, summaries) · `frontend/` (Svelte UI, built into `static/app` an
 cd frontend && npm install
 npm run dev             # hot reload against a running app (WORKBENCH_PORT, default 47823)
 npm run build           # writes static/app; commit the result
-node e2e/smoke.mjs URL  # end-to-end smoke test with your installed Chrome
 ```
+
+End-to-end tests drive your installed Chrome against the app with a deterministic stand-in
+for the AI and for Jira (no key, no network):
+
+```bash
+WORKBENCH_DATA_DIR=$(mktemp -d) python3 frontend/e2e/fake_llm_server.py 5312 &
+node frontend/e2e/smoke.mjs http://127.0.0.1:5312   # also: atoms, bulk, document, skills, backlog, export
+```
+
+Use a fresh `WORKBENCH_DATA_DIR` for each suite.
 
 ---
 
@@ -225,6 +284,12 @@ installs the CUDA build of PyTorch.
 **macOS: recording has no call audio**: check System Settings → Privacy & Security →
 *Screen & System Audio Recording* and allow Requirements Workbench (macOS 14.2+). In browser
 mode, use Chrome and tick "Share system audio" in the share dialog.
+
+**Jira connects to the wrong account or site**: press **Disconnect** on Export, then
+**Connect Jira** again and sign in with the right account in the private window.
+
+**"Add your Anthropic API key"**: open Settings → AI and paste a key, or switch to the
+built-in model.
 
 **First transcription takes a while to start**: the model is loaded into memory once per
 session ("Loading model…"). The download itself already happened during setup.
