@@ -135,6 +135,19 @@ def test_reextract_replaces_pending_but_keeps_reviewed(store):
     assert sorted(a["status"] for a in store.list_atoms(pid)) == ["accepted", "pending"]
 
 
+def test_action_items_and_other_are_set_aside(store):
+    sid = make_source(store)
+    llm = fake_llm({"atoms": [
+        LATENCY,
+        {"type": "action_item", "statement": "Иван пришлёт письмо", "evidence": [{"segment": 0, "quote": "начнём"}]},
+        {"type": "other", "statement": "Приветствие", "evidence": []}]})
+    r = extract_atoms(store, sid, PREFS, "k", "u", complete=llm)
+    assert (r["extracted"], r["skipped_actions"], r["skipped_other"], r["dropped"]) == (1, 1, 1, 0)
+    assert [a["statement"] for a in store.list_atoms(store.current_project()["id"])] == [LATENCY["statement"]]
+    schema_types = llm.calls[0]["schema"]["properties"]["atoms"]["items"]["properties"]["type"]["enum"]
+    assert {"action_item", "other"} <= set(schema_types) and "action_item" in llm.calls[0]["system"]
+
+
 def test_local_only_project_uses_the_local_model(store):
     p = store.create_project("Банк", local_only=True)
     sid = make_source(store, project=p["id"])

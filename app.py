@@ -1404,10 +1404,10 @@ def _run_try(job_id, stage, skill, project_id, source_id, prefs, api_key):
                              skillset=skillset)
             jobs.finish(job_id, {"kind": "markdown", "text": text})
         elif stage == "extract":
-            found, dropped, _ = atoms_mod.extract_candidates(
+            found, dropped, _, skipped = atoms_mod.extract_candidates(
                 library, source_id, prefs, api_key, OLLAMA_URL, skillset,
                 progress=lambda d, t, m: report(int(100 * d / max(t, 1)), m))
-            jobs.finish(job_id, {"kind": "atoms", "atoms": found, "dropped": dropped})
+            jobs.finish(job_id, {"kind": "atoms", "atoms": found, "dropped": dropped, "skipped": skipped})
         elif stage in ("frd", "quality"):
             out = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode="full", progress=report,
                             skillset=skillset, save=False)

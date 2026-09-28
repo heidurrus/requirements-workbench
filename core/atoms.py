@@ -19,7 +19,8 @@ MAX_EXISTING_FOR_DEDUP = 400
 # The guidance lives in the extract / dedup skills (skills/…/SKILL.md, editable by the user);
 # the app adds these contracts, which keep the pipeline working whatever the skill says.
 EXTRACT_CONTRACT = """- Every atom cites evidence: the number from the [S…] label of the line it came from, and a quote copied character for character from that line (a short contiguous fragment, not a paraphrase, no ellipses). Atoms without such a quote are discarded.
-- type is one of: functional, nfr, question.
+- type is one of: functional, nfr, question — or action_item / other for things that are not requirements.
+- action_item: a task for people rather than a property of the system ("send the email", "schedule a call", "prepare the estimate", "Иван пришлёт письмо"). other: anything else that is not a requirement (small talk, project process, opinions without a need). Label them honestly instead of forcing them into functional: they are set aside, not saved as requirements.
 - If nothing in the text is a requirement, return an empty list."""
 
 DEDUP_CONTRACT = """Items marked N are new; items marked E already exist. At least one side of every pair must be a new (N) item. For a duplicate, give the new item and the item it duplicates (prefer an E item, else an earlier N item)."""
@@ -32,7 +33,7 @@ EXTRACT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": ["functional", "nfr", "question"]},
+                    "type": {"type": "string", "enum": ["functional", "nfr", "question", "action_item", "other"]},
                     "statement": {"type": "string"},
                     "evidence": {
                         "type": "array",
@@ -145,13 +146,16 @@ def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=No
     report = progress or (lambda done, total, message: None)
     chunks = chunk_segments(segments)
     steps = len(chunks) + 1
-    candidates, dropped = [], 0
+    candidates, dropped, skipped = [], 0, []
     for i, chunk in enumerate(chunks):
         report(i, steps, f"Reading part {i + 1} of {len(chunks)}…" if len(chunks) > 1 else "Reading the source…")
         user = _source_header(source) + "\n\n" + "\n".join(segment_line(s) for s in chunk)
         reply = complete(system, user, EXTRACT_SCHEMA, prefs, api_key, ollama_url)
         for atom in reply.get("atoms") or []:
             statement = (atom.get("statement") or "").strip()
+            if atom.get("type") in ("action_item", "other") and statement:
+                skipped.append({"type": atom["type"], "statement": statement})   # not requirements: set aside
+                continue
             if atom.get("type") not in ("functional", "nfr", "question") or not statement:
                 dropped += 1
                 continue
@@ -160,7 +164,7 @@ def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=No
                 dropped += 1                                   # no evidence, no atom
                 continue
             candidates.append({"type": atom["type"], "statement": statement, "evidence": evidence})
-    return candidates, dropped, steps
+    return candidates, dropped, steps, skipped
 
 
 def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None):
@@ -174,7 +178,7 @@ def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, c
     model = model_name(prefs)
     skillset = skillset or skills.resolve()
     report = progress or (lambda done, total, message: None)
-    candidates, dropped, steps = extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=skillset,
+    candidates, dropped, steps, skipped = extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=skillset,
                                                     progress=progress, complete=complete)
     report(steps - 1, steps, "Checking for duplicates and conflicts…")
     cleared = store.delete_pending_atoms_for_source(source_id)
@@ -182,7 +186,8 @@ def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, c
     merged, conflicts = _dedup(store, project["id"], new_ids, prefs, api_key, ollama_url, complete, skillset)
     report(steps, steps, "Done")
     return {"extracted": len(new_ids) - merged, "merged": merged, "conflicts": conflicts,
-            "dropped": dropped, "replaced": cleared, "provider": prefs["llm_provider"], "model": model}
+            "dropped": dropped, "skipped_actions": sum(1 for x in skipped if x["type"] == "action_item"),
+            "skipped_other": sum(1 for x in skipped if x["type"] == "other"), "replaced": cleared, "provider": prefs["llm_provider"], "model": model}
 
 
 def _dedup(store, project_id, new_ids, prefs, api_key, ollama_url, complete, skillset=None):

@@ -453,6 +453,12 @@
                               {#each a.evidence as ev, j (j)}<span class="quote">«{ev.quote}»</span>{/each}</li>
                           {/each}
                         </ul>
+                        {#if r.skipped?.length}
+                          <p class="label">{t("sk.try_skipped")}: {r.skipped.length}</p>
+                          <ul class="try-atoms skipped">
+                            {#each r.skipped as x, i (i)}<li><span class="tag">{t("sk.skip." + x.type)}</span> {x.statement}</li>{/each}
+                          </ul>
+                        {/if}
                       {:else if r.kind === "document"}
                         {#each r.content.sections as sec (sec.key)}
                           <h4>{sec.number}. {sec.title}</h4>
@@ -558,6 +564,7 @@
   .result .tag { margin-left: var(--s-1); }
   .try-atoms li { padding: var(--s-2) 0; border-top: 1px solid var(--rule); line-height: 1.55; }
   .quote { display: block; font-size: var(--t-sm); color: var(--ink-2); }
+  .skipped li { color: var(--ink-3); }
   .savebar { position: sticky; bottom: var(--s-3); display: flex; align-items: center; gap: var(--s-2);
     padding: var(--s-2) var(--s-3); box-shadow: 0 6px 20px rgba(0,0,0,.12); z-index: 20; }
 
