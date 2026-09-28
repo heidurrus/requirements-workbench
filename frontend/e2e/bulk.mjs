@@ -83,6 +83,24 @@ await sub.filter({ hasText: "4 на ревью · принято 0 из 6" }).wa
 if (shots) await page.screenshot({ path: join(shots, "bulk.png"), fullPage: true });
 step("source filter → reject everything from one source");
 
+// Delete: one atom by its button, then the rest by selection; undo brings them back.
+await page.locator(".src-select").selectOption({ label: "Все источники" });
+await sub.filter({ hasText: "принято 0 из 6" }).waitFor();
+const firstAtom = page.locator(".atom").first();
+await firstAtom.hover();
+await firstAtom.getByRole("button", { name: "Удалить" }).click();
+await page.getByRole("status").getByText("Удалён 1 атом").waitFor();
+await sub.filter({ hasText: "из 5" }).waitFor();
+await page.getByRole("status").getByRole("button", { name: "Отменить" }).click();
+await sub.filter({ hasText: "из 6" }).waitFor();
+await page.locator(".check-all input").check();
+await page.keyboard.press("Delete");
+await page.getByRole("status").getByText("Удалено 6 атомов").waitFor();
+await page.getByText("Атомов пока нет").waitFor();
+await page.getByRole("status").getByRole("button", { name: "Отменить" }).click();
+await sub.filter({ hasText: "из 6" }).waitFor();
+step("delete one, delete all selected with the Delete key, undo");
+
 await browser.close();
 if (errors.length) { console.error("page errors:", errors); process.exit(1); }
 console.log("all bulk steps passed");

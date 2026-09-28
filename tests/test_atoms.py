@@ -353,3 +353,38 @@ def test_api_merge(client, lib):
     r = client.post(f"/api/atoms/{b}/merge", json={"into": a})
     assert r.status_code == 200 and len(r.get_json()["evidence"]) == 2
     assert [x["id"] for x in client.get(f"/api/projects/{pid}/atoms").get_json()["atoms"]] == [a]
+
+
+def test_delete_hides_atoms_closes_conflicts_and_undo_restores(store):
+    pid, a, b = _two_atoms(store)
+    store.add_conflict(pid, a, b, "2 или 5?")
+    assert store.delete_atoms(pid, [a, "nope"]) == [a]
+    assert [x["id"] for x in store.list_atoms(pid)] == [b]
+    assert store.atom_stats(pid)["total"] == 1 and store.atom_stats(pid)["open_conflicts"] == 0
+    assert store.list_sources(pid)[0]["atom_count"] == 1
+    import pytest as _p
+    with _p.raises(StoreError, match="deleted"):
+        store.update_atom(a, status="accepted")
+    assert store.bulk_update_atoms(pid, [{"id": a, "status": "accepted"}]) == []
+    assert store.audit("atom", a)[0]["action"] == "delete"
+    assert store.restore_atoms(pid, [a]) == [a]
+    assert len(store.list_atoms(pid)) == 2 and store.atom_stats(pid)["open_conflicts"] == 1, "the conflict is back"
+
+
+def test_deleted_accepted_atom_leaves_the_document(store):
+    from core import frd
+    from tests.test_frd import full_reply, llm as frd_llm, seed as frd_seed
+    pid, ids, _ = frd_seed(store)
+    frd.build(store, pid, PREFS, "k", "", complete=frd_llm(full_reply()))
+    store.delete_atoms(pid, [ids[2]])
+    doc = store.document(pid)
+    assert frd.staleness(store, pid, store.version(doc["id"]))["removed"] == 1
+
+
+def test_api_delete_and_restore(client, lib):
+    pid, a, b = _two_atoms(lib)
+    r = client.post(f"/api/projects/{pid}/atoms/delete", json={"ids": [a, b]}).get_json()
+    assert r["deleted"] == [a, b] and r["stats"]["total"] == 0
+    assert client.post(f"/api/projects/{pid}/atoms/delete", json={"ids": []}).status_code == 400
+    r = client.post(f"/api/projects/{pid}/atoms/restore", json={"ids": [a, b]}).get_json()
+    assert r["restored"] == [a, b] and r["stats"]["total"] == 2
