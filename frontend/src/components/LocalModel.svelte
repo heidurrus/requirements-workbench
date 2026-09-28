@@ -99,10 +99,10 @@
 <style>
   .gpu { margin-bottom: var(--s-2); }
   .note.warn { margin-bottom: var(--s-2); }
-  .models { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: var(--r-md); }
+  .models { list-style: none; margin: 0; padding: 0; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line-strong); overflow: hidden; }
   .model { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; padding: var(--s-3); }
   .model + .model { border-top: 1px solid var(--rule); }
-  .model.on { background: var(--sunk); }
+  .model.on { background: var(--accent-bg); }
   .pick { display: flex; align-items: flex-start; gap: var(--s-3); flex: 1 1 260px; min-width: 0; cursor: pointer; }
   .pick input { margin-top: 4px; accent-color: var(--accent); }
   .pick input:disabled { cursor: default; }

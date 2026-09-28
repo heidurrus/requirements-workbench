@@ -863,6 +863,29 @@ def api_sources(project_id):
     return jsonify({"sources": library.list_sources(project_id)})
 
 
+@app.route("/api/projects/<project_id>/status")
+def api_project_status(project_id):
+    """Cheap per-step counts for the sidebar badges."""
+    try:
+        library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    stats = library.atom_stats(project_id)
+    doc = library.document(project_id, create=False)
+    latest = library.version(doc["id"]) if doc else None
+    stale = frd.staleness(library, project_id, latest) if latest else None
+    items = library.backlog(project_id)
+    pushed = [i for i in items if i.get("jira_key")]
+    return jsonify({
+        "sources": len(library.list_sources(project_id)),
+        "atoms": {"review": stats["pending"], "total": stats["total"], "conflicts": stats["open_conflicts"]},
+        "document": {"version": latest["number"] if latest else None, "stale": bool(stale and stale["stale"])},
+        "backlog": {"items": len(items), "included": sum(1 for i in items if i["included"]),
+                    **{k: v for k, v in backlog.stale(library, project_id).items() if k == "stale"}},
+        "export": {"pushed": len(pushed)},
+    })
+
+
 @app.route("/api/sources/<source_id>", methods=["GET"])
 def api_source(source_id):
     try:

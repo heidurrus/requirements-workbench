@@ -1,6 +1,7 @@
 <script>
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { fmtDate, fmtTime } from "../lib/format.js";
   import { saveUrl } from "../lib/save.js";
@@ -62,8 +63,8 @@
       diff = null;
       toast(t("doc.built", { v: job.result.version }));
     } catch (err) {
-      const setup = err.body?.needs_setup || /API key|Settings/.test(err.message);
-      toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+      const e = explain(err);
+      toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
     } finally {
       build = null;
       load();
@@ -75,8 +76,8 @@
       const { job_id } = await api(`/api/projects/${app.currentProjectId}/document/build`, { method: "POST", body: { mode } });
       follow(job_id);
     } catch (err) {
-      const setup = err.body?.needs_setup;
-      toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+      const e = explain(err);
+      toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
     }
   }
 
@@ -164,25 +165,36 @@
   }
   function scrollTo(id) { document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }
   const ago = ts => fmtDate(ts, app.lang);
+  const staleIds = $derived(new Set(isLatest && body?.stale?.stale ? body.stale.atom_ids : []));
+  const flaggedSecs = $derived.by(() => {
+    const out = {};
+    if (!content) return out;
+    for (const sec of content.sections) {
+      const all = [...sec.blocks, ...(sec.subsections || []).flatMap(x => x.blocks)].filter(b => b.kind === "req");
+      if (all.some(b => b.conflict)) out[sec.key] = "danger";
+      else if (all.some(b => (b.issues || []).length || staleIds.has(b.atom_id))) out[sec.key] = "warn";
+    }
+    return out;
+  });
+  const typeOf = b => (b.type === "question" ? "q" : b.type === "nfr" || /^NFR/.test(b.id) ? "nfr" : "fr");
 </script>
 
-<div class="screen-inner">
+<div class="screen-inner wide">
   <header class="screen-head">
     <div class="head-main">
       {#if doc}
         {#if editingTitle}
           <!-- svelte-ignore a11y_autofocus -->
-          <input class="input title-input" bind:value={titleDraft} autofocus onblur={saveTitle}
+          <input class="input title-input" bind:value={titleDraft} autofocus onblur={saveTitle} aria-label={t("tr.edit_title")}
                  onkeydown={e => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") editingTitle = false; }} />
         {:else}
           <h1 class="screen-title">
             <button class="title-btn" title={t("tr.edit_title")} onclick={() => { titleDraft = doc.title; editingTitle = true; }}>
-              {doc.title} <span class="pen"><Icon name="pencil" size={14} /></span></button>
+              {doc.title} <span class="pen"><Icon name="pencil" size={12} /></span></button>
           </h1>
         {/if}
         <p class="screen-sub">
-          {#if version}{t("doc.sub", { v: version.number, n: version.atom_count, when: ago(version.created_at) })}
-            {#if version.model}<span class="faint"> · {version.model}</span>{/if}
+          {#if version}{t("doc.sub", { v: version.number, n: version.atom_count, when: ago(version.created_at) })}{#if !isLatest}{" · "}<span class="old">{t("doc.old_version")}</span>{/if}
           {:else}{t("doc.never")}{/if}
         </p>
       {:else}
@@ -192,19 +204,33 @@
     {#if doc}
       <div class="actions">
         {#if !version}
-          <button class="btn btn-primary" disabled={!!build || !stats?.accepted} onclick={() => runBuild("full")}>{t("doc.build")}</button>
+          {#if stats?.accepted}
+            <button class="btn btn-primary" disabled={!!build} onclick={() => runBuild("full")}>{t("doc.build")}</button>
+          {/if}
         {:else}
-          <button class="btn" class:btn-primary={body.stale?.stale} disabled={!!build || !body.stale?.stale}
-                  title={body.stale?.stale ? "" : t("doc.up_to_date")} onclick={() => runBuild("changed")}>{t("doc.rebuild")}</button>
-          <button class="btn btn-ghost" disabled={!!build} onclick={() => runBuild("full")} title={t("doc.full_hint")}>{t("doc.full")}</button>
-          <div class="export">
-            <select class="select tpl" aria-label={t("doc.template")} value={doc.template}
-                    onchange={e => patchDoc({ template: e.currentTarget.value })}>
+          {#if version.number > 1}
+            <button class="btn btn-ghost" aria-pressed={!!diff} onclick={toggleDiff}>
+              <Icon name="compare" size={14} /> {diff ? t("doc.hide_diff") : t("doc.diff", { v: version.number - 1 })}</button>
+          {/if}
+          {#if body.stale?.stale}
+            <div class="split">
+              <button class="btn btn-primary" disabled={!!build} onclick={() => runBuild("changed")}>
+                <Icon name="refresh" size={14} /> {t("doc.rebuild")}</button>
+              <button class="btn" disabled={!!build} onclick={() => runBuild("full")} title={t("doc.full_hint")}>{t("doc.full")}</button>
+            </div>
+          {:else}
+            <button class="btn btn-ghost" disabled={!!build} onclick={() => runBuild("full")} title={t("doc.full_hint")}>
+              <Icon name="refresh" size={14} /> {t("doc.full")}</button>
+          {/if}
+          <span class="tb-sep"></span>
+          <div class="split export">
+            <button class="btn" class:btn-primary={!body.stale?.stale} onclick={exportDocx}><Icon name="download" size={14} /> {t("doc.export")}</button>
+            <select class="btn select tpl" class:btn-primary={!body.stale?.stale} aria-label={t("doc.template")} value={doc.template}
+                    title={t("doc.template")} onchange={e => patchDoc({ template: e.currentTarget.value })}>
               {#each exportSkills as s (s.name)}<option value={s.name}>{s.title}</option>{/each}
             </select>
-            <button class="btn btn-primary" onclick={exportDocx}><Icon name="download" /> {t("doc.export")}</button>
           </div>
-          <button class="btn btn-ghost" onclick={() => go("/backlog")}>{t("doc.to_backlog")} →</button>
+          <button class="btn btn-ghost" onclick={() => go("/backlog")}>{t("doc.to_backlog")} <Icon name="arrow" size={14} /></button>
         {/if}
       </div>
     {/if}
@@ -213,148 +239,146 @@
   {#if error}<p class="note danger">{error}</p>{/if}
 
   {#if body}
-    <div class="stack">
-      {#if build}
-        <div class="panel building">
-          <span class="spinner"></span>
-          <div class="grow"><div class="bar"><i style="width: {build.progress}%"></i></div></div>
-          <span class="mono faint">{build.message}</span>
-        </div>
-      {/if}
+    {#if build}
+      <div class="banner info building">
+        <span class="spinner"></span>
+        <span class="num">{build.message}</span>
+        <div class="grow"><div class="bar"><i style="width: {build.progress}%"></i></div></div>
+      </div>
+    {/if}
 
-      {#if !stats.accepted}
-        <div class="empty panel">
-          <p class="panel-title">{t("doc.no_atoms_title")}</p>
-          <p>{t("doc.no_atoms")}</p>
-          <button class="btn" style="margin-top: var(--s-3)" onclick={() => go("/atoms")}>{t("doc.to_atoms")}</button>
-        </div>
-      {:else if !version}
-        <div class="empty panel">
-          <p class="panel-title">{t("doc.ready_title", { n: stats.accepted })}</p>
-          <p>{t("doc.ready")}</p>
-          {#if stats.pending}<p class="hint" style="margin-top: var(--s-2)">{t("doc.pending", { n: stats.pending })}</p>{/if}
-        </div>
-      {:else}
-        {#if isLatest && body.stale?.stale}
-          <p class="note warn row-note">
-            <span>{t("doc.stale", { n: body.stale.changed + body.stale.removed + body.stale.added })}{#if staleSections} · {t("doc.stale_sections", { s: staleSections })}{/if}</span>
-            <button class="btn btn-sm" disabled={!!build} onclick={() => runBuild("changed")}>{t("doc.rebuild")}</button>
-          </p>
-        {/if}
-        {#if stats.open_conflicts}<p class="note warn">{t("doc.conflicts", { n: stats.open_conflicts })}</p>{/if}
-        {#if isLatest && projectLang && content.language !== projectLang}
-          <p class="note warn row-note"><span>{t("doc.lang_mismatch", { doc: t("lang." + content.language), want: t("lang." + projectLang) })}</span>
-            <button class="btn btn-sm" disabled={!!build} onclick={() => runBuild("full")}>{t("doc.full")}</button></p>
-        {/if}
+    {#if !stats.accepted}
+      <div class="card empty narrow-card">
+        <div class="glyph"><Icon name="doc" /></div>
+        <p class="panel-title">{t("doc.no_atoms_title")}</p>
+        <p>{t("doc.no_atoms")}</p>
+        <button class="btn btn-lg btn-primary" onclick={() => go("/atoms")}>{t("doc.to_atoms")}</button>
+      </div>
+    {:else if !version}
+      <div class="card empty narrow-card">
+        <div class="glyph"><Icon name="doc" /></div>
+        <p class="panel-title">{t("doc.ready_title", { n: stats.accepted })}</p>
+        <p>{t("doc.ready")}</p>
         {#if stats.pending}<p class="hint">{t("doc.pending", { n: stats.pending })}</p>{/if}
-
-        <div class="toolbar">
+      </div>
+    {:else}
+      <div class="doc-layout" class:has-notes={(findings.length && isLatest) || diff}>
+        <nav class="toc" aria-label={t("doc.toc")}>
+          <h4>{t("doc.toc")}</h4>
+          {#each content.sections as sec (sec.key)}
+            <button onclick={() => scrollTo("sec-" + sec.key)}><span class="tn">{sec.number}.</span> {sec.title}
+              {#if flaggedSecs[sec.key]}<span class="dot {flaggedSecs[sec.key]}"></span>{/if}</button>
+            {#each sec.subsections || [] as sub (sub.key)}
+              <button class="ind" onclick={() => scrollTo("sec-" + sub.key)}><span class="tn">{sub.number}</span> {sub.title}</button>
+            {/each}
+          {/each}
           {#if body.versions.length > 1}
-            <label class="ver">
-              <span class="label">{t("doc.version")}</span>
-              <select class="select" value={version.number} onchange={e => { diff = null; viewing = Number(e.currentTarget.value) === latest ? null : Number(e.currentTarget.value); }}>
-                {#each body.versions as v (v.number)}<option value={v.number}>v{v.number} · {ago(v.created_at)}</option>{/each}
-              </select>
-            </label>
-            {#if version.number > 1}
-              <button class="btn btn-sm" aria-pressed={!!diff} class:on={!!diff} onclick={toggleDiff}>
-                {diff ? t("doc.hide_diff") : t("doc.diff", { v: version.number - 1 })}</button>
-            {/if}
+            <div class="ver">
+              <h4>{t("doc.version")}</h4>
+              {#each body.versions as v (v.number)}
+                <button class="v" class:on={v.number === version.number}
+                        onclick={() => { diff = null; viewing = v.number === latest ? null : v.number; }}>
+                  <span>v{v.number}</span><span class="t3 num">{ago(v.created_at)}</span></button>
+              {/each}
+            </div>
           {/if}
-          {#if !isLatest}<span class="tag warn">{t("doc.old_version")}</span>{/if}
+        </nav>
+
+        <div class="paper-col">
+      <div class="banners">
+            {#if isLatest && body.stale?.stale}
+              <p class="banner warn row-note">
+                <Icon name="warn" />
+                <span class="grow"><b>{t("doc.stale", { n: body.stale.changed + body.stale.removed + body.stale.added })}</b>{#if staleSections} · {t("doc.stale_sections", { s: staleSections })}{/if}</span>
+                <button class="btn btn-sm" disabled={!!build} onclick={() => runBuild("changed")}>{t("doc.rebuild")}</button>
+              </p>
+            {/if}
+            {#if stats.open_conflicts}<p class="banner danger"><Icon name="warn" /><span class="grow">{t("doc.conflicts", { n: stats.open_conflicts })}</span>
+              <button class="btn btn-sm" onclick={() => go("/atoms")}>{t("at.resolve")}</button></p>{/if}
+            {#if isLatest && projectLang && content.language !== projectLang}
+              <p class="banner warn row-note"><Icon name="info" /><span class="grow">{t("doc.lang_mismatch", { doc: t("lang." + content.language), want: t("lang." + projectLang) })}</span>
+                <button class="btn btn-sm" disabled={!!build} onclick={() => runBuild("full")}>{t("doc.full")}</button></p>
+            {/if}
+            {#if stats.pending}<p class="hint-line"><Icon name="info" size={12} /> {t("doc.pending", { n: stats.pending })}</p>{/if}
+          </div>
+        <article class="paper" class:diff-on={!!diff}>
+          <p class="doc-kicker">FRD · {t("doc.sub", { v: version.number, n: version.atom_count, when: ago(version.created_at) })}{#if version.model} · {version.model}{/if}</p>
+          <h1>{doc.title}</h1>
+          {#each content.sections as sec (sec.key)}
+            <section class="sec" id="sec-{sec.key}">
+              <h2>{sec.number}. {sec.title}</h2>
+              {#each freeBy[sec.key] || [] as f (f.id)}
+                {@render freeBlock(f)}
+              {/each}
+              {@render blocks(sec.blocks)}
+              {#each sec.subsections || [] as sub (sub.key)}
+                <section class="sub" id="sec-{sub.key}">
+                  <h3>{sub.number} {sub.title}</h3>
+                  {@render blocks(sub.blocks)}
+                </section>
+              {/each}
+              {#if !sec.blocks.length && !(sec.subsections || []).length && !(freeBy[sec.key] || []).length}
+                <p class="muted-i">{t("doc.empty_section")}</p>
+              {/if}
+              {#if isLatest}
+                {#if freeDraft && !freeDraft.id && freeDraft.section === sec.key}
+                  {@render freeEditor()}
+                {:else}
+                  <button class="btn btn-ghost btn-sm add-free" onclick={() => (freeDraft = { section: sec.key, text: "" })}>
+                    <Icon name="plus" size={14} /> {t("doc.add_free")}</button>
+                {/if}
+              {/if}
+            </section>
+          {/each}
+        </article>
         </div>
 
-        {#if diff}
-          <Block id="doc-diff" title={t("doc.diff_title", { a: diff.from, b: diff.to })} meta={String(diff.changes.length)}>
-            {#if !diff.changes.length}<p class="muted">{t("doc.no_changes")}</p>{/if}
-            <ul class="changes">
+        {#if (findings.length && isLatest) || diff}
+          <aside class="notes">
+            {#if diff}
+              <h4><span>{t("doc.diff_title", { a: diff.from, b: diff.to })}</span><span class="num">{diff.changes.length}</span></h4>
+              {#if !diff.changes.length}<p class="hint">{t("doc.no_changes")}</p>{/if}
               {#each diff.changes as c (c.id + c.change)}
-                <li class="change {c.change}">
-                  <span class="mono">{c.section} · {c.id}</span>
-                  <span class="tag {c.change === 'added' ? 'ok' : c.change === 'removed' ? 'danger' : 'warn'}">{t("doc.change." + c.change)}</span>
-                  {#if c.moved_from}<span class="hint">{t("doc.moved", { s: c.moved_from })}</span>{/if}
-                  {#if c.old}<p class="old">{c.old}</p>{/if}
-                  {#if c.new}<p class="new">{c.new}</p>{/if}
-                </li>
+                <div class="finding change {c.change}">
+                  <div class="fh"><span class="mono">{c.id}</span><span class="t3">{c.section}</span>
+                    <span class="tag {c.change === 'added' ? 'ok' : c.change === 'removed' ? 'danger' : 'warn'}">{t("doc.change." + c.change)}</span></div>
+                  {#if c.moved_from}<p class="hint">{t("doc.moved", { s: c.moved_from })}</p>{/if}
+                  {#if c.old}<p><del>{c.old}</del></p>{/if}
+                  {#if c.new}<p><ins>{c.new}</ins></p>{/if}
+                </div>
               {/each}
-            </ul>
-          </Block>
-        {/if}
-
-        {#if findings.length && isLatest}
-          <Block id="doc-quality" title={t("doc.quality")} meta={t("doc.findings", { n: findings.length })}>
-            <ul class="findings">
+            {/if}
+            {#if findings.length && isLatest}
+              <h4><span>{t("doc.quality")}</span><span class="num">{t("doc.findings", { n: findings.length })}</span></h4>
               {#each findings as f (fixKey(f))}
-                <li class="finding">
-                  <div class="f-head">
+                <div class="finding">
+                  <div class="fh">
                     <button class="mono link" onclick={() => scrollTo("blk-" + f.block.id)}>{f.block.id}</button>
                     <span class="tag warn">{t("doc.rule." + f.rule)}</span>
-                    <span class="f-msg">{f.message}</span>
-                    <span class="spacer"></span>
-                    {#if !fixes[fixKey(f)]}
-                      <button class="btn btn-sm" onclick={() => fix(f)}>{t("doc.fix")}</button>
-                      <button class="btn btn-sm btn-ghost" onclick={() => dismiss(f)}>{t("doc.dismiss")}</button>
-                    {:else if fixes[fixKey(f)].loading}
-                      <span class="spinner"></span>
-                    {/if}
                   </div>
+                  <p>{f.message}</p>
                   {#if fixes[fixKey(f)]?.statement !== undefined}
-                    <div class="f-fix">
-                      <span class="label">{t("doc.fix_proposal")}</span>
-                      <textarea class="input area" rows="2" bind:value={fixes[fixKey(f)].statement}></textarea>
-                      <div class="actions">
-                        <button class="btn btn-sm btn-primary" disabled={!fixes[fixKey(f)].statement.trim()} onclick={() => acceptFix(f)}>{t("doc.fix_accept")}</button>
-                        <button class="btn btn-sm btn-ghost" onclick={() => delete fixes[fixKey(f)]}>{t("at.cancel")}</button>
-                      </div>
+                    <p class="prop-lbl">{t("doc.fix_proposal")}</p>
+                    <textarea class="input area" rows="3" bind:value={fixes[fixKey(f)].statement} aria-label={t("doc.fix_proposal")}></textarea>
+                    <div class="acts">
+                      <button class="btn btn-sm btn-primary" disabled={!fixes[fixKey(f)].statement.trim()} onclick={() => acceptFix(f)}>{t("doc.fix_accept")}</button>
+                      <button class="btn btn-sm btn-ghost" onclick={() => delete fixes[fixKey(f)]}>{t("at.cancel")}</button>
+                    </div>
+                  {:else if fixes[fixKey(f)]?.loading}
+                    <div class="acts"><span class="spinner"></span></div>
+                  {:else}
+                    <div class="acts">
+                      <button class="btn btn-sm" onclick={() => fix(f)}><Icon name="bolt" size={12} /> {t("doc.fix")}</button>
+                      <button class="btn btn-sm btn-ghost" onclick={() => dismiss(f)}>{t("doc.dismiss")}</button>
                     </div>
                   {/if}
-                </li>
+                </div>
               {/each}
-            </ul>
-          </Block>
+            {/if}
+          </aside>
         {/if}
-
-        <div class="doc">
-          <nav class="toc" aria-label={t("doc.toc")}>
-            {#each content.sections as sec (sec.key)}
-              <button onclick={() => scrollTo("sec-" + sec.key)}>{sec.number}. {sec.title}</button>
-              {#each sec.subsections || [] as sub (sub.key)}
-                <button class="ind" onclick={() => scrollTo("sec-" + sub.key)}>{sub.number} {sub.title}</button>
-              {/each}
-            {/each}
-          </nav>
-
-          <article class="panel paper">
-            {#each content.sections as sec (sec.key)}
-              <section class="sec" id="sec-{sec.key}">
-                <h2>{sec.number}. {sec.title}</h2>
-                {#each freeBy[sec.key] || [] as f (f.id)}
-                  {@render freeBlock(f)}
-                {/each}
-                {@render blocks(sec.blocks)}
-                {#each sec.subsections || [] as sub (sub.key)}
-                  <section class="sub" id="sec-{sub.key}">
-                    <h3>{sub.number} {sub.title}</h3>
-                    {@render blocks(sub.blocks)}
-                  </section>
-                {/each}
-                {#if !sec.blocks.length && !(sec.subsections || []).length && !(freeBy[sec.key] || []).length}
-                  <p class="faint">{t("doc.empty_section")}</p>
-                {/if}
-                {#if isLatest}
-                  {#if freeDraft && !freeDraft.id && freeDraft.section === sec.key}
-                    {@render freeEditor()}
-                  {:else}
-                    <button class="btn btn-sm btn-ghost add-free" onclick={() => (freeDraft = { section: sec.key, text: "" })}>
-                      <Icon name="plus" /> {t("doc.add_free")}</button>
-                  {/if}
-                {/if}
-              </section>
-            {/each}
-          </article>
-        </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -362,7 +386,7 @@
   <div class="free-edit">
     <!-- svelte-ignore a11y_autofocus -->
     <textarea class="input area" rows="3" bind:value={freeDraft.text} autofocus placeholder={t("doc.free_placeholder")}
-              onkeydown={e => e.key === "Escape" && (freeDraft = null)}></textarea>
+              aria-label={t("doc.add_free")} onkeydown={e => e.key === "Escape" && (freeDraft = null)}></textarea>
     <div class="actions">
       <button class="btn btn-sm btn-primary" disabled={!freeDraft.text.trim()} onclick={saveFree}>{t("at.save")}</button>
       <button class="btn btn-sm btn-ghost" onclick={() => (freeDraft = null)}>{t("at.cancel")}</button>
@@ -375,10 +399,10 @@
     {@render freeEditor()}
   {:else}
     <div class="blk free">
-      <div class="meta"><span>{t("doc.free")}</span>
-        {#if isLatest}<span class="blk-acts">
-          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.edit")} onclick={() => (freeDraft = { section: f.section, id: f.id, text: f.text })}><Icon name="pencil" /></button>
-          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sources.delete")} onclick={() => removeFree(f)}><Icon name="trash" /></button>
+      <div class="lbl"><Icon name="pin" size={12} /> <span>{t("doc.free")}</span>
+        {#if isLatest}<span class="row-actions">
+          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.edit")} title={t("at.edit")} onclick={() => (freeDraft = { section: f.section, id: f.id, text: f.text })}><Icon name="pencil" size={14} /></button>
+          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sources.delete")} title={t("sources.delete")} onclick={() => removeFree(f)}><Icon name="trash" size={14} /></button>
         </span>{/if}
       </div>
       <p class="body">{f.text}</p>
@@ -389,35 +413,42 @@
 {#snippet blocks(list)}
   {#each list as b (b.id)}
     {#if b.kind === "req"}
-      <div class="blk" id="blk-{b.id}" class:q={b.type === "question"} class:flagged={(b.issues || []).length}>
-        <div class="meta">
-          <span><span class="rid">{b.id}</span> · {sourcesLabel(b)}</span>
-          {#if isLatest}<span class="blk-acts">
-            <button class="btn btn-ghost btn-sm icon-btn" title={t("doc.edit_atom")} aria-label={t("doc.edit_atom")}
-                    onclick={() => (editAtom = { atom_id: b.atom_id, text: b.text })}><Icon name="pencil" /></button>
-          </span>{/if}
-        </div>
-        {#if editAtom?.atom_id === b.atom_id}
-          <div class="free-edit">
-            <span class="hint">{t("doc.edit_atom_hint")}</span>
-            <!-- svelte-ignore a11y_autofocus -->
-            <textarea class="input area" rows="2" bind:value={editAtom.text} autofocus
-                      onkeydown={e => e.key === "Escape" && (editAtom = null)}></textarea>
-            <div class="actions">
-              <button class="btn btn-sm btn-primary" disabled={!editAtom.text.trim()} onclick={saveAtom}>{t("at.save")}</button>
-              <button class="btn btn-sm btn-ghost" onclick={() => (editAtom = null)}>{t("at.cancel")}</button>
+      <div class="blk req {typeOf(b)}" id="blk-{b.id}" class:stale={staleIds.has(b.atom_id)} class:flagged={(b.issues || []).length}>
+        <span class="rid" title={sourcesLabel(b)}>{b.id}</span>
+        <div class="txt">
+          {#if editAtom?.atom_id === b.atom_id}
+            <div class="free-edit">
+              <span class="hint">{t("doc.edit_atom_hint")}</span>
+              <!-- svelte-ignore a11y_autofocus -->
+              <textarea class="input area" rows="2" bind:value={editAtom.text} autofocus aria-label={t("doc.edit_atom")}
+                        onkeydown={e => e.key === "Escape" && (editAtom = null)}></textarea>
+              <div class="actions">
+                <button class="btn btn-sm btn-primary" disabled={!editAtom.text.trim()} onclick={saveAtom}>{t("at.save")}</button>
+                <button class="btn btn-sm btn-ghost" onclick={() => (editAtom = null)}>{t("at.cancel")}</button>
+              </div>
             </div>
-          </div>
-        {:else}
-          <p class="body">{b.text}</p>
-        {/if}
-        {#if b.sources.length}
-          <p class="refs">{t("doc.sources")}:
-            {#each b.sources as s, i (i)}<button class="link" title={s.quote}
-              onclick={() => go(`/source/${s.source_id}/seg/${s.segment_idx}`)}>{sourceRef(s) || s.source_title}</button>{i < b.sources.length - 1 ? ", " : ""}{/each}
-          </p>
-        {/if}
-        {#if b.conflict}<p class="note danger c-note">{t("at.conflict_with", { text: b.conflict })}</p>{/if}
+          {:else}
+            <p class="body">{b.text}</p>
+          {/if}
+          {#if b.sources.length}
+            <p class="src" aria-label={sourcesLabel(b)}>
+              {#each b.sources as s, i (i)}<button class="src-chip" title={s.quote}
+                onclick={() => go(`/source/${s.source_id}/seg/${s.segment_idx}`)}><Icon name="transcript" size={12} />
+                {s.source_title}{#if sourceRef(s)}<span class="num"> · {sourceRef(s)}</span>{/if}</button>{/each}
+            </p>
+          {/if}
+          {#if b.conflict || (b.issues || []).length || staleIds.has(b.atom_id)}
+            <p class="flag">
+              {#if b.conflict}<span class="tag danger" title={b.conflict}><Icon name="warn" size={12} /> {t("at.conflict_with", { text: b.conflict })}</span>
+              {:else if (b.issues || []).length}<span class="tag warn">{t("doc.rule." + b.issues[0].rule)}</span>
+              {:else}<span class="tag warn">{t("nav.badge_stale")}</span>{/if}
+            </p>
+          {/if}
+        </div>
+        {#if isLatest}<span class="row-actions">
+          <button class="btn btn-ghost btn-sm icon-btn" title={t("doc.edit_atom")} aria-label={t("doc.edit_atom")}
+                  onclick={() => (editAtom = { atom_id: b.atom_id, text: b.text })}><Icon name="pencil" size={14} /></button>
+        </span>{/if}
       </div>
     {:else if b.kind === "text"}
       <p class="prose">{b.text}</p>
@@ -430,76 +461,125 @@
 
 <style>
   .head-main { min-width: 0; flex: 1; }
-  .title-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; text-align: left; }
-  .title-btn .pen { color: var(--ink-3); opacity: 0; display: inline-block; vertical-align: middle; }
+  .screen-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; text-align: left; max-width: 100%; }
+  .title-btn .pen { color: var(--text-3); opacity: 0; display: inline-block; vertical-align: middle; }
   .title-btn:hover .pen { opacity: 1; }
-  .title-input { font-size: var(--t-xl); font-weight: 600; height: 40px; max-width: 640px; }
-  .export { display: flex; gap: var(--s-2); align-items: center; }
-  .export .tpl { width: auto; max-width: 220px; }
-
-  .building { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); }
-  .grow { flex: 1; }
-  .row-note { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
-  .toolbar { display: flex; align-items: flex-end; gap: var(--s-3); flex-wrap: wrap; }
-  .toolbar:empty { display: none; }
-  .ver { display: flex; flex-direction: column; gap: var(--s-1); }
-  .ver .select { height: 30px; width: auto; }
-  .toolbar .on { border-color: var(--accent); color: var(--accent); }
-
-  .changes, .findings { list-style: none; margin: 0; padding: 0; }
-  .change, .finding { padding: var(--s-2) 0; border-top: 1px solid var(--rule); }
-  .change:first-child, .finding:first-child { border-top: 0; padding-top: 0; }
-  .change { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: center; }
-  .change p { flex-basis: 100%; line-height: 1.55; padding: var(--s-1) var(--s-2); border-radius: var(--r-sm); }
-  .old { background: var(--danger-bg); color: var(--danger); text-decoration: line-through; }
-  .new { background: var(--ok-bg); color: var(--ok); }
-  .f-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); }
-  .f-msg { font-size: var(--t-sm); color: var(--ink-2); min-width: 0; }
-  .f-fix { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-2); }
-  .spacer { flex: 1; }
+  .title-input { font: 600 var(--fs-15)/20px var(--font-display); max-width: 520px; }
+  .old { color: var(--warn); }
+  .tb-sep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 var(--sp-2); }
+  .split .btn + .btn, .split .btn + .select { margin-left: 1px; }
+  .split .btn:last-child { padding: 0 8px; }
+  .export .tpl { width: auto; max-width: 180px; padding-right: 30px; overflow: hidden; text-overflow: ellipsis; text-align: left; background-position: right 7px center;
+    background-repeat: no-repeat; }
+  .export .tpl.btn-primary { background-color: var(--primary); }
+  .export .tpl.btn-primary:hover { background-color: var(--primary-hover); }
+  .export .tpl.btn-primary { background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 fill=%27none%27 stroke=%27white%27 stroke-width=%271.5%27 stroke-linecap=%27round%27/%3E%3C/svg%3E"); }
+  .export .tpl option { color: var(--text); background: var(--surface); }
+  .grow { flex: 1; min-width: 0; }
   .link { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 
-  .doc { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: var(--s-4); align-items: start; }
-  .toc { position: sticky; top: var(--s-4); display: flex; flex-direction: column; gap: 2px; font-size: var(--t-sm);
-    max-height: calc(100vh - var(--s-6)); overflow-y: auto; }
-  .toc button { border: 0; background: none; text-align: left; padding: 3px var(--s-2); border-radius: var(--r-sm);
-    color: var(--ink-2); cursor: pointer; font: inherit; line-height: 1.4; }
-  .toc button:hover { background: var(--sunk); color: var(--ink); }
-  .toc .ind { padding-left: var(--s-4); }
-  .paper { padding: var(--s-5) var(--s-6); }
-  .sec + .sec { margin-top: var(--s-5); }
-  .sec, .sub { scroll-margin-top: var(--s-4); }
-  .sec h2 { font-size: var(--t-lg); font-weight: 600; margin-bottom: var(--s-3); }
-  .sub { margin-top: var(--s-4); }
-  .sub h3 { font-size: var(--t-md); font-weight: 600; margin-bottom: var(--s-2); }
-  .prose { line-height: 1.7; max-width: 72ch; margin-bottom: var(--s-3); white-space: pre-line; }
-  .list-title { font-weight: 500; margin: var(--s-2) 0 var(--s-1); }
-  .prose-list { margin: 0 0 var(--s-3); padding-left: var(--s-5); line-height: 1.65; }
+  .building { align-items: center; margin-bottom: var(--sp-6); max-width: 760px; margin-inline: auto; }
+  .building .bar { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .narrow-card { max-width: 560px; margin: var(--sp-8) auto 0; }
+  .narrow-card .hint { margin-top: calc(-1 * var(--sp-4)); }
+  .paper-col { min-width: 0; }
+  .banners { margin: 0 0 var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
+  .banners:empty { display: none; }
+  .banners .banner :global(.icon) { margin-top: 1px; }
+  .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 
-  .blk { padding: var(--s-2) 0 var(--s-2) var(--s-3); border-left: 2px solid var(--accent); margin-bottom: var(--s-3);
-    scroll-margin-top: var(--s-4); }
-  .blk.q { border-left-color: var(--warn); }
-  .blk.free { border-left-color: var(--rule-2); }
-  .blk.flagged .body { text-decoration: underline wavy var(--warn); text-decoration-thickness: 1px; text-underline-offset: 4px; }
-  .meta { display: flex; justify-content: space-between; align-items: center; gap: var(--s-2); font-size: var(--t-xs);
-    color: var(--ink-3); min-height: 24px; }
-  .rid { color: var(--accent); font-family: var(--mono); }
-  .blk.q .rid { color: var(--warn); }
-  .blk-acts { display: flex; gap: 2px; opacity: .55; }
-  .blk:hover .blk-acts { opacity: 1; }
-  .body { line-height: 1.65; max-width: 72ch; }
-  .refs { margin-top: var(--s-1); font-size: var(--t-xs); color: var(--ink-3); }
-  .c-note { margin-top: var(--s-2); }
-  .free-edit { display: flex; flex-direction: column; gap: var(--s-2); margin: var(--s-1) 0 var(--s-3); }
-  .area { height: auto; padding: var(--s-2) var(--s-3); line-height: 1.5; resize: vertical; }
-  .add-free { margin-left: calc(-1 * var(--s-3)); color: var(--ink-3); opacity: 0; transition: opacity .12s ease; }
+  .doc-layout { display: grid; grid-template-columns: 200px minmax(0, 760px) 280px; gap: var(--sp-8); justify-content: center; align-items: start; }
+  .doc-layout:not(.has-notes) { grid-template-columns: 200px minmax(0, 760px) 200px; }
+  .toc { position: sticky; top: calc(var(--toolbar) + var(--sp-5)); font-size: 12.5px; max-height: calc(100vh - var(--toolbar) - 32px);
+    overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+  .toc h4, .notes h4 { font-size: var(--fs-11); font-weight: 600; color: var(--text-3); margin: 0 0 var(--sp-4) var(--sp-4); }
+  .toc button { display: flex; align-items: center; gap: 6px; border: 0; background: none; text-align: left; padding: 4px var(--sp-4);
+    border-radius: var(--r-sm); color: var(--text-2); cursor: pointer; font: inherit; line-height: 17px; }
+  .toc button:hover { background: var(--surface-3); color: var(--text); }
+  .toc .tn { color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .toc .ind { padding-left: 20px; }
+  .toc .dot { margin-left: auto; }
+  .dot.warn { background: var(--warn); } .dot.danger { background: var(--danger); }
+  .ver { margin-top: var(--sp-7); }
+  .toc .v { justify-content: space-between; }
+  .toc .v.on { color: var(--text); font-weight: 600; background: var(--surface-3); }
+
+  .paper { background: var(--surface); border-radius: var(--r-md); min-width: 0; --pad-l: 88px;
+    box-shadow: 0 0 0 1px var(--line-strong), 0 2px 8px rgba(0,0,0,.05), 0 12px 32px -12px rgba(0,0,0,.08);
+    padding: 56px 64px 72px var(--pad-l); font-size: var(--fs-15); line-height: 24px; }
+  .doc-kicker { font-size: var(--fs-12); line-height: 16px; color: var(--text-3); margin-bottom: var(--sp-4); font-variant-numeric: tabular-nums; }
+  .paper h1 { font: 700 var(--fs-26)/32px var(--font-display); letter-spacing: -.015em; margin-bottom: var(--sp-9); }
+  .sec h2 { font: 600 var(--fs-17)/24px var(--font-display); letter-spacing: -.005em; margin: var(--sp-10) 0 var(--sp-4); }
+  .sec:first-of-type h2 { margin-top: 0; }
+  .sub h3 { font: 600 var(--fs-15)/22px var(--font); margin: var(--sp-8) 0 var(--sp-3); }
+  .sec, .sub { scroll-margin-top: calc(var(--toolbar) + 16px); }
+  .prose { margin: 0 0 var(--sp-5); white-space: pre-line; }
+  .muted-i { color: var(--text-3); font-style: italic; margin: 0 0 var(--sp-5); }
+  .list-title { font-weight: 600; margin: var(--sp-4) 0 var(--sp-2); }
+  .prose-list { margin: 0 0 var(--sp-5); padding-left: 22px; }
+
+  .req { position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--sp-4);
+    margin: 0 -12px 0 -76px; padding: var(--sp-4) 12px; border-radius: var(--r-md); transition: background var(--t-fast);
+    scroll-margin-top: calc(var(--toolbar) + 16px); }
+  .req:hover { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+  .req.stale { background: color-mix(in srgb, var(--warn-bg) 55%, transparent); }
+  .rid { font: 600 12px/24px var(--mono); color: var(--accent); text-align: right; white-space: nowrap; }
+  .req.nfr .rid { color: var(--nfr); } .req.q .rid { color: var(--q); }
+  .txt { min-width: 0; }
+  .flagged .body { text-decoration: underline wavy color-mix(in srgb, var(--warn) 70%, transparent); text-decoration-thickness: 1px; text-underline-offset: 5px; }
+  .src { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; font-size: var(--fs-12); line-height: 16px; }
+  .src-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: var(--r-full); border: 0;
+    background: var(--surface-2); color: var(--text-2); font: inherit; cursor: pointer; max-width: 100%; }
+  .src-chip:hover { background: var(--accent-bg); color: var(--accent); }
+  .flag { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .flag .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .req .row-actions { align-self: start; }
+  .free { margin: var(--sp-5) 0; padding: var(--sp-4) var(--sp-6); border-left: 2px solid var(--line-control); background: var(--surface-2);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+  .free .lbl { display: flex; align-items: center; gap: 6px; font-size: var(--fs-11); font-weight: 600; color: var(--text-3); min-height: 24px; }
+  .free .row-actions { margin-left: auto; }
+  .free-edit { display: flex; flex-direction: column; gap: var(--sp-4); margin: var(--sp-2) 0 var(--sp-5); font-size: var(--fs-13); line-height: 18px; }
+  .area { resize: vertical; font-size: var(--fs-14); line-height: 20px; }
+  .sec { position: relative; }
+  .add-free { position: absolute; top: -2px; right: -40px; color: var(--text-3); opacity: 0; transition: opacity var(--t-fast); }
+  .sec:first-of-type > .add-free { top: -2px; }
+  .sec:not(:first-of-type) > .add-free { top: calc(var(--sp-10) - 2px); }
   .sec:hover > .add-free, .add-free:focus-visible { opacity: 1; }
   @media (hover: none) { .add-free { opacity: 1; } }
 
-  @media (max-width: 900px) {
-    .doc { grid-template-columns: 1fr; }
-    .toc { position: static; max-height: none; flex-direction: row; flex-wrap: wrap; }
-    .toc .ind { display: none; }
-    .paper { padding: var(--s-4); }
+  .notes { position: sticky; top: calc(var(--toolbar) + var(--sp-5)); display: flex; flex-direction: column; gap: var(--sp-4);
+    max-height: calc(100vh - var(--toolbar) - 32px); overflow-y: auto; padding: 1px; }
+  .notes h4 { display: flex; justify-content: space-between; margin: var(--sp-4) 0 0; }
+  .notes h4:first-child { margin-top: 0; }
+  .finding { background: var(--surface); border-radius: var(--r-md); box-shadow: var(--e1); padding: var(--sp-5); font-size: 12.5px; line-height: 18px; }
+  .finding .fh { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+  .finding .fh .mono { color: var(--accent); font-weight: 600; }
+  .finding p { color: var(--text-2); }
+  .finding .acts { display: flex; gap: 6px; margin-top: var(--sp-4); }
+  .finding textarea { margin-top: var(--sp-2); font-size: var(--fs-13); line-height: 19px; }
+  .prop-lbl { font-size: var(--fs-11); color: var(--text-3) !important; margin-top: var(--sp-4); }
+  .change ins, .change del { border-radius: 2px; padding: 0 1px; text-decoration: none; }
+  .change ins { background: var(--ins); color: var(--text); }
+  .change del { background: var(--del); color: var(--text-2); text-decoration: line-through; }
+
+  @media (max-width: 1360px) {
+    .doc-layout, .doc-layout:not(.has-notes) { grid-template-columns: 188px minmax(0, 760px); }
+    .notes { position: static; grid-column: 2; grid-row: 1; max-height: none; display: grid; grid-template-columns: 1fr 1fr; }
+    .notes h4 { grid-column: 1 / -1; }
+  }
+  @media (max-width: 1120px) {
+    .doc-layout, .doc-layout:not(.has-notes) { grid-template-columns: minmax(0, 1fr); max-width: 760px; margin: 0 auto; }
+    .toc { display: none; }
+    .notes { grid-column: 1; }
+    .paper { padding: 40px 40px 56px; --pad-l: 40px; }
+    .add-free { right: -24px; }
+    .req { margin: 0 -12px; grid-template-columns: minmax(0, 1fr) auto; }
+    .rid { text-align: left; grid-column: 1 / -1; line-height: 16px; }
+    .req .row-actions { grid-column: 2; grid-row: 2; }
+  }
+  @media (max-width: 720px) {
+    .notes { grid-template-columns: 1fr; }
+    .paper { padding: 24px 20px 40px; }
   }
 </style>

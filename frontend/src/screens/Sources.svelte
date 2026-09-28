@@ -159,7 +159,7 @@
   const busy = $derived(app.sources.filter(s => s.status === "processing").length);
   const optionsMeta = $derived([app.options.model, app.options.device === "cpu" ? "CPU" : "GPU",
     app.options.diarize ? t("opt.diarize").toLowerCase() : null].filter(Boolean).join(" · "));
-  const statusTag = { ready: "ok", processing: "accent", failed: "danger", recorded: "warn" };
+  const kindIcon = { audio: "wave", video: "wave", recording: "mic", transcript: "transcript", email: "mail", document: "file" };
 
   function sourceMeta(s) {
     return [fmtDate(s.created_at, app.lang), t("kind." + s.kind), fmtDuration(s.duration, app.lang),
@@ -174,28 +174,23 @@
       <h1 class="screen-title">{t("sources.title")}</h1>
       <p class="screen-sub">{t("sources.count", { n: app.sources.length }) + (busy ? " · " + t("sources.busy", { busy }) : "")}</p>
     </div>
-    {#if app.health?.gpu && (app.health.gpu.cuda || app.health.gpu.mps)}<span class="tag ok">GPU</span>{/if}
   </header>
 
-  <div class="stack">
-    <div class="cards-wrap"><div class="cards">
-      <section class="panel card">
-        <h2 class="panel-title">{t("sources.record.title")}</h2>
-        <p class="panel-desc">{app.device.desktop ? t("sources.record.desc") : t("sources.record.desc_browser")}</p>
-        <div class="stage" class:live={recording}>
-          <button class="rec-btn" class:on={recording} onclick={recording ? stopRecording : startRecording}
-                  aria-label={recording ? t("rec.stop") : t("rec.start")} title={recording ? t("rec.stop") : t("rec.start")}>
-            <span class="rec-glyph"></span>
-          </button>
-          {#if recording}
-            <span class="rec-live"><span class="dot"></span>{t("rec.recording")} <span class="mono">{clock(elapsed)}</span></span>
-          {:else}
-            <span class="stage-hint">{t("rec.start_hint")}</span>
-          {/if}
-        </div>
-        <div class="foot">
+  <div class="capture">
+    <section class="card rec-card" class:live={recording}>
+      <button class="rec-btn" class:on={recording} onclick={recording ? stopRecording : startRecording}
+              aria-label={recording ? t("rec.stop") : t("rec.start")} title={recording ? t("rec.stop") : t("rec.start")}>
+        <i></i>
+      </button>
+      <div class="rec-meta">
+        <h2>{t("sources.record.title")}</h2>
+        {#if recording}
+          <p class="rec-live"><span class="pulse"></span>{t("rec.recording")} <span class="num">{clock(elapsed)}</span></p>
+        {:else}
+          <p>{app.device.desktop ? t("sources.record.desc") : t("sources.record.desc_browser")}</p>
+        {/if}
         <label class="mic-pick" title={t("rec.mic")}>
-          <Icon name="mic" />
+          <Icon name="mic" size={14} />
           <select class="select" bind:value={mic} disabled={recording} aria-label={t("rec.mic")}>
             <option value="">{t("rec.mic_default")}</option>
             {#each mics as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
@@ -205,34 +200,40 @@
           <p class="note warn below">{recording ? t("rec.problems") : t("rec.saved_partial")}: {recProblems.join(" · ")}</p>
         {/if}
         {#if recError}<p class="note danger below">{recError}</p>{/if}
-        </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="panel card">
-        <h2 class="panel-title">{t("sources.upload.title")}</h2>
-        <p class="panel-desc">{t("sources.upload.desc")}</p>
-        <label class="drop" class:dragging
-               ondragover={e => { e.preventDefault(); dragging = true; }}
-               ondragleave={() => (dragging = false)}
-               ondrop={e => { e.preventDefault(); dragging = false; pickFile(e.dataTransfer.files[0]); }}>
-          <!-- no accept filter: the macOS desktop picker ignores extensions; the server validates -->
-          <input type="file" onchange={e => pickFile(e.currentTarget.files[0])} />
-          <span class="drop-title"><Icon name="upload" /> {t("sources.upload.drop")} <span class="link">{t("sources.upload.browse")}</span></span>
-          <span class="hint">{t("sources.upload.formats")}</span>
-          {#if file}<span class="file">{file.name}{#if fileIsTranscript} · {t("sources.upload.is_transcript")}{/if}</span>{/if}
-        </label>
-        <div class="foot">
-        <div class="actions">
-          <button class="btn btn-primary btn-block" disabled={!file || uploading} onclick={() => submitUpload()}>
+    <section class="drop-card" class:dragging class:has-file={file}
+             ondragover={e => { e.preventDefault(); dragging = true; }}
+             ondragleave={() => (dragging = false)}
+             ondrop={e => { e.preventDefault(); dragging = false; pickFile(e.dataTransfer.files[0]); }}>
+      <label class="drop">
+        <!-- no accept filter: the macOS desktop picker ignores extensions; the server validates -->
+        <input type="file" onchange={e => pickFile(e.currentTarget.files[0])} aria-label={t("sources.upload.title")} />
+        <span class="ico"><Icon name="upload" /></span>
+        <span class="drop-txt">
+          <h2>{t("sources.upload.drop")} <span class="link">{t("sources.upload.browse")}</span></h2>
+          <span class="desc">{t("sources.upload.desc")}</span>
+          <span class="fmts">{#each t("sources.upload.formats").split(" · ") as f (f)}<span class="tag outline">{f}</span>{/each}</span>
+        </span>
+      </label>
+      {#if file}
+        <div class="file-row">
+          <Icon name={fileIsTranscript ? "transcript" : "wave"} size={14} />
+          <span class="file">{file.name}{#if fileIsTranscript}<span class="t3"> · {t("sources.upload.is_transcript")}</span>{/if}</span>
+          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.cancel")} title={t("at.cancel")}
+                  onclick={() => (file = null)}><Icon name="close" size={14} /></button>
+          <button class="btn btn-primary" disabled={uploading} onclick={() => submitUpload()}>
             {#if uploading}<span class="spinner"></span>{/if}
             {fileIsTranscript ? t("sources.upload.summarize") : t("sources.upload.transcribe")}
           </button>
         </div>
-        {#if uploadError}<p class="note danger below">{uploadError}</p>{/if}
-        </div>
-      </section>
-    </div></div>
+      {/if}
+      {#if uploadError}<p class="note danger below">{uploadError}</p>{/if}
+    </section>
+  </div>
 
+  <div class="stack">
     <Block id="sources-options" title={t("sources.options")} meta={optionsMeta} open={false}>
       <div class="row">
         <div class="field grow">
@@ -250,7 +251,7 @@
           </div>
         </div>
       </div>
-      <div class="row" style="margin-top: var(--s-3)">
+      <div class="row" style="margin-top: var(--sp-5)">
         <label class="check"><input type="checkbox" class="switch" bind:checked={app.options.diarize} onchange={saveOptions} />
           {t("opt.diarize")} <span class="hint">{t("opt.diarize_hint")}</span></label>
         {#if !app.options.diarize}
@@ -260,112 +261,130 @@
       </div>
     </Block>
 
-    <Block id="sources-list" title={t("sources.list")} meta={String(app.sources.length)}>
+    <div>
+      <div class="section-h"><h2>{t("sources.list")}</h2><span class="t3 num">{app.sources.length}</span></div>
       {#if !app.sources.length}
-        <div class="empty">
+        <div class="card empty">
+          <div class="glyph"><Icon name="sources" /></div>
           <p class="panel-title">{t("sources.empty.title")}</p>
           <p>{t("sources.empty.desc")}</p>
         </div>
       {:else}
-        <ul class="list">
+        <ul class="card list">
           {#each app.sources as s (s.id)}
             <li class="item">
+              <span class="src-ico"><Icon name={kindIcon[s.kind] || "file"} /></span>
               <div class="item-main">
                 {#if editingId === s.id}
                   <!-- svelte-ignore a11y_autofocus -->
-                  <input class="input" bind:value={editTitle} autofocus
+                  <input class="input" bind:value={editTitle} autofocus aria-label={t("sources.rename")}
                          onkeydown={e => { if (e.key === "Enter") saveRename(s); if (e.key === "Escape") editingId = null; }}
                          onblur={() => saveRename(s)} />
                 {:else}
-                  <button class="title-btn" onclick={() => open(s.id)} disabled={s.status === "processing" && !s.duration}>{s.title}</button>
+                  <button class="title-btn" onclick={() => open(s.id)} disabled={s.status === "processing" && !s.duration}
+                          title={s.title}>{s.title}</button>
                 {/if}
-                <p class="mono faint">{sourceMeta(s)}</p>
+                <p class="meta">{sourceMeta(s)}</p>
                 {#if app.jobs[s.id]}
-                  <div class="progress">
+                  <div class="job">
                     <div class="bar"><i style="width: {app.jobs[s.id].progress}%"></i></div>
-                    <span class="mono faint">{app.jobs[s.id].message}</span>
+                    <span class="t3 num">{app.jobs[s.id].message}</span>
                   </div>
                 {/if}
                 {#if s.status === "failed" && s.error}<p class="hint err">{s.error}</p>{/if}
               </div>
               <div class="item-side">
-                <span class="tag {statusTag[s.status] || ''}">{t("status." + s.status)}</span>
-                {#if s.has_summary}<span class="tag accent">{t("status.summary")}</span>{/if}
+                {#if s.status === "processing"}
+                  <span class="status run"><span class="spinner"></span>{t("status.processing")}</span>
+                {:else if s.status === "ready"}
+                  <span class="status ok"><Icon name="check" size={14} />{t("status.ready")}</span>
+                {:else if s.status === "failed"}
+                  <span class="status danger"><Icon name="warn" size={14} />{t("status.failed")}</span>
+                {:else}
+                  <span class="status warn"><Icon name="clock" size={14} />{t("status." + s.status)}</span>
+                {/if}
+                {#if s.has_summary}<span class="tag outline">{t("status.summary")}</span>{/if}
                 {#if s.status === "recorded" || (s.status === "failed" && s.audio_file)}
                   <button class="btn btn-sm" onclick={() => transcribeSaved(s.id)}>{t("sources.transcribe_now")}</button>
                 {/if}
-                <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.rename")} aria-label={t("sources.rename")}
-                        onclick={() => startRename(s)}><Icon name="pencil" /></button>
-                <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.delete")} aria-label={t("sources.delete")}
-                        onclick={() => remove(s)}><Icon name="trash" /></button>
+                <span class="row-actions">
+                  <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.rename")} aria-label={t("sources.rename")}
+                          onclick={() => startRename(s)}><Icon name="pencil" size={14} /></button>
+                  <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.delete")} aria-label={t("sources.delete")}
+                          onclick={() => remove(s)}><Icon name="trash" size={14} /></button>
+                </span>
               </div>
             </li>
           {/each}
         </ul>
       {/if}
-    </Block>
+    </div>
   </div>
 </div>
 
 <style>
-  /* The two cards share rows (title · description · box · bottom row) through a subgrid, so
-     each row lines up across both cards whatever the text length. Stacked when narrow. */
-  .cards-wrap { container-type: inline-size; }
-  .cards { display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--s-4); }
-  .card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; }
-  .card .panel-desc { align-self: start; }
-  .stage, .drop { min-height: 132px; }
-  .foot { margin-top: var(--s-3); }
-  .below { margin-top: var(--s-3); }
-  @container (max-width: 640px) {
-    .cards { grid-template-columns: 1fr; row-gap: var(--s-4); }
-    .card { display: flex; flex-direction: column; grid-row: auto; }
-  }
+  .capture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--sp-6); margin-bottom: var(--sp-6); }
+  @media (max-width: 1120px) { .capture { grid-template-columns: 1fr; } }
 
-  .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s-2);
-    border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--sunk); padding: var(--s-4); }
-  .stage.live { border-color: var(--danger); background: var(--danger-bg); }
-  .stage-hint { font-size: var(--t-sm); color: var(--ink-2); }
-  .rec-btn { --size: 64px; width: var(--size); height: var(--size); border-radius: 50%; flex: none; cursor: pointer;
-    display: grid; place-items: center; background: var(--panel); border: 2px solid var(--rule-2);
-    box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: transform .12s ease, border-color .12s ease; }
-  .rec-btn:hover { border-color: var(--danger); transform: scale(1.04); }
+  .rec-card { display: flex; align-items: center; gap: var(--sp-7); padding: var(--sp-7) var(--sp-8); transition: box-shadow var(--t-med) var(--ease); }
+  .rec-card.live { box-shadow: 0 0 0 1px var(--rec), 0 0 0 4px color-mix(in srgb, var(--rec) 15%, transparent); }
+  .rec-btn { width: 64px; height: 64px; border-radius: 50%; border: 0; background: var(--surface); cursor: pointer;
+    box-shadow: 0 0 0 1px var(--line-strong), 0 2px 6px rgba(0,0,0,.08); display: grid; place-items: center; flex: none;
+    transition: transform var(--t-fast) var(--ease); }
+  .rec-btn:hover { transform: scale(1.04); }
   .rec-btn:active { transform: scale(.97); }
-  .rec-glyph { width: 40px; height: 40px; border-radius: 50%; background: #D93A2B; transition: all .18s ease; }
-  .rec-btn.on { border-color: var(--danger); animation: ring 1.6s ease-out infinite; }
-  .rec-btn.on .rec-glyph { width: 22px; height: 22px; border-radius: 4px; }
-  @keyframes ring { 0% { box-shadow: 0 0 0 0 rgba(217,58,43,.35); } 100% { box-shadow: 0 0 0 14px rgba(217,58,43,0); } }
-  .mic-pick { position: relative; display: flex; align-items: center; color: var(--ink-3); }
-  .mic-pick :global(.icon) { position: absolute; left: var(--s-3); pointer-events: none; }
-  .mic-pick .select { color: var(--ink); padding-left: calc(var(--s-3) + 16px + var(--s-2)); }
+  .rec-btn i { width: 28px; height: 28px; border-radius: 50%; background: var(--rec);
+    transition: border-radius var(--t-med) var(--ease), width var(--t-med) var(--ease), height var(--t-med) var(--ease); }
+  .rec-btn.on { animation: ring 1.6s ease-out infinite; }
+  .rec-btn.on i { width: 20px; height: 20px; border-radius: 5px; }
+  @keyframes ring { 0% { box-shadow: 0 0 0 1px var(--rec), 0 0 0 0 color-mix(in srgb, var(--rec) 35%, transparent); }
+                    100% { box-shadow: 0 0 0 1px var(--rec), 0 0 0 14px transparent; } }
+  .rec-meta { min-width: 0; flex: 1; }
+  .rec-meta h2, .drop h2 { font: 600 var(--fs-15)/20px var(--font-display); letter-spacing: -.005em; }
+  .rec-meta > p { color: var(--text-2); margin: 2px 0 var(--sp-5); max-width: 48ch; }
+  .rec-live { display: flex; align-items: center; gap: var(--sp-4); color: var(--rec) !important; font-weight: 500; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .mic-pick { position: relative; display: flex; align-items: center; color: var(--text-3); max-width: 300px; }
+  .mic-pick :global(.icon) { position: absolute; left: var(--sp-4); pointer-events: none; }
+  .mic-pick .select { color: var(--text); padding-left: 28px; }
+  .below { margin-top: var(--sp-4); }
 
-  .rec-live { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--danger); font-weight: 500; font-size: var(--t-sm); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .3; } }
-
-  .drop { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s-1); text-align: center;
-    border: 1px dashed var(--rule-2); border-radius: var(--r-md); padding: var(--s-5) var(--s-4); background: var(--sunk); cursor: pointer; }
-  .drop:hover, .drop.dragging { border-color: var(--accent); background: var(--accent-bg); }
+  .drop-card { display: flex; flex-direction: column; border: 1.5px dashed var(--line-control); border-radius: var(--r-lg);
+    transition: background var(--t-fast), border-color var(--t-fast); min-width: 0; }
+  .drop-card:hover, .drop-card.dragging { background: var(--surface); border-color: var(--accent); }
+  .drop-card.dragging { background: var(--accent-bg); }
+  .drop-card.has-file { border-style: solid; border-color: var(--line-strong); background: var(--surface); }
+  .drop { position: relative; flex: 1; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-7) var(--sp-8); cursor: pointer; }
   .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
-  .drop-title { display: inline-flex; align-items: center; gap: var(--s-2); font-weight: 500; }
+  .ico { width: 44px; height: 44px; border-radius: 12px; background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); flex: none; }
+  .drop-txt { min-width: 0; display: block; }
   .link { color: var(--accent); }
-  .file { margin-top: var(--s-1); font-size: var(--t-sm); word-break: break-word; }
+  .desc { display: block; color: var(--text-3); font-size: var(--fs-12); margin-top: 2px; }
+  .fmts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: var(--sp-4); }
+  .file-row { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-8);
+    border-top: 1px solid var(--line); color: var(--text-2); }
+  .file { flex: 1; min-width: 0; color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drop-card > .note { margin: 0 var(--sp-5) var(--sp-5); }
 
-  .list { list-style: none; margin: 0; padding: 0; }
-  .item { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-3) 0; border-bottom: 1px solid var(--rule); }
-  .item:last-child { border-bottom: 0; padding-bottom: 0; }
-  .item:first-child { padding-top: 0; }
+  .list { list-style: none; margin: 0; padding: 0; overflow: hidden; }
+  .item { display: flex; gap: var(--sp-5); align-items: center; padding: var(--sp-4) var(--sp-6); min-height: 52px; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .item:hover { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+  .src-ico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; }
   .item-main { flex: 1; min-width: 0; }
-  .item-main .input { height: 30px; }
-  .title-btn { border: 0; background: none; padding: 0; font-weight: 500; text-align: left; cursor: pointer; color: var(--ink);
+  .item-main .input { height: 26px; }
+  .title-btn { border: 0; background: none; padding: 0; font-weight: 500; text-align: left; cursor: pointer; color: var(--text);
     max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
   .title-btn:hover:not(:disabled) { color: var(--accent); }
-  .item-side { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; justify-content: flex-end; }
-  .progress { display: flex; align-items: center; gap: var(--s-2); margin-top: var(--s-2); }
-  .progress .bar { flex: 0 0 160px; }
-  .err { color: var(--danger); margin-top: var(--s-1); }
+  .meta { font-size: var(--fs-12); color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .item-side { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; justify-content: flex-end; }
+  .job { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); font-size: var(--fs-12); }
+  .job .bar { flex: 0 0 160px; }
+  .err { color: var(--danger); margin-top: var(--sp-2); }
   @media (max-width: 600px) {
-    .item { flex-direction: column; }
-    .item-side { justify-content: flex-start; }
+    .item { flex-wrap: wrap; }
+    .item-side { justify-content: flex-start; width: 100%; padding-left: 40px; }
+    .rec-card, .drop { padding: var(--sp-6); }
   }
 </style>

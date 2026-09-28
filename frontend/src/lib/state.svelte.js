@@ -36,7 +36,10 @@ export const app = $state({
   health: null,
   models: [],
   options: readPref("asrOptions", { model: "v3_e2e_rnnt", device: "cpu", diarize: false, word_timestamps: false }),
-  toast: null,
+  toasts: [],               // at most 2; they belong to the screen that raised them
+  status: null,             // per-step counts for the sidebar badges
+  theme: readPref("theme", "auto"),
+  sidebarCollapsed: readPref("sidebarCollapsed", null),   // null = automatic by width
   // source id → { jobId, progress, message } for work started in this session
   jobs: {},
   // source id → { jobId, progress, message } for atom extraction
@@ -50,7 +53,36 @@ export function go(path) {
   if (location.hash !== "#" + path) location.hash = path;
   else app.route = parseRoute();
 }
-window.addEventListener("hashchange", () => { app.route = parseRoute(); });
+window.addEventListener("hashchange", () => {
+  const prev = app.route.name;
+  app.route = parseRoute();
+  if (app.route.name !== prev) app.toasts = [];      // toasts belong to the screen that raised them
+  loadStatus();
+});
+
+export function setTheme(theme) {
+  app.theme = theme;
+  writePref("theme", theme);
+  applyTheme();
+}
+export function applyTheme() {
+  if (app.theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = app.theme;
+}
+export function isDark() {
+  if (app.theme !== "auto") return app.theme === "dark";
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+let statusTimer = null;
+export function loadStatus() {
+  clearTimeout(statusTimer);            // coalesce bursts of changes
+  statusTimer = setTimeout(async () => {
+    if (!app.currentProjectId) return;
+    try { app.status = await api(`/api/projects/${app.currentProjectId}/status`); }
+    catch (_) { /* badges are optional */ }
+  }, 150);
+}
 
 export function setLang(lang) {
   app.lang = lang;
@@ -82,14 +114,22 @@ export async function switchProject(id) {
   app.currentProjectId = id;
   app.sources = [];
   await loadSources();
+  app.status = null;
+  loadStatus();
   go("/sources");
 }
 
-let toastTimer = null;
+let toastSeq = 0;
+export function dismissToast(id) {
+  app.toasts = app.toasts.filter(x => x.id !== id);
+}
 export function toast(message, { action, onAction, kind = "info", ms = 6000 } = {}) {
-  clearTimeout(toastTimer);
-  app.toast = { message, action, onAction, kind };
-  toastTimer = setTimeout(() => { app.toast = null; }, ms);
+  const id = ++toastSeq;
+  // Only one undo at a time: a newer action toast replaces an older one.
+  const keep = action ? app.toasts.filter(x => !x.action) : app.toasts;
+  app.toasts = [...keep, { id, message, action, onAction, kind }].slice(-2);
+  setTimeout(() => dismissToast(id), ms);
+  loadStatus();                         // most toasts follow a change worth counting
 }
 
 export function rememberSource(id) {

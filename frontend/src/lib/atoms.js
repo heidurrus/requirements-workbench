@@ -1,4 +1,5 @@
 // Atom extraction started from any screen; progress lives in app.extracting.
+import { explain } from "./errors.js";
 import { api, pollJob } from "./api.js";
 import { app, t, go, toast, loadSources } from "./state.svelte.js";
 
@@ -19,8 +20,8 @@ export async function extractAtoms(sourceId) {
     if (r.conflicts) parts.push(t("at.conflicts_n", { n: r.conflicts }));
     toast(parts.join(" · "), app.route.name === "atoms" ? {} : { action: t("at.open"), onAction: () => go("/atoms") });
   } catch (err) {
-    const setup = err.body?.needs_setup || /API key|Settings/.test(err.message);
-    toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+    const e = explain(err);
+    toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
   } finally {
     delete app.extracting[sourceId];
   }

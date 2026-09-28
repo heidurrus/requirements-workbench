@@ -126,212 +126,310 @@
     } catch (err) { fail(err); }
     finally { busy = null; }
   }
-  const actionTag = { create: "ok", update: "accent", unchanged: "", skip: "", blocked: "danger" };
+  const actionTag = { create: "ok", update: "fr", unchanged: "outline", skip: "outline", blocked: "danger" };
   const indent = { epic: 0, story: 1, nfr: 1, subtask: 2 };
+  const glyph = { epic: "E", story: "S", subtask: "T", nfr: "N" };
+  const step = $derived(!connected ? 1 : !target || editingTarget ? 2 : 3);
+  const site = u => (u || "").replace("https://", "");
+  const pushCounts = $derived({ create: pushable.filter(r => r.action === "create").length,
+                                update: pushable.filter(r => r.action === "update").length });
+
+  let cancelBtn = $state(null);
+  $effect(() => { if (confirming && cancelBtn) cancelBtn.focus(); });
+  function onKey(e) {
+    if (app.route.name !== "export") return;
+    if (confirming && e.key === "Escape") { e.preventDefault(); confirming = false; return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && preview && pushable.length && !busy) {
+      e.preventDefault();
+      if (confirming) push(); else confirming = true;
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="screen-inner">
   <header class="screen-head">
     <div>
       <h1 class="screen-title">{t("jr.title")}</h1>
       <p class="screen-sub">
-        {#if target}{[target.project_key, target.project_name, target.site_url.replace("https://", "")].filter(Boolean).join(" · ")}
+        {#if target}{[target.project_key, target.project_name, site(target.site_url)].filter(Boolean).join(" · ")}
         {:else}{t("jr.sub_empty")}{/if}
       </p>
     </div>
-    <span class="tag">Jira · MCP</span>
+    {#if connected && target && !editingTarget}
+      <div class="actions">
+        <button class="btn" disabled={!!busy} onclick={runPreview}>
+          <Icon name="refresh" size={14} /> {preview ? t("jr.refresh") : t("jr.show_preview")}</button>
+      </div>
+    {/if}
   </header>
 
+  <nav class="stepper" aria-label={t("jr.title")}>
+    {#each [t("jr.account"), t("jr.target"), t("jr.preview")] as label, i (i)}
+      {#if i}<span class="ln"></span>{/if}
+      <span class="step" class:done={step > i + 1} class:cur={step === i + 1} aria-current={step === i + 1 ? "step" : undefined}>
+        <span class="n">{#if step > i + 1}<Icon name="check" size={12} />{:else}{i + 1}{/if}</span>{label}</span>
+    {/each}
+  </nav>
+
   <div class="stack">
-    <!-- 1. connection -->
-    <section class="panel step">
-      <div class="step-head">
-        <span class="num">1</span>
-        <p class="panel-title">{t("jr.account")}</p>
-        <span class="spacer"></span>
-        {#if connected}<span class="tag ok">{t("jr.is_connected")}</span>
-          <button class="btn btn-sm btn-ghost" onclick={disconnect}>{t("jr.disconnect")}</button>
+    <section class="card setup">
+      <!-- 1. connection -->
+      <div class="done-card">
+        <span class="k">{t("jr.account")}</span>
+        <div class="v">
+          {#if connected}
+            <span class="status ok"><Icon name="check" size={14} />{t("jr.is_connected")}</span>
+            {#if sites.length}<p class="map">{t("jr.access", { sites: sites.map(s => site(s.url)).join(", ") })}</p>{/if}
+            {#if target && sites.length && !sites.some(s => s.cloud_id === target.cloud_id)}
+              <p class="banner danger inline"><Icon name="warn" size={14} /><span>{t("jr.target_not_visible", { site: site(target.site_url) })}</span></p>
+            {:else if sites.length}
+              <p class="map">{t("jr.wrong_account")}</p>
+            {/if}
+          {:else if connected === false}
+            <p class="t2">{t("jr.connect_hint")}</p>
+            {#if privateNote}<p class="map">{privateNote}</p>{/if}
+          {/if}
+        </div>
+        {#if connected}
+          <button class="btn btn-ghost btn-sm" onclick={disconnect}>{t("jr.disconnect")}</button>
+        {:else if connected === false}
+          <div class="actions">
+            {#if !waiting}<button class="btn btn-ghost btn-sm" onclick={() => connect(false)}>{t("jr.normal_window")}</button>{/if}
+            <button class="btn btn-primary" disabled={waiting} onclick={() => connect(true)}>
+              {#if waiting}<span class="spinner"></span> {t("jr.waiting")}{:else}{t("jr.connect")}{/if}</button>
+          </div>
         {/if}
       </div>
-      {#if connected && sites.length}
-        <p class="hint">{t("jr.access", { sites: sites.map(s => s.url.replace("https://", "")).join(", ") })}</p>
-        {#if target && !sites.some(s => s.cloud_id === target.cloud_id)}
-          <p class="note danger">{t("jr.target_not_visible", { site: target.site_url.replace("https://", "") })}</p>
-        {:else}
-          <p class="hint">{t("jr.wrong_account")}</p>
-        {/if}
-      {/if}
-      {#if connected === false}
-        <p class="panel-desc">{t("jr.connect_hint")}</p>
-        <div class="actions">
-          <button class="btn btn-primary" disabled={waiting} onclick={() => connect(true)}>
-            {#if waiting}<span class="spinner"></span> {t("jr.waiting")}{:else}{t("jr.connect")}{/if}</button>
-          {#if !waiting}<button class="btn btn-ghost btn-sm" onclick={() => connect(false)}>{t("jr.normal_window")}</button>{/if}
+
+      <!-- 2. target -->
+      {#if connected}
+        <div class="done-card" class:editing={!target || editingTarget}>
+          <span class="k">{t("jr.target")}</span>
+          <div class="v">
+            {#if target && !editingTarget}
+              <p><b>{target.project_key}</b>{target.project_name ? " · " + target.project_name : ""}<span class="t3">{" · " + site(target.site_url)}</span></p>
+              <p class="map">{#each KINDS as k (k)}<span>{t("bl.kind." + k)} → {target.types?.[k] || "—"}</span>{/each}</p>
+            {:else}
+              <div class="row">
+                <div class="field grow">
+                  <label class="label" for="jr-site">{t("jr.site")}</label>
+                  <select class="select" id="jr-site" bind:value={pick.cloud_id} onchange={loadProjects}>
+                    {#each sites as s (s.cloud_id)}<option value={s.cloud_id}>{s.url}</option>{/each}
+                  </select>
+                </div>
+                <div class="field grow">
+                  <label class="label" for="jr-q">{t("jr.search")}</label>
+                  <input class="input" id="jr-q" bind:value={pick.q} placeholder={t("jr.search_ph")}
+                         onkeydown={e => e.key === "Enter" && loadProjects()} />
+                </div>
+                <button class="btn" onclick={loadProjects} disabled={loadingProjects}>{t("jr.find")}</button>
+              </div>
+              {#if projects.length}
+                <div class="field gap">
+                  <label class="label" for="jr-project">{t("jr.project")}</label>
+                  <select class="select" id="jr-project" value={pick.project_key} onchange={e => chooseProject(e.currentTarget.value)}>
+                    <option value="" disabled>{t("jr.choose_project")}</option>
+                    {#each projects as p (p.key)}<option value={p.key}>{p.key} · {p.name}</option>{/each}
+                  </select>
+                </div>
+              {/if}
+              {#if chosenProject}
+                <p class="label gap">{t("jr.types")}</p>
+                <div class="types">
+                  {#each KINDS as k (k)}
+                    <label class="field">
+                      <span class="hint">{t("bl.kind." + k)}</span>
+                      <select class="select" bind:value={pick.types[k]}>
+                        <option value={null}>—</option>
+                        {#each chosenProject.issue_types.filter(it => k === "subtask" ? it.subtask : !it.subtask) as it (it.id)}
+                          <option value={it.name}>{it.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
+              <div class="actions gap">
+                <button class="btn btn-primary" disabled={!pick.project_key} onclick={saveTarget}>{t("at.save")}</button>
+                {#if target}<button class="btn btn-ghost" onclick={() => (editingTarget = false)}>{t("at.cancel")}</button>{/if}
+              </div>
+            {/if}
+          </div>
+          {#if target && !editingTarget}
+            <button class="btn btn-ghost btn-sm" onclick={() => { editingTarget = true; loadSites(); }}>{t("jr.change")}</button>
+          {/if}
         </div>
-        {#if privateNote}<p class="hint" style="margin-top: var(--s-2)">{privateNote}</p>{/if}
       {/if}
     </section>
 
-    <!-- 2. target -->
-    {#if connected}
-      <section class="panel step">
-        <div class="step-head">
-          <span class="num">2</span>
-          <p class="panel-title">{t("jr.target")}</p>
-          <span class="spacer"></span>
-          {#if target && !editingTarget}<button class="btn btn-sm btn-ghost" onclick={() => { editingTarget = true; loadSites(); }}>{t("jr.change")}</button>{/if}
-        </div>
-        {#if target && !editingTarget}
-          <p class="target-line"><b>{target.project_key}</b>{target.project_name ? " · " + target.project_name : ""}
-            <span class="faint">{" · " + target.site_url}</span></p>
-          <p class="hint">{KINDS.map(k => `${t("bl.kind." + k)} → ${target.types?.[k] || "—"}`).join(" · ")}</p>
-        {:else}
-          <div class="row">
-            <div class="field grow">
-              <label class="label" for="jr-site">{t("jr.site")}</label>
-              <select class="select" id="jr-site" bind:value={pick.cloud_id} onchange={loadProjects}>
-                {#each sites as s (s.cloud_id)}<option value={s.cloud_id}>{s.url}</option>{/each}
-              </select>
-            </div>
-            <div class="field grow">
-              <label class="label" for="jr-q">{t("jr.search")}</label>
-              <input class="input" id="jr-q" bind:value={pick.q} placeholder={t("jr.search_ph")}
-                     onkeydown={e => e.key === "Enter" && loadProjects()} />
-            </div>
-            <button class="btn" onclick={loadProjects} disabled={loadingProjects}>{t("jr.find")}</button>
-          </div>
-          {#if projects.length}
-            <div class="field" style="margin-top: var(--s-3)">
-              <label class="label" for="jr-project">{t("jr.project")}</label>
-              <select class="select" id="jr-project" value={pick.project_key} onchange={e => chooseProject(e.currentTarget.value)}>
-                <option value="" disabled>{t("jr.choose_project")}</option>
-                {#each projects as p (p.key)}<option value={p.key}>{p.key} · {p.name}</option>{/each}
-              </select>
-            </div>
-          {/if}
-          {#if chosenProject}
-            <p class="label" style="margin-top: var(--s-3)">{t("jr.types")}</p>
-            <div class="types">
-              {#each KINDS as k (k)}
-                <label class="field">
-                  <span class="hint">{t("bl.kind." + k)}</span>
-                  <select class="select" bind:value={pick.types[k]}>
-                    <option value={null}>—</option>
-                    {#each chosenProject.issue_types.filter(it => k === "subtask" ? it.subtask : !it.subtask) as it (it.id)}
-                      <option value={it.name}>{it.name}</option>
-                    {/each}
-                  </select>
-                </label>
+    <!-- 3. preview and push -->
+    {#if connected && target && !editingTarget}
+      <div>
+        <div class="pv-head">
+          <h2 class="h2">{t("jr.preview")}</h2>
+          {#if preview}
+            <div class="counts">
+              {#each ["create", "update", "unchanged", "skip", "blocked"] as a (a)}
+                {#if preview.counts[a]}<span class="tag {actionTag[a]}">{t("jr.action." + a)}: {preview.counts[a]}</span>{/if}
               {/each}
             </div>
           {/if}
-          <div class="actions" style="margin-top: var(--s-3)">
-            <button class="btn btn-primary" disabled={!pick.project_key} onclick={saveTarget}>{t("at.save")}</button>
-            {#if target}<button class="btn btn-ghost" onclick={() => (editingTarget = false)}>{t("at.cancel")}</button>{/if}
-          </div>
-        {/if}
-      </section>
-    {/if}
-
-    <!-- 3. preview and push -->
-    {#if connected && target && !editingTarget}
-      <section class="panel step">
-        <div class="step-head">
-          <span class="num">3</span>
-          <p class="panel-title">{t("jr.preview")}</p>
           <span class="spacer"></span>
-          <button class="btn" class:btn-primary={!preview} disabled={!!busy} onclick={runPreview}>
-            {preview ? t("jr.refresh") : t("jr.show_preview")}</button>
+          <span class="readonly"><Icon name="lock" size={12} /> {t("jr.no_writes")}</span>
         </div>
-        <p class="panel-desc">{t("jr.no_writes")}</p>
+
         {#if busy}
-          <div class="running"><span class="spinner"></span><div class="grow"><div class="bar"><i style="width: {busy.progress}%"></i></div></div>
-            <span class="mono faint">{busy.message}</span></div>
+          <div class="banner info running"><span class="spinner"></span><span class="num">{busy.message}</span>
+            <div class="grow"><div class="bar"><i style="width: {busy.progress}%"></i></div></div></div>
         {/if}
+
         {#if preview}
-          <div class="counts">
-            {#each ["create", "update", "unchanged", "skip", "blocked"] as a (a)}
-              {#if preview.counts[a]}<span class="tag {actionTag[a]}">{t("jr.action." + a)}: {preview.counts[a]}</span>{/if}
-            {/each}
-          </div>
-          <table class="rows"><tbody>
-            {#each preview.rows as r (r.item_id)}
-              <tr class:dim={["skip", "blocked", "unchanged"].includes(r.action) && !selected[r.item_id]}>
-                <td class="c"><input type="checkbox" disabled={!["create", "update", "unchanged"].includes(r.action)}
-                                     bind:checked={selected[r.item_id]} aria-label={r.title} /></td>
-                <td class="a"><span class="tag {actionTag[r.action]}">{t("jr.action." + r.action)}</span></td>
-                <td class="k"><span class="tag">{t("bl.kind." + r.kind)}</span></td>
-                <td class="ti" style="padding-left: calc({indent[r.kind]} * var(--s-4))">
-                  {r.title}
-                  {#if r.kind === "subtask" && r.parent_title}<span class="faint">{" ← " + r.parent_title}</span>{/if}
-                  {#if r.reason}<span class="hint"> — {t("jr.reason." + r.reason)}</span>{/if}
-                  {#each r.flags as f (f)}<span class="tag {f === 'changed_in_jira' ? 'warn' : ''}">{t("jr.flag." + f)}</span>{/each}
-                </td>
-                <td class="key">{#if r.key}<a href={r.url} target="_blank" rel="noreferrer" class="mono">{r.key}</a>{/if}</td>
-              </tr>
-            {/each}
-          </tbody></table>
-          <div class="foot">
-            <span class="hint">{t("jr.target_note", { key: target.project_key })}</span>
-            {#if !confirming}
-              <button class="btn btn-primary" disabled={!pushable.length || !!busy} onclick={() => (confirming = true)}>
-                {pushable.length ? t("jr.push", { n: pushable.length }) : t("jr.nothing")}</button>
-            {/if}
-          </div>
-          {#if confirming}
-            <div class="note warn confirm">
-              <span>{t("jr.confirm", { n: pushable.length, key: target.project_key, site: target.site_url.replace("https://", "") })}</span>
-              <span class="actions">
-                <button class="btn btn-sm btn-ghost" onclick={() => (confirming = false)}>{t("at.cancel")}</button>
-                <button class="btn btn-sm btn-primary" onclick={() => push()}>{t("jr.confirm_yes", { key: target.project_key })}</button>
-              </span>
+          <div class="pv">
+            <table class="table">
+              <thead><tr>
+                <th><span class="sr">✓</span></th><th>{t("jr.col_action")}</th><th class="c-type">{t("jr.col_type")}</th>
+                <th>{t("jr.col_title")}</th><th class="c-key">{t("jr.col_key")}</th>
+              </tr></thead>
+              <tbody>
+                {#each preview.rows as r (r.item_id)}
+                  <tr class:skip={["skip", "blocked", "unchanged"].includes(r.action) && !selected[r.item_id]}>
+                    <td class="c"><span class="cb-hit"><input type="checkbox" disabled={!["create", "update", "unchanged"].includes(r.action)}
+                                         bind:checked={selected[r.item_id]} aria-label={r.title} /></span></td>
+                    <td class="a"><span class="tag {actionTag[r.action]}">{t("jr.action." + r.action)}</span></td>
+                    <td class="c-type"><span class="ticon {r.kind}" title={t("bl.kind." + r.kind)}>{glyph[r.kind]}</span></td>
+                    <td class="ttl"><div style="padding-left: calc({indent[r.kind]} * 18px)">
+                      <span class="tt" title={r.title}>{r.title}</span>
+                      {#if r.kind === "subtask" && r.parent_title}<span class="t3">{" ← " + r.parent_title}</span>{/if}
+                      {#if r.reason}<span class="t3"> — {t("jr.reason." + r.reason)}</span>{/if}
+                      {#each r.flags as f (f)}<span class="flag" class:warn={f === "changed_in_jira"}>{t("jr.flag." + f)}</span>{/each}
+                    </div></td>
+                    <td class="c-key">{#if r.key}<a href={r.url} target="_blank" rel="noreferrer" class="mono">{r.key}</a>{/if}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            <div class="pushbar">
+              <p>{t("jr.target_note", { key: target.project_key })}</p>
+              <button class="btn btn-lg btn-primary" disabled={!pushable.length || !!busy} onclick={() => (confirming = true)}>
+                {pushable.length ? t("jr.push", { n: pushable.length }) : t("jr.nothing")}
+                {#if pushable.length}<span class="kbd">⌘↵</span>{/if}</button>
             </div>
-          {/if}
+          </div>
+        {:else if !busy && !result}
+          <div class="card empty">
+            <div class="glyph"><Icon name="export" /></div>
+            <p class="panel-title">{t("jr.show_preview")}</p>
+            <p>{t("jr.no_writes")}</p>
+          </div>
         {/if}
 
         {#if result}
-          <div class="result">
-            <p class="label">{t("jr.result", { n: result.done.length })}</p>
-            <ul>
+          <div class="card result">
+            <div class="res-h"><span class="status ok"><Icon name="check" size={14} /> {t("jr.result", { n: result.done.length })}</span></div>
+            <table class="table"><tbody>
               {#each result.done as d (d.item_id)}
-                <li><span class="tag ok">{t("jr.did." + d.action)}</span> <a href={d.url} target="_blank" rel="noreferrer" class="mono">{d.key}</a> {d.title}</li>
+                <tr><td class="a"><span class="tag ok">{t("jr.did." + d.action)}</span></td>
+                  <td class="c-key"><a href={d.url} target="_blank" rel="noreferrer" class="mono">{d.key}</a></td>
+                  <td>{d.title}</td></tr>
               {/each}
-            </ul>
+            </tbody></table>
             {#if result.failed.length}
-              <p class="label danger-text">{t("jr.failed", { n: result.failed.length })}</p>
-              <ul>{#each result.failed as f (f.item_id)}<li><b>{f.title}</b> — <span class="faint">{f.error}</span></li>{/each}</ul>
-              <button class="btn btn-sm" disabled={!!busy} onclick={() => push(result.failed.map(f => f.item_id))}>{t("jr.retry")}</button>
+              <div class="failed">
+                <p class="status danger"><Icon name="warn" size={14} /> {t("jr.failed", { n: result.failed.length })}</p>
+                <ul>{#each result.failed as f (f.item_id)}<li><b>{f.title}</b> — <span class="t3">{f.error}</span></li>{/each}</ul>
+                <button class="btn btn-sm" disabled={!!busy} onclick={() => push(result.failed.map(f => f.item_id))}>{t("jr.retry")}</button>
+              </div>
             {/if}
           </div>
         {/if}
-      </section>
+      </div>
     {/if}
 
-    <button class="btn btn-ghost back" onclick={() => go("/backlog")}>← {t("nav.decomposition")}</button>
+    <div><button class="btn btn-ghost back" onclick={() => go("/backlog")}><Icon name="back" size={14} /> {t("nav.decomposition")}</button></div>
   </div>
 </div>
 
+{#if confirming && target}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scrim" onclick={e => e.target === e.currentTarget && (confirming = false)}>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="push-q">
+      <h2 id="push-q">{t("jr.confirm", { n: pushable.length, key: target.project_key, site: site(target.site_url) })}</h2>
+      <p class="t2">{t("jr.sheet_body")}</p>
+      <dl class="facts">
+        <dt>{t("jr.site")}</dt><dd>{site(target.site_url)}</dd>
+        <dt>{t("jr.project")}</dt><dd>{target.project_key}{target.project_name ? " · " + target.project_name : ""}</dd>
+        {#if pushCounts.create}<dt>{t("jr.action.create")}</dt><dd class="num">{pushCounts.create}</dd>{/if}
+        {#if pushCounts.update}<dt>{t("jr.action.update")}</dt><dd class="num">{pushCounts.update}</dd>{/if}
+      </dl>
+      <div class="acts">
+        <button class="btn" bind:this={cancelBtn} onclick={() => (confirming = false)}>{t("at.cancel")}</button>
+        <button class="btn btn-primary" onclick={() => push()}>{t("jr.confirm_yes", { key: target.project_key })} <span class="kbd">⌘↵</span></button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
-  .step-head { display: flex; align-items: center; gap: var(--s-2); margin-bottom: var(--s-2); }
-  .num { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--sunk);
-    font-family: var(--mono); font-size: var(--t-xs); color: var(--ink-2); flex: none; }
   .spacer { flex: 1; }
-  .grow { flex: 1; }
-  .target-line { font-size: var(--t-md); }
-  .types { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s-2); }
-  .running { display: flex; align-items: center; gap: var(--s-3); margin: var(--s-2) 0; }
-  .counts { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-2) 0 var(--s-3); }
-  .rows { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
-  .rows td { padding: 6px var(--s-2); border-top: 1px solid var(--rule); vertical-align: top; }
-  .rows tr.dim td { color: var(--ink-3); }
-  .rows .c { width: 24px; } .rows .a { width: 1%; white-space: nowrap; } .rows .k { width: 1%; }
-  .rows .key { width: 1%; white-space: nowrap; text-align: right; }
-  .rows .ti .tag { margin-left: var(--s-1); }
-  .foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); margin-top: var(--s-3); flex-wrap: wrap; }
-  .confirm { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; margin-top: var(--s-3); }
-  .result { margin-top: var(--s-4); border-top: 1px solid var(--rule); padding-top: var(--s-3); }
-  .result ul { list-style: none; padding: 0; margin: var(--s-1) 0 var(--s-3); line-height: 1.8; font-size: var(--t-sm); }
-  .danger-text { color: var(--danger); }
-  .back { align-self: flex-start; }
+  .grow { flex: 1; min-width: 0; }
+  .gap { margin-top: var(--sp-5); }
+  .stepper { display: flex; align-items: center; gap: var(--sp-4); margin: 0 0 var(--sp-6); flex-wrap: wrap; }
+  .step { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--text-2); font-weight: 500; padding: 4px 8px 4px 4px; }
+  .step .n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: var(--fs-12); font-weight: 600;
+    background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
+  .step.done .n { background: var(--ok); color: var(--surface); box-shadow: none; }
+  .step.cur { color: var(--text); }
+  .step.cur .n { background: var(--primary); color: #fff; box-shadow: none; }
+  .stepper .ln { flex: 0 1 48px; min-width: 16px; height: 1px; background: var(--line-strong); }
+
+  .done-card { display: flex; align-items: flex-start; gap: var(--sp-5); padding: var(--sp-5) var(--sp-6); }
+  .done-card + .done-card { border-top: 1px solid var(--line); }
+  .done-card .k { width: 150px; flex: none; color: var(--text-3); font-size: var(--fs-12); line-height: 20px; }
+  .done-card .v { flex: 1; min-width: 0; line-height: 20px; }
+  .done-card .v b { font-weight: 600; }
+  .map { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-12); color: var(--text-3); margin-top: 2px; line-height: 16px; }
+  .banner.inline { margin-top: var(--sp-4); align-items: center; }
+  .types { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
+
+  .pv-head { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; margin: var(--sp-4) 0 var(--sp-4); }
+  .h2 { font: 600 var(--fs-13)/18px var(--font); }
+  .counts { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+  .readonly { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12); color: var(--text-3); }
+  .running { margin-bottom: var(--sp-5); align-items: center; }
+  .pv { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--e1); }
+  .pv .table th { position: sticky; top: var(--toolbar); z-index: 2; background: var(--surface); }
+  .pv .table thead th:first-child { border-top-left-radius: var(--r-lg); }
+  .pv .table thead th:last-child { border-top-right-radius: var(--r-lg); }
+  .pv .table td { height: 40px; }
+  .pv .c, .pv th:first-child { width: 44px; padding-right: 0; }
+  .pv .a { width: 1%; white-space: nowrap; }
+  .c-type { width: 40px; }
+  .ttl { max-width: 0; width: 100%; }
+  .ttl > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tt { font-weight: 500; }
+  .flag { font-size: 11.5px; color: var(--text-3); display: block; white-space: normal; }
+  .flag.warn { color: var(--warn); }
+  .pv tr.skip td { color: var(--text-3); }
+  .pv tr.skip .tt { font-weight: 400; }
+  .c-key { white-space: nowrap; width: 90px; text-align: right; }
+  .ticon { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; font: 700 10px/1 var(--font); color: #fff; }
+  .ticon.epic { background: #7A5AC8; } .ticon.story { background: #3F8A55; } .ticon.subtask { background: #3F7DC0; } .ticon.nfr { background: #1F6770; }
+  .pushbar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-6);
+    background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--line);
+    border-radius: 0 0 var(--r-lg) var(--r-lg); }
+  .pushbar p { flex: 1; font-size: var(--fs-12); color: var(--text-3); min-width: 0; }
+  .result { margin-top: var(--sp-6); overflow: hidden; }
+  .res-h { padding: var(--sp-5) var(--sp-6); border-bottom: 1px solid var(--line); }
+  .result .table td { height: 38px; }
+  .result .c-key { text-align: left; }
+  .failed { padding: var(--sp-5) var(--sp-6); border-top: 1px solid var(--line); }
+  .failed ul { margin: var(--sp-2) 0 var(--sp-4); padding-left: 18px; }
   a.mono { color: var(--accent); }
+  @media (max-width: 960px) {
+    .pv .c-key { display: none; }
+    .done-card { flex-wrap: wrap; }
+    .done-card .k { width: 100%; }
+  }
 </style>

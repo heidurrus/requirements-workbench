@@ -26,7 +26,7 @@ page.on("console", m => {
 const step = (name) => console.log("✓", name);
 
 await page.goto(base + "/#/sources");
-await page.getByRole("heading", { name: "Источники" }).waitFor();
+await page.getByRole("heading", { name: "Источники", exact: true }).waitFor();
 step("sources screen loads");
 
 // Import a transcript: button says "import and summarize", then we land on the transcript.
@@ -43,7 +43,7 @@ step("summary without a key explains what to do");
 const nameInput = page.locator(".speaker input").first();
 await nameInput.fill("Иван Петров");
 await nameInput.press("Enter");
-await page.locator(".seg-row .chip", { hasText: "Иван Петров" }).first().waitFor();
+await page.locator(".seg-row .spk", { hasText: "Иван Петров" }).first().waitFor();
 step("speaker rename shows in the transcript");
 
 // Back to the list, the import is there; delete it and undo.

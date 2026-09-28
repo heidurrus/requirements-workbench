@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.0.0 (2026-09-28): New design
+
+A redesign of every screen, following `docs/design/`. All features and shortcuts stay where
+they were.
+
+- **Look:**
+  - System fonts, a quieter neutral palette and higher text contrast (WCAG AA throughout).
+  - A proper **dark theme**. The primary button is now readable in dark mode.
+  - **Theme** switch in Settings, or **⌘⇧L**.
+- **Sidebar:**
+  - Step icons and **badges**: atoms to review, document version (amber when out of date),
+    items marked for Jira, a check after a push.
+  - Collapses to an icon rail on narrow windows. **⌘\** toggles it, **⌘1–⌘6** jump to a step,
+    **⌘,** opens Settings.
+- **Toolbar:** every screen has one sticky toolbar with the title, its state and the next step.
+- **Atoms:**
+  - Conflicts are a one-line summary that expands in place.
+  - Status filter is a segmented control; type filters are chips.
+  - The focused atom (accent bar) looks different from ticked atoms (tint).
+  - Row actions appear on hover.
+  - The bulk bar floats at the bottom and never covers the last row.
+- **Document:**
+  - Reads like paper. Requirement IDs hang in the margin, and sources are chips that open
+    the transcript.
+  - Quality findings sit next to the text.
+  - Contents and versions are in a sticky side column.
+- **Decomposition:** a tree with Jira-style type glyphs, collapsible epics and stories,
+  acceptance criteria as a Given / When / Then table, and INVEST findings inline.
+- **Выгрузка:**
+  - A three-step header.
+  - The preview is a table with a sticky push bar.
+  - Pushing asks for confirmation in a dialog that lists the site, project and counts.
+    **⌘↵** opens it and **Esc** cancels.
+- **Skills:** the editor has tabs (Инструкции · Разделы/Правила/Шаблон · Попробовать ·
+  Контракт · История), with a floating save bar.
+- **Settings:** a grouped form, one setting per row.
+- **Fixes:**
+  - Toasts belong to the screen that raised them, stack (at most two) and move above the
+    bulk bar.
+  - AI setup errors (missing or rejected Anthropic key, model not downloaded…) now show in
+    the interface language with an **Открыть настройки** button. The summary error is shown
+    in place.
+
 ## 2.9.4 (2026-09-28): Delete atoms
 
 - **Atoms can now be deleted**, not just rejected:

@@ -1,6 +1,7 @@
 <script>
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { extractAtoms } from "../lib/atoms.js";
   import { fmtTime, fmtDate, fmtDuration, renderMarkdown, speakerClass, speakerDisplay } from "../lib/format.js";
@@ -18,7 +19,7 @@
 
   let summaryText = $state("");
   let summaryMeta = $state("");
-  let summaryError = $state("");
+  let summaryError = $state(null);          // {message, setup}
   let summarizing = $state(false);
   let summaryStarted = $state(0);
   let tick = $state(0);
@@ -115,7 +116,7 @@
 
   async function summarize() {
     summarizing = true;
-    summaryError = "";
+    summaryError = null;
     summaryText = "";
     summaryStarted = Date.now();
     const timer = setInterval(() => (tick = Math.round((Date.now() - summaryStarted) / 1000)), 500);
@@ -126,10 +127,7 @@
       summaryMeta = t("tr.summarised_with", { model: job.result.model });
       loadSources();
     } catch (err) {
-      summaryError = err.message;
-      if (err.body?.needs_setup || /API key|Settings/.test(err.message)) {
-        toast(err.message, { action: t("nav.settings"), onAction: () => go("/settings"), kind: "danger" });
-      }
+      summaryError = explain(err);
     } finally {
       clearInterval(timer);
       summarizing = false;
@@ -167,39 +165,43 @@
   {:else if source}
     <header class="screen-head">
       <div class="head-main">
-        <button class="btn btn-ghost btn-sm back" onclick={() => go("/sources")}><Icon name="back" /> {t("tr.back")}</button>
-        {#if editingTitle}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input class="input title-input" bind:value={titleDraft} autofocus onblur={saveTitle}
-                 onkeydown={e => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") editingTitle = false; }} />
-        {:else}
-          <h1 class="screen-title">
-            <button class="title-btn" title={t("tr.edit_title")} onclick={() => { titleDraft = source.title; editingTitle = true; }}>
-              {source.title} <span class="pen"><Icon name="pencil" size={14} /></span>
-            </button>
-          </h1>
-        {/if}
-        <p class="screen-sub mono">{meta}</p>
-        {#if email && (email.from || email.to)}
-          <p class="screen-sub">{#if email.from}{t("tr.email_from")}: {email.from}{/if}{email.from && email.to ? " · " : ""}{#if email.to}{t("tr.email_to")}: {email.to}{/if}</p>
-        {/if}
+        <button class="btn btn-ghost icon-btn back" onclick={() => go("/sources")} aria-label={t("tr.back")} title={t("tr.back")}>
+          <Icon name="back" />
+        </button>
+        <div class="head-txt">
+          {#if editingTitle}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input class="input title-input" bind:value={titleDraft} autofocus onblur={saveTitle} aria-label={t("tr.edit_title")}
+                   onkeydown={e => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") editingTitle = false; }} />
+          {:else}
+            <h1 class="screen-title">
+              <button class="title-btn" title={t("tr.edit_title")} onclick={() => { titleDraft = source.title; editingTitle = true; }}>
+                {source.title} <span class="pen"><Icon name="pencil" size={12} /></span>
+              </button>
+            </h1>
+          {/if}
+          <p class="screen-sub">{meta}{#if email && (email.from || email.to)}{" · "}{#if email.from}{t("tr.email_from")}: {email.from}{/if}{email.from && email.to ? " · " : ""}{#if email.to}{t("tr.email_to")}: {email.to}{/if}{/if}</p>
+        </div>
       </div>
       <div class="actions">
+        {#if source.audio_url && source.status !== "processing"}
+          <button class="btn btn-ghost" onclick={retranscribe}>{source.status === "ready" ? t("tr.retranscribe") : t("tr.transcribe")}</button>
+        {/if}
         {#if source.status === "ready"}
-          <button class="btn" class:btn-primary={!!summaryText || !!atomCount} onclick={() => atomCount ? go(`/atoms/source/${id}`) : extractAtoms(id)}
-                  disabled={!!app.extracting[id]} title={atomCount ? "" : t("at.extract")}>
-            {#if app.extracting[id]}<span class="spinner"></span> {app.extracting[id].message}
-            {:else if atomCount}{t("at.count", { n: atomCount })}
-            {:else}{t("at.extract")}{/if}
-          </button>
+          <button class="btn icon-btn" onclick={copyText} aria-label={copied ? t("tr.copied") : t("tr.copy")} title={copied ? t("tr.copied") : t("tr.copy")}>
+            <Icon name={copied ? "check" : "copy"} /></button>
+          <button class="btn icon-btn" onclick={() => saveText(`${source.title}.txt`, source.text)} aria-label={t("tr.export")} title={t("tr.export")}>
+            <Icon name="download" /></button>
+          <span class="tb-sep"></span>
           <button class="btn" class:btn-primary={!summaryText && !atomCount} onclick={summarize} disabled={summarizing}>
             {#if summarizing}<span class="spinner"></span>{/if}{summaryText ? t("tr.resummarize") : t("tr.summarize")}
           </button>
-          <button class="btn" onclick={copyText}><Icon name={copied ? "check" : "copy"} /> {copied ? t("tr.copied") : t("tr.copy")}</button>
-          <button class="btn" onclick={() => saveText(`${source.title}.txt`, source.text)}><Icon name="download" /> {t("tr.export")}</button>
-        {/if}
-        {#if source.audio_url && source.status !== "processing"}
-          <button class="btn btn-ghost" onclick={retranscribe}>{source.status === "ready" ? t("tr.retranscribe") : t("tr.transcribe")}</button>
+          <button class="btn" class:btn-primary={!!summaryText || !!atomCount} onclick={() => atomCount ? go(`/atoms/source/${id}`) : extractAtoms(id)}
+                  disabled={!!app.extracting[id]} title={atomCount ? "" : t("at.extract")}>
+            {#if app.extracting[id]}<span class="spinner"></span> {app.extracting[id].message}
+            {:else if atomCount}{t("at.count", { n: atomCount })} <Icon name="arrow" size={14} />
+            {:else}{t("at.extract")}{/if}
+          </button>
         {/if}
       </div>
     </header>
@@ -213,14 +215,14 @@
     {/if}
 
     {#if source.audio_url}
-      <div class="player panel">
+      <div class="player card">
         <audio bind:this={audio} src={source.audio_url} preload="metadata"
                ontimeupdate={() => (now = audio.currentTime)} onloadedmetadata={() => (duration = audio.duration)}
                onplay={() => (playing = true)} onpause={() => (playing = false)}></audio>
         <button class="btn btn-primary icon-btn" onclick={togglePlay} aria-label={playing ? t("tr.pause") : t("tr.play")}>
           <Icon name={playing ? "pause" : "play"} />
         </button>
-        <span class="mono">{fmtTime(now)}</span>
+        <span class="mono num">{fmtTime(now)}</span>
         <input class="scrub" type="range" min="0" max={duration || 0} step="0.1" value={now}
                oninput={e => { audio.currentTime = Number(e.currentTarget.value); }} aria-label="Seek" />
         <span class="mono faint">{fmtTime(duration)}</span>
@@ -236,7 +238,7 @@
               <div class="speakers">
                 {#each speakerOrder as label (label)}
                   <label class="speaker">
-                    <span class="chip {speakerClass(label, speakerOrder)}">{speakerDisplay(label, null, t)}</span>
+                    <span class="spk {speakerClass(label, speakerOrder)}">{speakerDisplay(label, null, t)}</span>
                     <input class="input" bind:value={names[label]} placeholder={speakerDisplay(label, null, t)}
                            onblur={() => renameSpeaker(label)} onkeydown={e => e.key === "Enter" && e.currentTarget.blur()} />
                   </label>
@@ -260,7 +262,7 @@
                       {#if seg.start != null}
                         <button class="time" disabled={!source.audio_url} onclick={() => seek(seg.start)}>{fmtTime(seg.start)}</button>
                       {/if}
-                      {#if seg.speaker}<span class="chip {speakerClass(seg.speaker, speakerOrder)}">{speakerDisplay(seg.speaker, seg.speaker_name, t)}</span>{/if}
+                      {#if seg.speaker}<span class="spk {speakerClass(seg.speaker, speakerOrder)}" title={speakerDisplay(seg.speaker, seg.speaker_name, t)}>{speakerDisplay(seg.speaker, seg.speaker_name, t)}</span>{/if}
                     </div>
                     <p class="seg-text">{seg.text}</p>
                   </div>
@@ -279,7 +281,10 @@
               <p class="muted">{t("tr.no_summary")}</p>
             {/if}
             {#if summarizing && !summaryText}<p class="hint"><span class="spinner"></span> {t("tr.writing", { s: tick })}</p>{/if}
-            {#if summaryError}<p class="note danger">{summaryError}</p>{/if}
+            {#if summaryError}
+              <div class="banner danger err-banner"><span class="grow">{summaryError.message}</span>
+                {#if summaryError.setup}<button class="btn btn-sm" onclick={() => go("/settings")}>{t("err.open_settings")}</button>{/if}</div>
+            {/if}
           </Block>
         </div>
       </div>
@@ -288,48 +293,56 @@
 </div>
 
 <style>
-  .head-main { min-width: 0; flex: 1; }
-  .back { margin: 0 0 var(--s-2) calc(-1 * var(--s-3)); }
-  .title-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; text-align: left; }
-  .title-btn .pen { color: var(--ink-3); opacity: 0; display: inline-block; vertical-align: middle; }
-  .title-btn:hover .pen { opacity: 1; }
-  .title-input { font-size: var(--t-xl); font-weight: 600; height: 40px; max-width: 640px; }
+  .head-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: var(--sp-4); }
+  .head-txt { min-width: 0; flex: 1; }
+  .back { flex: none; margin-left: -6px; }
+  .screen-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; text-align: left; max-width: 100%; }
+  .title-btn .pen { color: var(--text-3); opacity: 0; display: inline-block; vertical-align: middle; transition: opacity var(--t-fast); }
+  .title-btn:hover .pen, .title-btn:focus-visible .pen { opacity: 1; }
+  .title-input { font: 600 var(--fs-15)/20px var(--font-display); max-width: 520px; }
+  .screen-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tb-sep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 var(--sp-2); }
 
-  .player { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-4); padding: var(--s-2) var(--s-3);
-    position: sticky; top: 0; z-index: 10; }
+  .player { display: flex; align-items: center; gap: var(--sp-5); margin-bottom: var(--sp-6); padding: var(--sp-4) var(--sp-5);
+    position: sticky; top: calc(var(--toolbar) + var(--sp-2)); z-index: 10; }
+  .player .icon-btn { border-radius: 50%; width: 32px; height: 32px; }
   .scrub { flex: 1; min-width: 80px; accent-color: var(--accent); }
-
-  .layout { display: grid; gap: var(--s-4); grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); align-items: start; }
+  .layout { display: grid; gap: var(--sp-8); grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
   /* Sticky, but never taller than the window: a long summary scrolls inside its column. */
-  .side-col { position: sticky; top: calc(var(--control-h) + var(--s-5));
-    max-height: calc(100vh - var(--control-h) - var(--s-5) - var(--s-4)); overflow-y: auto; overscroll-behavior: contain;
+  .side-col { position: sticky; top: calc(var(--toolbar) + var(--sp-4));
+    max-height: calc(100vh - var(--toolbar) - var(--sp-8)); overflow-y: auto; overscroll-behavior: contain;
     border-radius: var(--r-lg); scrollbar-width: thin; }
-  .side-col :global(details.block > summary) { position: sticky; top: 0; z-index: 1; background: var(--panel); }
-  .side-col :global(details.block > summary:hover) { background: var(--sunk); }
-  @media (max-width: 1100px) {
+  .side-col :global(details.block > summary) { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+  @media (max-width: 1120px) {
     .layout { grid-template-columns: 1fr; }
     .side-col { position: static; order: -1; max-height: none; overflow: visible; }
   }
 
-  .speakers { display: grid; gap: var(--s-2); grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
-  .speaker { display: flex; align-items: center; gap: var(--s-2); }
-  .speaker .input { height: 30px; }
-  .chip { display: inline-block; padding: 1px var(--s-2); border-radius: var(--r-sm); font-size: var(--t-xs); font-weight: 500;
+  .speakers { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+  .speaker { display: flex; align-items: center; gap: var(--sp-4); }
+  .spk { display: inline-flex; align-items: center; gap: 6px; height: 20px; font-size: var(--fs-12); font-weight: 600; min-width: 0;
     white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; flex: none; }
+  .spk::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
 
-  .segments { display: flex; flex-direction: column; }
-  .seg-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--s-3); padding: var(--s-2) var(--s-2);
-    border-radius: var(--r-md); scroll-margin: 80px; }
-  .seg-row + .seg-row { border-top: 1px solid var(--rule); border-radius: 0; }
-  .seg-row.active { background: var(--accent-bg); border-radius: var(--r-md); }
-  .seg-meta { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-1); min-width: 0; }
-  .time { border: 0; background: none; padding: 0; font-family: var(--mono); font-size: var(--t-xs); color: var(--accent); cursor: pointer; }
-  .time:disabled { color: var(--ink-3); cursor: default; }
-  .seg-text { line-height: 1.65; }
-  .prose { max-width: 72ch; }
-  .para { line-height: 1.7; margin: 0 0 var(--s-3); }
+  .segments { display: flex; flex-direction: column; margin: 0 calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6)); }
+  .seg-row { display: grid; grid-template-columns: 56px 120px minmax(0, 1fr); gap: var(--sp-5); padding: var(--sp-5) var(--sp-6);
+    border-top: 1px solid var(--line); scroll-margin: 120px; font-size: var(--fs-14); line-height: 20px; }
+  .seg-row.active { background: var(--accent-bg); }
+  .seg-row:last-child { border-radius: 0 0 var(--r-lg) var(--r-lg); }
+  .seg-meta { display: contents; }
+  .time { border: 0; background: none; padding: 0; font: 12px/20px var(--mono); color: var(--text-3); cursor: pointer; text-align: left; align-self: start; }
+  .time:hover:not(:disabled) { color: var(--accent); }
+  .time:disabled { cursor: default; }
+  .seg-text { min-width: 0; grid-column: 3; }
+  .prose { max-width: 72ch; margin: 0; }
+  .para { font-size: var(--fs-15); line-height: 24px; margin: 0 0 var(--sp-5); scroll-margin: 120px; border-radius: var(--r-sm); }
   .para:last-child { margin-bottom: 0; }
-  .para { scroll-margin: 80px; border-radius: var(--r-sm); }
+  .err-banner { align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 0; }
   .flash { background: var(--mark) !important; transition: background .6s ease; }
-  @media (max-width: 600px) { .seg-row { grid-template-columns: 1fr; gap: var(--s-1); } .seg-meta { flex-direction: row; align-items: center; } }
+  @media (max-width: 600px) {
+    .seg-row { grid-template-columns: 56px minmax(0, 1fr); }
+    .seg-text { grid-column: 1 / -1; }
+  }
 </style>

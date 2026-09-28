@@ -45,7 +45,7 @@ step("atoms accepted, the document offers to build");
 await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();
 await page.locator(".screen-sub", { hasText: "версия 1 · 3 требования" }).waitFor({ timeout: 15000 });
 await page.locator(".sec h3", { hasText: "3.1 Карточка клиента" }).waitFor();
-await page.locator("#blk-FR-1 .meta", { hasText: "FR-1 · из атома, 1 источник" }).waitFor();
+await page.locator('#blk-FR-1 .src[aria-label="из атома, 1 источник"]').waitFor();
 await page.getByText(/конфликт.* не разрешён/).waitFor();
 await shot("document.png");
 step("version 1 built: sections, IDs, sources, conflict warning");
