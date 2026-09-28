@@ -4,7 +4,7 @@
   import { api } from "../lib/api.js";
   import { app, t, toast } from "../lib/state.svelte.js";
 
-  let { selected = "", onSelect } = $props();
+  let { selected = "", onSelect, onReady, only = null } = $props();
 
   let st = $state(null);
   let timer = null;
@@ -23,6 +23,7 @@
     if (!d || d.status === lastStatus) return;
     if (lastStatus && d.status === "done") {
       toast(t("llm.downloaded"));
+      if (onReady) onReady();
       if (!selected && onSelect) onSelect(d.model);
     }
     if (lastStatus && d.status === "error") toast(d.error, { kind: "danger" });
@@ -40,6 +41,8 @@
   }
 
   const gb = n => (n / 1024 ** 3).toLocaleString(app.lang, { maximumFractionDigits: 1 });
+  // `only`: show just this model (e.g. the recommended one, in a compact prompt).
+  const shown = $derived(st ? st.models.filter(m => !only || m.id === (only === "recommended" ? st.recommended : only)) : []);
   const active = $derived(st ? (st.models.find(m => m.installed && m.id === selected) || st.models.find(m => m.installed)) : null);
   const dl = $derived(st?.download?.status === "downloading" || st?.download?.status === "verifying" ? st.download : null);
 </script>
@@ -48,16 +51,23 @@
   {#if !st.supported}
     <p class="note warn">{t("llm.unsupported")}</p>
   {:else}
+    {#if st.gpu && st.gpu.name}
+      <p class="hint gpu">{t("llm.gpu", { name: st.gpu.name, gb: gb(st.gpu.memory) })}</p>
+    {:else if st.gpu}
+      <p class="note warn">{t("llm.no_gpu")}</p>
+    {/if}
     <ul class="models">
-      {#each st.models as m (m.id)}
+      {#each shown as m (m.id)}
         <li class="model" class:on={active?.id === m.id}>
           <label class="pick">
-            <input type="radio" name="local-model" checked={active?.id === m.id} disabled={!m.installed}
+            <input type="radio" name="local-model" class:hidden={!!only} checked={active?.id === m.id} disabled={!m.installed}
                    onchange={() => onSelect && onSelect(m.id)} />
             <span class="name">
               <b>{m.label}</b>
               {#if m.recommended}<span class="tag accent">{t("llm.recommended")}</span>{/if}
-              {#if !m.fits}<span class="tag warn">{t("llm.low_ram", { n: m.min_ram_gb })}</span>{/if}
+              {#if !m.fits}<span class="tag warn">{t("llm.low_ram", { n: m.min_ram_gb })}</span>
+              {:else if m.speed === "partial"}<span class="tag warn">{t("llm.speed.partial")}</span>
+              {:else if m.speed === "slow" && st.gpu?.name}<span class="tag warn">{t("llm.speed.slow")}</span>{/if}
               <span class="hint">{t("llm.meta", { size: gb(m.size), ram: m.min_ram_gb })}</span>
             </span>
           </label>
@@ -87,6 +97,8 @@
 {/if}
 
 <style>
+  .gpu { margin-bottom: var(--s-2); }
+  .note.warn { margin-bottom: var(--s-2); }
   .models { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: var(--r-md); }
   .model { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; padding: var(--s-3); }
   .model + .model { border-top: 1px solid var(--rule); }

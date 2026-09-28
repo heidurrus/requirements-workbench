@@ -12,11 +12,18 @@
   let showHf = $state(false);
   let ollama = $state(null);
   let projectName = $state("");
+  let localReady = $state(true);
+
+  async function checkLocal() {
+    const st = await api("/api/local-llm").catch(() => null);
+    localReady = !st || !st.supported || st.models.some(m => m.installed);
+  }
 
   async function load() {
     s = await api("/settings");
     projectName = currentProject()?.name || "";
     if (s.llm_provider === "ollama") checkOllama();
+    checkLocal();
   }
   $effect(() => { load(); });
   $effect(() => { projectName = currentProject()?.name || ""; });
@@ -80,6 +87,13 @@
             {t("project.local_only")}
           </label>
           <p class="hint">{t("set.local_only_hint")}</p>
+          {#if currentProject().local_only && !localReady && s && s.llm_provider !== "ollama"}
+            <div class="need-local">
+              <p class="note warn">{t("llm.local_only_needs")}</p>
+              <LocalModel only="recommended" selected={s.local_model}
+                          onSelect={id => save({ local_model: id })} onReady={checkLocal} />
+            </div>
+          {/if}
           <div class="actions">
             <button class="btn btn-sm" onclick={archive} disabled={app.projects.length < 2}>{t("set.archive")}</button>
           </div>
@@ -130,10 +144,10 @@
             <p class="note">{t("set.claude_note")}</p>
             <div class="field sub">
               <span class="label">{t("llm.for_local_only")}</span>
-              <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} />
+              <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
             </div>
           {:else if s.llm_provider === "local"}
-            <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} />
+            <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
             <p class="note">{t("llm.quality_note")}</p>
           {:else}
             <div class="field">
@@ -193,6 +207,7 @@
 
 <style>
   .provider { display: flex; width: 100%; }
+  .need-local { display: flex; flex-direction: column; gap: var(--s-2); }
   .provider button { flex: 1; padding: 0 var(--s-2); }
   .sub { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--rule); gap: var(--s-2); }
 

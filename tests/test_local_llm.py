@@ -281,14 +281,99 @@ def test_a_server_left_by_a_crash_is_stopped_on_next_launch(fake_engine):
     fake_engine.release()
     proc = fake_engine._proc
     fake_engine._proc = None                     # simulate the app dying without cleanup
-    assert local_llm._is_our_server(proc.pid)
+    port = int(fake_engine._url.rsplit(":", 1)[1])
+    assert local_llm._is_our_server(proc.pid, port) and not local_llm._is_our_server(proc.pid, port + 1)
     assert local_llm.cleanup_stale() is True
     proc.wait(timeout=10)
     assert local_llm.cleanup_stale() is False    # nothing left, and the pid file is gone
 
 
 def test_cleanup_never_kills_an_unrelated_process(tmp_path, monkeypatch):
+    """Even one whose command line mentions llama-server and the port (e.g. a shell or an editor)."""
+    import subprocess
     monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path))
-    with open(local_llm._pid_file(), "w") as f:
-        f.write(str(os.getppid()))
-    assert local_llm.cleanup_stale() is False
+    if sys.platform == "win32":
+        pytest.skip("POSIX command-line check")
+    bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "llama-server", "--port", "4321"])
+    try:
+        with open(local_llm._pid_file(), "w") as f:
+            f.write(f"{bystander.pid} 4321")
+        assert local_llm.cleanup_stale() is False
+        assert bystander.poll() is None
+    finally:
+        bystander.kill()
+
+
+# ── GPU-aware choice (Windows: VRAM decides speed; Mac: unified memory) ──────
+
+def gpu(gb, name="GPU"):
+    return {"name": name, "memory": int(gb * GB), "backend": "Vulkan0"}
+
+
+@pytest.mark.parametrize("ram_gb,gpu_,expect", [
+    (32, gpu(12), "gemma-4-12b"),        # RTX 3060 12 GB: the big model runs fast
+    (32, gpu(6), "qwen3.5-4b"),          # 6 GB card: Gemma would half run on the CPU
+    (16, {}, "qwen3.5-4b"),              # no usable GPU: the small model, on the CPU
+    (8, gpu(24), "qwen3.5-4b"),          # plenty of VRAM but too little RAM
+    (16, gpu(12, "Apple M1 Pro"), "gemma-4-12b"),
+])
+def test_recommendation_uses_gpu_memory(ram_gb, gpu_, expect):
+    assert recommended_model_id(ram_gb * GB, gpu_) == expect
+
+
+def test_speed_classes():
+    gemma = local_llm.MODELS_BY_ID["gemma-4-12b"]
+    assert [local_llm.speed(gemma, g) for g in (gpu(12), gpu(5), gpu(2), {}, None)] == \
+        ["fast", "partial", "slow", "slow", None]
+
+
+def test_parse_engine_devices():
+    out = """load_backend: loaded Vulkan backend
+Available devices:
+  Vulkan0: NVIDIA GeForce RTX 3060 (12288 MiB, 11200 MiB free)
+  Vulkan1: Intel(R) UHD Graphics (0 MiB, 0 MiB free)
+  BLAS: Accelerate (0 MiB, 0 MiB free)
+"""
+    assert local_llm._parse_devices(out) == [
+        {"name": "NVIDIA GeForce RTX 3060", "memory": 12288 * 1024 ** 2, "backend": "Vulkan0"}]
+    assert local_llm._parse_devices("Available devices:\n") == []
+
+
+class FakeWinreg:
+    HKEY_LOCAL_MACHINE = "HKLM"
+
+    def __init__(self, adapters):
+        self.adapters = adapters            # {"0000": {value: data}}
+
+    def OpenKey(self, root, path):
+        sub = path.rsplit("\\", 1)[1]
+        if sub not in self.adapters:
+            raise OSError("no key")
+        return sub
+
+    def QueryValueEx(self, key, value):
+        if value not in self.adapters[key]:
+            raise OSError("no value")
+        return self.adapters[key][value], 0
+
+    def CloseKey(self, key):
+        pass
+
+
+def test_windows_registry_reports_the_biggest_card():
+    reg = FakeWinreg({
+        "0000": {"DriverDesc": "Intel(R) UHD Graphics 770", "HardwareInformation.MemorySize": 128 * 1024 ** 2},
+        "0001": {"DriverDesc": "NVIDIA GeForce RTX 4070", "HardwareInformation.qwMemorySize": (12 * GB).to_bytes(8, "little")},
+    })
+    g = local_llm._registry_gpu(reg)
+    assert g["name"] == "NVIDIA GeForce RTX 4070" and g["memory"] == 12 * GB
+
+
+def test_integrated_graphics_counts_as_no_gpu(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(local_llm, "_gpu_cache", {})
+    monkeypatch.setattr(local_llm.sys, "platform", "win32")
+    monkeypatch.setattr(local_llm, "_registry_gpu", lambda: {"name": "Intel UHD", "memory": 128 * 1024 ** 2})
+    assert local_llm.gpu_info() == {}
+    st = local_llm.status()
+    assert st["recommended"] == "qwen3.5-4b" and {m["speed"] for m in st["models"]} == {"slow"}
