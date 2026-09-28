@@ -178,7 +178,7 @@
   </header>
 
   <div class="stack">
-    <div class="grid-2">
+    <div class="cards-wrap"><div class="cards">
       <section class="panel card">
         <h2 class="panel-title">{t("sources.record.title")}</h2>
         <p class="panel-desc">{app.device.desktop ? t("sources.record.desc") : t("sources.record.desc_browser")}</p>
@@ -193,6 +193,7 @@
             <span class="stage-hint">{t("rec.start_hint")}</span>
           {/if}
         </div>
+        <div class="foot">
         <label class="mic-pick" title={t("rec.mic")}>
           <Icon name="mic" />
           <select class="select" bind:value={mic} disabled={recording} aria-label={t("rec.mic")}>
@@ -204,6 +205,7 @@
           <p class="note warn below">{recording ? t("rec.problems") : t("rec.saved_partial")}: {recProblems.join(" · ")}</p>
         {/if}
         {#if recError}<p class="note danger below">{recError}</p>{/if}
+        </div>
       </section>
 
       <section class="panel card">
@@ -219,15 +221,17 @@
           <span class="hint">{t("sources.upload.formats")}</span>
           {#if file}<span class="file">{file.name}{#if fileIsTranscript} · {t("sources.upload.is_transcript")}{/if}</span>{/if}
         </label>
-        <div class="actions bottom">
+        <div class="foot">
+        <div class="actions">
           <button class="btn btn-primary btn-block" disabled={!file || uploading} onclick={() => submitUpload()}>
             {#if uploading}<span class="spinner"></span>{/if}
             {fileIsTranscript ? t("sources.upload.summarize") : t("sources.upload.transcribe")}
           </button>
         </div>
         {#if uploadError}<p class="note danger below">{uploadError}</p>{/if}
+        </div>
       </section>
-    </div>
+    </div></div>
 
     <Block id="sources-options" title={t("sources.options")} meta={optionsMeta} open={false}>
       <div class="row">
@@ -304,11 +308,19 @@
 </div>
 
 <style>
-  /* Both cards: same height, the drop zone / record stage stretch, so their bottom rows line up. */
-  .card { display: flex; flex-direction: column; }
-  .stage, .drop { flex: 1; min-height: 132px; }
-  .bottom, .mic-pick { margin-top: var(--s-3); }
+  /* The two cards share rows (title · description · box · bottom row) through a subgrid, so
+     each row lines up across both cards whatever the text length. Stacked when narrow. */
+  .cards-wrap { container-type: inline-size; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--s-4); }
+  .card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; }
+  .card .panel-desc { align-self: start; }
+  .stage, .drop { min-height: 132px; }
+  .foot { margin-top: var(--s-3); }
   .below { margin-top: var(--s-3); }
+  @container (max-width: 640px) {
+    .cards { grid-template-columns: 1fr; row-gap: var(--s-4); }
+    .card { display: flex; flex-direction: column; grid-row: auto; }
+  }
 
   .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s-2);
     border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--sunk); padding: var(--s-4); }
