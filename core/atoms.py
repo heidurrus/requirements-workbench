@@ -9,38 +9,20 @@ existing ones to fold duplicates in and flag contradictions (BR-03, D-06).
 import re
 import unicodedata
 
+from core import skills
 from core.llm import LLMError, complete_json, for_project, model_name
 from core.transcripts import format_time
 
 CHUNK_CHARS = 12000
 MAX_EXISTING_FOR_DEDUP = 400
 
-EXTRACT_SYSTEM = """You are a senior business analyst. You read one source of a software project
-(a call transcript, an email or a document) and pull out requirement atoms: small, self-contained,
-testable statements of what the system must do or how well it must do it.
-
-Types:
-- functional: behaviour the system must have ("The operator sees the client's order history when a call comes in").
-- nfr: a quality or constraint (performance, security, availability, compliance, localisation…), with the number if one was said.
-- question: something left open, contradictory or vague that the BA must clarify with the client.
-
-Rules:
-- One requirement per atom. Split compound statements.
-- Write each statement in the language of the source, as a clear requirement ("The system must…" / "Система должна…").
-  Resolve pronouns ("it", "this screen") using the context.
-- Only what the participants actually asked for or agreed on. Skip small talk, greetings,
-  the BA's own questions (unless they were confirmed), and ideas that were explicitly rejected.
-- Every atom cites evidence: the number from the [S…] label of the line it came from, and a quote copied
-  character for character from that line (a short contiguous fragment, not a paraphrase, no ellipses).
+# The guidance lives in the extract / dedup skills (skills/…/SKILL.md, editable by the user);
+# the app adds these contracts, which keep the pipeline working whatever the skill says.
+EXTRACT_CONTRACT = """- Every atom cites evidence: the number from the [S…] label of the line it came from, and a quote copied character for character from that line (a short contiguous fragment, not a paraphrase, no ellipses). Atoms without such a quote are discarded.
+- type is one of: functional, nfr, question.
 - If nothing in the text is a requirement, return an empty list."""
 
-DEDUP_SYSTEM = """You compare requirement atoms of one software project.
-Items marked N are new; items marked E already exist.
-- duplicates: a new item that says the same thing as another item (same behaviour, same limits) — even
-  if worded differently. Report the new item and the item it duplicates (prefer an E item, else an earlier N item).
-- conflicts: two items that cannot both be true (different numbers, opposite rules, incompatible behaviour).
-  Describe the contradiction in one short sentence in the language of the atoms.
-Only report clear cases. At least one side of every pair must be a new (N) item. Do not report items that merely overlap."""
+DEDUP_CONTRACT = """Items marked N are new; items marked E already exist. At least one side of every pair must be a new (N) item. For a duplicate, give the new item and the item it duplicates (prefer an E item, else an earlier N item)."""
 
 EXTRACT_SCHEMA = {
     "type": "object",
@@ -150,27 +132,24 @@ def _source_header(source):
     return f"Source: {kind} titled “{source['title']}”."
 
 
-def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, complete=complete_json):
-    """Extract atoms from one source into the store; returns counts for the UI.
-
-    Re-extraction drops the source's atoms still pending review and keeps the
-    reviewed ones, so no decision is lost."""
+def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=None, progress=None,
+                       complete=complete_json):
+    """Atoms found in one source, verified against the text, without saving anything
+    (used by extraction and by "try this skill")."""
     source = store.get_source(source_id)
-    project = store.get_project(source["project_id"])
     segments, _ = store.transcript(source_id)
     if not segments:
         raise LLMError("This source has no text yet.")
-    prefs = for_project(prefs, project)                        # FR-PRJ-05: nothing leaves the machine
-    model = model_name(prefs)
+    skillset = skillset or skills.resolve()
+    system = skills.compose(skillset, "extract", EXTRACT_CONTRACT)
     report = progress or (lambda done, total, message: None)
-
     chunks = chunk_segments(segments)
     steps = len(chunks) + 1
     candidates, dropped = [], 0
     for i, chunk in enumerate(chunks):
         report(i, steps, f"Reading part {i + 1} of {len(chunks)}…" if len(chunks) > 1 else "Reading the source…")
         user = _source_header(source) + "\n\n" + "\n".join(segment_line(s) for s in chunk)
-        reply = complete(EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, prefs, api_key, ollama_url)
+        reply = complete(system, user, EXTRACT_SCHEMA, prefs, api_key, ollama_url)
         for atom in reply.get("atoms") or []:
             statement = (atom.get("statement") or "").strip()
             if atom.get("type") not in ("functional", "nfr", "question") or not statement:
@@ -181,17 +160,32 @@ def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, c
                 dropped += 1                                   # no evidence, no atom
                 continue
             candidates.append({"type": atom["type"], "statement": statement, "evidence": evidence})
+    return candidates, dropped, steps
 
-    report(len(chunks), steps, "Checking for duplicates and conflicts…")
+
+def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None):
+    """Extract atoms from one source into the store; returns counts for the UI.
+
+    Re-extraction drops the source's atoms still pending review and keeps the
+    reviewed ones, so no decision is lost."""
+    source = store.get_source(source_id)
+    project = store.get_project(source["project_id"])
+    prefs = for_project(prefs, project)                        # FR-PRJ-05: nothing leaves the machine
+    model = model_name(prefs)
+    skillset = skillset or skills.resolve()
+    report = progress or (lambda done, total, message: None)
+    candidates, dropped, steps = extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset,
+                                                    progress, complete)
+    report(steps - 1, steps, "Checking for duplicates and conflicts…")
     cleared = store.delete_pending_atoms_for_source(source_id)
     new_ids = store.add_atoms(project["id"], candidates, model=model) if candidates else []
-    merged, conflicts = _dedup(store, project["id"], new_ids, prefs, api_key, ollama_url, complete)
+    merged, conflicts = _dedup(store, project["id"], new_ids, prefs, api_key, ollama_url, complete, skillset)
     report(steps, steps, "Done")
     return {"extracted": len(new_ids) - merged, "merged": merged, "conflicts": conflicts,
             "dropped": dropped, "replaced": cleared, "provider": prefs["llm_provider"], "model": model}
 
 
-def _dedup(store, project_id, new_ids, prefs, api_key, ollama_url, complete):
+def _dedup(store, project_id, new_ids, prefs, api_key, ollama_url, complete, skillset=None):
     if not new_ids:
         return 0, 0
     new_set = set(new_ids)
@@ -204,7 +198,8 @@ def _dedup(store, project_id, new_ids, prefs, api_key, ollama_url, complete):
     ids = {key: a["id"] for key, a in labelled}
     lines = [f"{key} [{a['type']}] {a['statement']}" for key, a in labelled]
     try:
-        reply = complete(DEDUP_SYSTEM, "\n".join(lines), DEDUP_SCHEMA, prefs, api_key, ollama_url)
+        system = skills.compose(skillset or skills.resolve(), "dedup", DEDUP_CONTRACT)
+        reply = complete(system, "\n".join(lines), DEDUP_SCHEMA, prefs, api_key, ollama_url)
     except LLMError:
         return 0, 0          # the atoms are saved; a failed comparison just means no suggestions
 

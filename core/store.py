@@ -11,6 +11,7 @@ WAL mode lets readers and a writer work at the same time.
 import getpass
 import json
 import os
+import re
 import shutil
 import sqlite3
 import threading
@@ -20,7 +21,7 @@ from contextlib import contextmanager
 
 from core.paths import app_data_dir
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ATOM_TYPES = {"functional", "nfr", "question"}
 ATOM_STATUSES = {"pending", "accepted", "rejected", "merged"}
 CONFLICT_ACTIONS = {"keep_a", "keep_b", "merge", "question"}
@@ -90,6 +91,9 @@ CREATE TABLE IF NOT EXISTS free_blocks (
   id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), section TEXT NOT NULL,
   text TEXT NOT NULL, position REAL NOT NULL, deleted_at REAL,
   created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS project_skills (
+  project_id TEXT NOT NULL REFERENCES projects(id), stage TEXT NOT NULL, skill TEXT NOT NULL,
+  updated_at REAL NOT NULL, updated_by TEXT NOT NULL, PRIMARY KEY (project_id, stage));
 CREATE TABLE IF NOT EXISTS quality_dismissals (
   document_id TEXT NOT NULL REFERENCES documents(id), atom_id TEXT NOT NULL, rule TEXT NOT NULL,
   statement TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL,
@@ -682,7 +686,7 @@ class Store:
         return n
 
     # ── FRD documents (spec increment 3, FR-DOC-*) ────────────────────────────
-    DOC_TEMPLATES = ("neutral", "gost")
+    LEGACY_TEMPLATES = {"neutral": "export-standard", "gost": "export-gost"}   # 2.6.0 values → export skills
     FREE_SECTIONS = ("purpose", "context", "functional", "nfr", "out_of_scope", "questions")
 
     def document(self, project_id, create=True):
@@ -692,12 +696,12 @@ class Store:
             row = c.execute("SELECT * FROM documents WHERE project_id = ? ORDER BY created_at LIMIT 1",
                             (project_id,)).fetchone()
         if row is not None or not create:
-            return dict(row) if row else None
+            return self._doc_row(row) if row else None
         with self._write() as c:
             now, by = self._stamp()
             did = str(uuid.uuid4())
             c.execute("INSERT INTO documents VALUES (?,?,?,?,?,?,?,?)",
-                      (did, project_id, f"FRD — {project['name']}", "neutral", now, by, now, by))
+                      (did, project_id, f"FRD — {project['name']}", "export-standard", now, by, now, by))
             self._audit(c, "document", did, "create")
         return self.get_document(did)
 
@@ -706,13 +710,18 @@ class Store:
             row = c.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
         if row is None:
             raise StoreError("document not found")
-        return dict(row)
+        return self._doc_row(row)
+
+    def _doc_row(self, row):
+        d = dict(row)
+        d["template"] = self.LEGACY_TEMPLATES.get(d["template"], d["template"])
+        return d
 
     def update_document(self, document_id, **changes):
         if set(changes) - {"title", "template"}:
             raise StoreError("only the title and template can be changed")
-        if "template" in changes and changes["template"] not in self.DOC_TEMPLATES:
-            raise StoreError(f"template must be one of {self.DOC_TEMPLATES}")
+        if "template" in changes and not re.match(r"^[a-z0-9][a-z0-9-]{1,62}$", str(changes["template"])):
+            raise StoreError("template must be the name of an export skill")
         if "title" in changes:
             changes["title"] = (changes["title"] or "").strip()[:200]
             if not changes["title"]:
@@ -788,7 +797,7 @@ class Store:
 
     def add_free_block(self, document_id, section, text):
         self.get_document(document_id)
-        if section not in self.FREE_SECTIONS:
+        if not re.match(r"^[a-z][a-z0-9_]{0,40}$", str(section or "")):
             raise StoreError("unknown section")
         text = (text or "").strip()
         if not text:
@@ -823,6 +832,24 @@ class Store:
             if not n:
                 raise StoreError("block not found")
             self._audit(c, "free_block", block_id, "restore" if restore else "delete")
+
+    # skills chosen for one project, overriding the global choice (FR-SET-04, D-13)
+    def project_skills(self, project_id):
+        with self._conn() as c:
+            return {r["stage"]: r["skill"] for r in c.execute(
+                "SELECT stage, skill FROM project_skills WHERE project_id = ?", (project_id,))}
+
+    def set_project_skill(self, project_id, stage, skill):
+        """skill None removes the override (the project follows the global choice again)."""
+        self.get_project(project_id)
+        before = self.project_skills(project_id).get(stage)
+        with self._write() as c:
+            if skill:
+                now, by = self._stamp()
+                c.execute("INSERT OR REPLACE INTO project_skills VALUES (?,?,?,?,?)", (project_id, stage, skill, now, by))
+            else:
+                c.execute("DELETE FROM project_skills WHERE project_id = ? AND stage = ?", (project_id, stage))
+            self._audit(c, "project", project_id, "skill", {"stage": stage, "skill": before}, {"stage": stage, "skill": skill})
 
     # quality findings the BA chose to ignore (FR-DOC-06 AC2: dismiss)
     def dismiss_finding(self, document_id, atom_id, rule):

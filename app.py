@@ -23,7 +23,7 @@ from core.ffmpeg import ensure_ffmpeg_on_path
 from core import macos_audio, settings
 from core.summarize import SummaryError, summarize
 from core.atoms import extract_atoms
-from core import frd
+from core import frd, skills
 from core import local_llm
 from core.llm import for_project, model_name
 from core.jobs import JobStore, SerialQueue
@@ -560,6 +560,11 @@ def health():
     })
 
 
+def _skillset(project_id):
+    """Skills in effect for this project: its own choices, else the global ones, else built-in."""
+    return skills.resolve(library.project_skills(project_id) if project_id else None)
+
+
 def _ai_prefs(project):
     """Settings for an AI call in this project, or an error response telling the user what to set up."""
     # "Local only" project: nothing may go to a cloud model (spec FR-PRJ-05, D-02).
@@ -653,10 +658,10 @@ def ollama_status():
     return jsonify({"reachable": ollama_reachable()})
 
 
-def _run_summary(job_id, text, title, prefs, api_key, source_id=None):
+def _run_summary(job_id, text, title, prefs, api_key, source_id=None, project_id=None):
     try:
-        result = summarize(text, prefs, api_key, OLLAMA_URL,
-                           on_delta=lambda piece: jobs.append_partial(job_id, piece), title=title)
+        result = summarize(text, prefs, api_key, OLLAMA_URL, on_delta=lambda piece: jobs.append_partial(job_id, piece),
+                           title=title, skillset=_skillset(project_id))
     except SummaryError as e:
         jobs.fail(job_id, e)
     except Exception as e:  # unexpected: keep the message, don't crash the worker
@@ -694,8 +699,8 @@ def summarize_route():
         return problem
     job_id = jobs.create()
     jobs.set_progress(job_id, 0, "Writing summary…")
-    threading.Thread(target=_run_summary, args=(job_id, text, title, prefs, api_key, source_id),
-                     daemon=True).start()
+    threading.Thread(target=_run_summary, args=(job_id, text, title, prefs, api_key, source_id,
+                                                project["id"] if project else None), daemon=True).start()
     return jsonify({"job_id": job_id})
 
 
@@ -936,7 +941,9 @@ def _run_extraction(job_id, source_id, prefs, api_key):
     def progress(done, total, message):
         jobs.set_progress(job_id, int(100 * done / max(total, 1)), message)
     try:
-        result = extract_atoms(library, source_id, prefs, api_key, OLLAMA_URL, progress=progress)
+        project_id = library.get_source(source_id)["project_id"]
+        result = extract_atoms(library, source_id, prefs, api_key, OLLAMA_URL, progress=progress,
+                               skillset=_skillset(project_id))
     except SummaryError as e:
         jobs.fail(job_id, e)
     except Exception as e:  # unexpected: keep the message, don't crash the worker
@@ -1057,7 +1064,7 @@ def api_document(project_id):
 def _run_build(job_id, project_id, prefs, api_key, mode):
     try:
         result = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode=mode,
-                           progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg))
+                           progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg), skillset=_skillset(project_id))
     except (frd.BuildError, SummaryError) as e:
         jobs.fail(job_id, e)
     except Exception as e:  # unexpected: keep the message, don't crash the worker
@@ -1118,15 +1125,22 @@ def api_export_docx(document_id):
     version = library.version(document_id, request.args.get("version"))
     if not version:
         return jsonify({"error": "build the document first"}), 400
-    template = request.args.get("template") or doc["template"]
-    if template not in library.DOC_TEMPLATES:
-        return jsonify({"error": "unknown template"}), 400
+    name = request.args.get("template") or doc["template"]
+    try:
+        skill = skills.get(library.LEGACY_TEMPLATES.get(name, name))
+        if skill.stage != "export" or skill.error:
+            raise skills.SkillError(f"'{name}' is not a working export skill")
+        template = skills.template_bytes(skill)
+    except (skills.SkillError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
     try:
         from core import docx_export          # loaded on demand: the rest of the app works without it
     except ImportError:
         return jsonify({"error": "Word export is still being installed: restart the app to let setup finish."}), 503
-    data = docx_export.render(doc, version, library.free_blocks(document_id), template=template)
-    library.audit_event("document", document_id, "export", after={"version": version["number"], "template": template})
+    project = library.get_project(doc["project_id"])
+    data = docx_export.render(doc, version, library.free_blocks(document_id), template=template,
+                              numbering=skill.meta.get("numbering", "dot"), project_name=project["name"])
+    library.audit_event("document", document_id, "export", after={"version": version["number"], "template": skill.name})
     name = "".join(ch for ch in doc["title"] if ch not in '\\/:*?"<>|').strip() or "FRD"
     return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{name} v{version['number']}.docx",
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
@@ -1157,7 +1171,8 @@ def api_restore_free_block(block_id):
 
 def _run_fix(job_id, project_id, atom_id, rule, message, prefs, api_key):
     try:
-        jobs.finish(job_id, frd.suggest_fix(library, project_id, atom_id, rule, message, prefs, api_key, OLLAMA_URL))
+        jobs.finish(job_id, frd.suggest_fix(library, project_id, atom_id, rule, message, prefs, api_key, OLLAMA_URL,
+                                            skillset=_skillset(project_id)))
     except (SummaryError, StoreError) as e:
         jobs.fail(job_id, e)
     except Exception as e:
@@ -1185,6 +1200,244 @@ def api_fix(document_id):
 def api_dismiss(document_id):
     data = request.get_json(silent=True) or {}
     return _store_call(lambda: (library.dismiss_finding(document_id, data.get("atom_id"), data.get("rule")), {"ok": True})[1])
+
+
+# ── skills (FR-SET-04): editable, shareable instructions per AI stage ─────────
+def _contracts():
+    """What the app adds to each stage's skill, shown read-only in the editor."""
+    from core import atoms as atoms_mod
+    return {"extract": atoms_mod.EXTRACT_CONTRACT, "dedup": atoms_mod.DEDUP_CONTRACT,
+            "frd": frd.FULL_CONTRACT.replace("{extra}", "").replace("{rules}", "(from the quality skill)"),
+            "quality": "The rules are applied while the FRD is written; vague words are also checked by the app.",
+            "fix": frd.FIX_CONTRACT, "summary": "", "global": "", "export": ""}
+
+
+def _skill_call(fn, *args, **kwargs):
+    try:
+        out = fn(*args, **kwargs)
+    except skills.SkillError as e:
+        return jsonify({"error": str(e)}), 404 if "not found" in str(e) else 400
+    if isinstance(out, skills.Skill):
+        return jsonify(_skill_payload(out))
+    return jsonify(out if out is not None else {"ok": True})
+
+
+def _skill_payload(skill):
+    body = skill.full()
+    body["contract"] = _contracts().get(skill.stage, "")
+    body["history"] = [] if skill.builtin or skill.error else skills.history(skill.name)
+    if skill.stage == "export":
+        from core.docx_export import PLACEHOLDER_HELP
+        body["placeholders"] = [{"code": c, "label": lbl} for c, lbl in PLACEHOLDER_HELP]
+        body["has_template_file"] = not skill.builtin and os.path.isfile(os.path.join(skill.path, "template.docx"))
+    return body
+
+
+@app.route("/api/skills")
+def api_skills():
+    project_id = request.args.get("project_id") or library.current_project()["id"]
+    overrides = library.project_skills(project_id)
+    effective = skills.resolve(overrides)
+    chosen = skills.global_choices()
+    return jsonify({
+        "stages": [{"id": st, "default": skills.DEFAULTS[st], "global": chosen.get(st) or skills.DEFAULTS[st],
+                    "project": overrides.get(st), "effective": effective[st].name if effective[st] else None}
+                   for st in skills.STAGES],
+        "skills": [s.summary() for s in skills.all_skills()],
+        "project_id": project_id,
+    })
+
+
+@app.route("/api/skills/<name>")
+def api_skill(name):
+    return _skill_call(skills.get, name)
+
+
+@app.route("/api/skills", methods=["POST"])
+def api_skill_create():
+    data = request.get_json(silent=True) or {}
+    return _skill_call(skills.create, data.get("from") or "", title=data.get("title"))
+
+
+@app.route("/api/skills/<name>", methods=["PUT"])
+def api_skill_save(name):
+    data = request.get_json(silent=True) or {}
+    return _skill_call(skills.save, name, title=data.get("title"), description=data.get("description"),
+                       instructions=data.get("instructions"), settings=data.get("meta"))
+
+
+@app.route("/api/skills/<name>", methods=["DELETE"])
+def api_skill_delete(name):
+    library.audit_event("skill", name, "delete")
+    return _skill_call(skills.delete, name)
+
+
+@app.route("/api/skills/<name>/undelete", methods=["POST"])
+def api_skill_undelete(name):
+    return _skill_call(skills.undelete, name)
+
+
+@app.route("/api/skills/<name>/history/<entry>")
+def api_skill_history_entry(name, entry):
+    return _skill_call(lambda: {"text": skills.history_text(name, entry)})
+
+
+@app.route("/api/skills/<name>/history/<entry>/restore", methods=["POST"])
+def api_skill_restore(name, entry):
+    return _skill_call(skills.restore, name, entry)
+
+
+@app.route("/api/skills/<name>/export.zip")
+def api_skill_export(name):
+    try:
+        data = skills.export_zip(name)
+    except skills.SkillError as e:
+        return jsonify({"error": str(e)}), 404
+    return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{name}.zip", mimetype="application/zip")
+
+
+@app.route("/api/skills/import", methods=["POST"])
+def api_skill_import():
+    f = request.files.get("file")
+    if f is None:
+        return jsonify({"error": "choose a .zip or SKILL.md file"}), 400
+    result = _skill_call(skills.import_file, f.filename or "skill.zip", f.read(skills.MAX_IMPORT_BYTES + 1))
+    return result
+
+
+@app.route("/api/skills/<name>/template.docx")
+def api_skill_template(name):
+    try:
+        skill = skills.get(name)
+        if skill.stage != "export":
+            raise skills.SkillError("only export skills have a Word template")
+        data = skills.template_bytes(skill)
+    except skills.SkillError as e:
+        return jsonify({"error": str(e)}), 404
+    return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{name}.docx",
+                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
+@app.route("/api/skills/<name>/template", methods=["POST"])
+def api_skill_upload_template(name):
+    f = request.files.get("file")
+    if f is None:
+        return jsonify({"error": "choose a .docx file"}), 400
+    return _skill_call(skills.set_template, name, f.read(skills.MAX_IMPORT_BYTES + 1))
+
+
+@app.route("/api/skills/<name>/open", methods=["POST"])
+def api_skill_open(name):
+    """Open the skill's Word template in Word (or its folder), for editing on this computer."""
+    what = (request.get_json(silent=True) or {}).get("what", "folder")
+    try:
+        skill = skills.get(name)
+        if skill.builtin:
+            raise skills.SkillError("built-in skills can't be changed: make a copy first")
+        path = skill.path
+        if what == "template":
+            path = skills.template_path(name)
+            skills._snapshot(skill, "docx")          # keep the version before editing in Word
+    except skills.SkillError as e:
+        return jsonify({"error": str(e)}), 400
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    elif sys.platform == "win32":
+        os.startfile(path)  # noqa: S606 — opening the user's own file with its default app
+    else:
+        subprocess.Popen(["xdg-open", path])
+    return jsonify({"ok": True, "path": path})
+
+
+@app.route("/api/skills/active", methods=["PUT"])
+def api_skill_active():
+    """Choose the skill for a stage: globally, or for one project (skill null = follow the global choice)."""
+    data = request.get_json(silent=True) or {}
+    stage, name, project_id = data.get("stage"), data.get("skill"), data.get("project_id")
+    try:
+        if name:
+            skill = skills.get(name)
+            if skill.stage != stage or skill.error:
+                raise skills.SkillError(f"'{name}' is not a working {stage} skill")
+        if project_id:
+            library.set_project_skill(project_id, stage, name)
+        else:
+            if not name:
+                raise skills.SkillError("choose a skill")
+            skills.set_global(stage, name)
+            library.audit_event("skill", name, "use_globally", after={"stage": stage})
+    except (skills.SkillError, StoreError) as e:
+        return jsonify({"error": str(e)}), 400
+    return api_skills()
+
+
+def _draft_skill(data):
+    """A skill as it is being edited (not saved yet), for "try it"."""
+    base = skills.get(data["name"])
+    meta = {**base.meta, **(data.get("meta") or {})}
+    for key in ("title", "description"):
+        if data.get(key) is not None:
+            meta[key] = data[key]
+    instructions = data.get("instructions", base.instructions)
+    skills.validate(meta, instructions, base.path)
+    return skills.Skill(base.name, str(meta["title"]), str(meta.get("description") or ""), base.stage,
+                        instructions, meta, base.builtin, base.path)
+
+
+def _run_try(job_id, stage, skill, project_id, source_id, prefs, api_key):
+    from core import atoms as atoms_mod
+    try:
+        skillset = {**_skillset(project_id), stage: skill}
+        report = lambda pct, msg: jobs.set_progress(job_id, pct, msg)  # noqa: E731
+        if stage in ("summary", "global"):
+            source = library.get_source(source_id)
+            text = summarize(library.transcript_text(source_id), prefs, api_key, OLLAMA_URL,
+                             on_delta=lambda piece: jobs.append_partial(job_id, piece), title=source["title"],
+                             skillset=skillset)
+            jobs.finish(job_id, {"kind": "markdown", "text": text})
+        elif stage == "extract":
+            found, dropped, _ = atoms_mod.extract_candidates(
+                library, source_id, prefs, api_key, OLLAMA_URL, skillset,
+                progress=lambda d, t, m: report(int(100 * d / max(t, 1)), m))
+            jobs.finish(job_id, {"kind": "atoms", "atoms": found, "dropped": dropped})
+        elif stage in ("frd", "quality"):
+            out = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode="full", progress=report,
+                            skillset=skillset, save=False)
+            jobs.finish(job_id, {"kind": "document", "content": out["content"]})
+        else:
+            raise skills.SkillError("this stage can't be tried here")
+    except (skills.SkillError, SummaryError, frd.BuildError, StoreError) as e:
+        jobs.fail(job_id, e)
+    except Exception as e:
+        jobs.fail(job_id, f"The try failed: {e}")
+
+
+@app.route("/api/skills/try", methods=["POST"])
+def api_skill_try():
+    """Run a stage with a draft skill on a real source or the current project, without saving anything."""
+    data = request.get_json(silent=True) or {}
+    try:
+        skill = _draft_skill(data)
+    except (skills.SkillError, KeyError) as e:
+        return jsonify({"error": str(e)}), 400
+    project_id = data.get("project_id") or library.current_project()["id"]
+    source_id = data.get("source_id")
+    if skill.stage in ("summary", "global", "extract"):
+        try:
+            source = library.get_source(source_id or "")
+        except StoreError:
+            return jsonify({"error": "choose a source to try this skill on"}), 400
+        if source["status"] != "ready":
+            return jsonify({"error": "This source has no text yet."}), 400
+        project_id = source["project_id"]
+    prefs, api_key, problem = _ai_prefs(library.get_project(project_id))
+    if problem:
+        return problem
+    job_id = jobs.create()
+    jobs.set_progress(job_id, 0, "Trying the skill…")
+    threading.Thread(target=_run_try, args=(job_id, skill.stage, skill, project_id, source_id, prefs, api_key),
+                     daemon=True).start()
+    return jsonify({"job_id": job_id})
 
 
 if __name__ == "__main__":

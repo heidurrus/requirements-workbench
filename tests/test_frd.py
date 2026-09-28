@@ -198,7 +198,8 @@ def test_docx_has_sections_footnotes_and_free_text(store, template):
     frd.build(store, pid, PREFS, "k", "", complete=llm(full_reply()))
     doc = store.document(pid)
     store.add_free_block(doc["id"], "purpose", "Согласовано с заказчиком.")
-    data = docx_export.render(doc, store.version(doc["id"]), store.free_blocks(doc["id"]), template=template)
+    data = docx_export.render(doc, store.version(doc["id"]), store.free_blocks(doc["id"]),
+                              template=docx_export.starter(template), numbering="plain" if template == "gost" else "dot")
     z = zipfile.ZipFile(io.BytesIO(data))
     body = z.read("word/document.xml").decode()
     notes = z.read("word/footnotes.xml").decode()
@@ -282,8 +283,9 @@ def test_api_build_needs_accepted_atoms(client, lib):
 def test_api_document_template_and_title(client, lib):
     pid, *_ = seed(lib)
     doc_id = client.get(f"/api/projects/{pid}/document").get_json()["document"]["id"]
-    assert client.patch(f"/api/documents/{doc_id}", json={"template": "gost"}).get_json()["template"] == "gost"
-    assert client.patch(f"/api/documents/{doc_id}", json={"template": "fancy"}).status_code == 400
+    assert client.get(f"/api/projects/{pid}/document").get_json()["document"]["template"] == "export-standard"
+    assert client.patch(f"/api/documents/{doc_id}", json={"template": "export-gost"}).get_json()["template"] == "export-gost"
+    assert client.patch(f"/api/documents/{doc_id}", json={"template": "Not A Skill!"}).status_code == 400
     assert client.patch(f"/api/documents/{doc_id}", json={"title": "ФТ — Карточка"}).get_json()["title"] == "ФТ — Карточка"
 
 
