@@ -1,7 +1,9 @@
 ---
 name: fix-requirement
-title: Исправление требования
-description: Предлагает новую формулировку требования, которая проходит проверку качества.
+title: {ru: "Исправление требования", en: "Requirement fix"}
+description:
+  ru: "Предлагает новую формулировку требования, которая проходит проверку качества."
+  en: "Proposes a new wording of a requirement that passes the quality check."
 stage: fix
 version: 1
 ---

@@ -363,3 +363,43 @@ def test_atoms_rejected_as_out_of_scope_are_listed_in_that_section(store):
     content = store.version(r["document_id"])["content"]
     sec = next(x for x in content["sections"] if x["key"] == "out_of_scope")
     assert any("Мобильное приложение для клиентов" in b.get("items", []) for b in sec["blocks"])
+
+
+def test_risk_register_document_has_a_table_with_ids_and_a_heat_map(store):
+    from core import docx_export, exports, skills as sk
+    pid, ids, sid = seed(store)
+    doc = store.create_document(pid, "write-risk-register", "Риски — проект")
+    reply = full_reply()
+    reply["tables"] = [{"key": "risks", "rows": [
+        ["Заказчик не согласует сроки", "конфликт требований", "высокая", "высокое", "снизить: созвон", "BA", "FR-1"],
+        ["Нет API CRM", "зависимость", "средняя", "высокое", "принять", "[уточнить]", "FR-2"]]}]
+    r = frd.build(store, pid, PREFS, "k", "", mode="full", complete=llm(reply), document_id=doc["id"])
+    content = store.version(doc["id"], r["version"])["content"]
+    sec = next(s for s in content["sections"] if s["key"] == "risks")
+    table, heat = sec["blocks"]
+    assert table["rows"][0][0] == "R-1" and table["rows"][1][1] == "Нет API CRM" and len(table["columns"]) == 8
+    assert heat["heatmap"] and heat["rows"][0] == ["Высокая", "", "", "R-1"] and heat["rows"][1][3] == "R-2"
+    assert not any(b["id"].startswith("FR-") for _n, _k, b in frd.req_blocks(content)), "a register places no FRs"
+    assert frd.requirements_document(store, pid)["id"] != doc["id"] or len(store.documents(pid)) == 1
+    md = exports.markdown(store.get_document(doc["id"]), store.version(doc["id"]), [], "ru")
+    assert "| R-1 | Заказчик не согласует сроки |" in md
+    data = docx_export.render(store.get_document(doc["id"]), store.version(doc["id"]), [], template=None)
+    import io, docx
+    d = docx.Document(io.BytesIO(data))
+    assert any(t.rows[1].cells[0].text == "R-1" for t in d.tables)
+    assert sk.get("write-risk-register").meta["requirements"] == "none"
+
+
+def test_each_document_keeps_its_own_type_and_versions(store):
+    pid, ids, sid = seed(store)
+    srs = store.document(pid)
+    brd = store.create_document(pid, "write-brd", "BRD — проект")
+    reply = full_reply()
+    reply["extra"] = [{"key": "business_context", "text": "Операторы теряют время."}]
+    frd.build(store, pid, PREFS, "k", "", complete=llm(reply), document_id=brd["id"])
+    assert store.version(srs["id"]) is None and store.version(brd["id"])["number"] == 1
+    content = store.version(brd["id"])["content"]
+    assert content["skills"]["frd"] == "write-brd"
+    assert next(s for s in content["sections"] if s["key"] == "business_context")["blocks"][0]["text"] == "Операторы теряют время."
+    assert [d["id"] for d in store.documents(pid)] == [srs["id"], brd["id"]]
+    assert frd.requirements_document(store, pid)["id"] == brd["id"], "the only one with requirements so far"

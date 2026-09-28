@@ -1,7 +1,9 @@
 ---
 name: split-into-stories
-title: Декомпозиция на истории
-description: Превращает требования документа в эпики, пользовательские истории с критериями приёмки и технические подзадачи.
+title: {ru: "Декомпозиция на истории", en: "Split into stories"}
+description:
+  ru: "Превращает требования документа в эпики, пользовательские истории с критериями приёмки и технические подзадачи."
+  en: "Turns the document's requirements into epics, user stories with acceptance criteria and technical sub-tasks."
 stage: decompose
 version: 1
 ---

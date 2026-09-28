@@ -49,7 +49,7 @@ await sub.filter({ hasText: "эпиков: 1 · историй: 2" }).waitFor({ 
 await page.locator(".epic .t", { hasText: "Работа оператора" }).waitFor();
 await page.getByText("Цель: Быстрее обслуживать звонки").waitFor();
 await page.locator(".story .acs b", { hasText: "Дано" }).first().waitFor();
-await page.locator(".story .refs .link", { hasText: /FRD 3\.1 · FR-\d/ }).first().waitFor();
+await page.locator(".story .refs .link", { hasText: /§3\.1 · FR-\d/ }).first().waitFor();
 const firstSub = page.locator(".node.sub").first();
 if (await firstSub.locator(".inc").isChecked()) throw new Error("generated sub-tasks must start unticked");
 await firstSub.getByText("сгенерировано").waitFor();

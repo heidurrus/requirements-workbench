@@ -123,7 +123,7 @@
       toast(t("bl.moved_into", { title: storyTitle[storyId] || "" }));
     } catch (err) { fail(err); }
   }
-  const refLabel = r => `FRD ${r.section} · ${r.id}`;
+  const refLabel = r => `§${r.section} · ${r.id}`;
   const children = id => byParent[id] || [];
 </script>
 

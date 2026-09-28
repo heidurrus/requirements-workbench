@@ -1,7 +1,9 @@
 ---
 name: quality-check
-title: Проверка качества
-description: Правила проверки требований — измеримость, размытые слова, двусмысленность, несколько требований в одном, проверяемость.
+title: {ru: "Проверка качества", en: "Quality check"}
+description:
+  ru: "Правила проверки требований — измеримость, размытые слова, двусмысленность, несколько требований в одном, проверяемость."
+  en: "Rules for checking requirements: measurability, vague words, ambiguity, several requirements in one, testability."
 stage: quality
 version: 1
 vague_words:

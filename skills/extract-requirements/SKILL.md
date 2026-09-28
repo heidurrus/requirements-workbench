@@ -1,7 +1,9 @@
 ---
 name: extract-requirements
-title: Извлечение требований
-description: Находит в источнике требования-атомы — функциональные, нефункциональные и вопросы к заказчику; поручения и прочее откладывает.
+title: {ru: "Извлечение требований", en: "Requirement extraction"}
+description:
+  ru: "Находит в источнике требования-атомы — функциональные, нефункциональные и вопросы к заказчику; поручения и прочее откладывает."
+  en: "Finds requirement atoms in a source: functional, non-functional and questions for the client; sets action items and the rest aside."
 stage: extract
 version: 2
 ---

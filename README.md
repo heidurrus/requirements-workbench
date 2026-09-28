@@ -18,7 +18,9 @@ Audio stays on your machine. Speech recognition runs locally with
 [GigaAM](https://github.com/salute-developers/GigaAM); the text stages can use
 Claude or a built-in local model (one-click download, nothing else to install), and a project can be set to *local only*.
 
-> **Status: 3.1.** The whole pipeline works end to end: record → transcribe → atoms →
+> **Status: 3.2.** A project holds the documents a BA actually writes: BRD, SRS, Vision & Scope,
+> a risk register with its matrix, As-Is / To-Be, a GOST 34 specification, or your own types.
+> The whole pipeline works end to end: record → transcribe → atoms →
 > FRD → backlog → Jira. It stays in sync through later rounds too: changes flow downstream,
 > Jira issues are updated rather than duplicated, and approved versions keep a list of
 > change requests. Open questions and action items get their own follow-up with the client.
@@ -76,7 +78,8 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
   - Review with the keyboard (J/K, A, X, E), or tick hundreds of atoms and accept, reject,
     retype or delete them at once, with undo.
   - Duplicates are merged, and conflicts between sources are shown side by side.
-- **FRD document** built from accepted atoms:
+- **Documents** built from accepted atoms, several per project: BRD, SRS (functional and non-functional),
+  Vision & Scope, risk register and matrix, As-Is / To-Be, GOST 34 specification, or your own type. Each has:
   - stable requirement IDs, versions and diff
   - detection of stale sections after atoms change
   - a quality check with one-click fixes

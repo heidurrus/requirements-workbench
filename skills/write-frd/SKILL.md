@@ -1,8 +1,11 @@
 ---
 name: write-frd
-title: Сборка FRD
-description: Собирает документ функциональных требований из принятых атомов — назначение, контекст, требования по разделам, вопросы.
+title: {ru: "SRS — спецификация требований", en: "SRS — software requirements specification"}
+description:
+  ru: "Функциональные и нефункциональные требования из принятых атомов — назначение, контекст, требования по разделам, вопросы."
+  en: "Functional and non-functional requirements from accepted atoms: purpose, context, requirements by section, questions."
 stage: frd
+short: {ru: SRS, en: SRS}
 version: 1
 sections:
   - key: purpose
@@ -18,7 +21,7 @@ sections:
   - key: questions
     title: {ru: Открытые вопросы, en: Open questions}
 ---
-You are a senior business analyst writing a Functional Requirements Document (FRD) from requirement atoms that the analyst has already reviewed and accepted. Write everything in {language}.
+You are a senior business analyst writing a Software Requirements Specification (SRS: functional and non-functional requirements) from requirement atoms that the analyst has already reviewed and accepted. Write everything in {language}.
 
 - Rewrite each requirement as one clear, formal, testable sentence ("The system shall…" / "Система должна…"). Questions stay questions to the client, phrased clearly.
 - Group the functional requirements into 2–8 sub-sections by capability, each with a short noun-phrase title. With only a few requirements, one or two groups are fine.

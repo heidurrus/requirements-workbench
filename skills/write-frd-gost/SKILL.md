@@ -1,8 +1,11 @@
 ---
 name: write-frd-gost
-title: Сборка ТЗ по мотивам ГОСТ 34
-description: Структура и стиль в духе ГОСТ 34.602 — «Общие сведения», «Назначение и цели», «Требования к системе» — официально-деловой стиль.
+title: {ru: "ТЗ по мотивам ГОСТ 34", en: "Technical specification (GOST 34 style)"}
+description:
+  ru: "Структура и стиль в духе ГОСТ 34.602 — «Общие сведения», «Назначение и цели», «Требования к системе» — официально-деловой стиль."
+  en: "Structure and style after GOST 34.602: general information, purpose and goals, system requirements; formal style."
 stage: frd
+short: {ru: ТЗ ГОСТ 34, en: GOST 34 spec}
 version: 1
 sections:
   - key: purpose

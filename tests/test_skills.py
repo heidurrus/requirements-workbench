@@ -217,8 +217,8 @@ def test_custom_word_template_placeholders_everywhere(store):
     t.save(buf)
     out = docx.Document(io.BytesIO(docx_export.render(doc_meta, version, [], template=buf.getvalue(), project_name="P")))
     texts = [x.text for x in out.paragraphs]
-    assert "Документ: FRD — Мой проект, версия 1" in texts
-    assert out.sections[0].header.paragraphs[0].text == "ООО «Ромашка» · FRD — Мой проект"
+    assert "Документ: SRS — Мой проект, версия 1" in texts
+    assert out.sections[0].header.paragraphs[0].text == "ООО «Ромашка» · SRS — Мой проект"
     assert out.tables[0].cell(0, 1).text.endswith("· ba")
     # numbers follow the FRD skill (and the table of contents), even when the template reorders sections
     i_q, i_fixed, i_fr = texts.index("6. Открытые вопросы"), texts.index("Постоянный текст шаблона между разделами."), \

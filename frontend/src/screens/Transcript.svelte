@@ -182,7 +182,7 @@
     .filter(Boolean).join(" · ") : "");
 </script>
 
-<div class="screen-inner">
+<div class="screen-inner wide">
   {#if !id}
     <div class="empty panel"><p>{t("tr.none")}</p>
       <button class="btn" style="margin-top: var(--s-3)" onclick={() => go("/sources")}>{t("tr.back")}</button></div>
@@ -358,6 +358,8 @@
   .player .icon-btn { border-radius: 50%; width: 32px; height: 32px; }
   .scrub { flex: 1; min-width: 80px; accent-color: var(--accent); }
   .layout { display: grid; gap: var(--sp-8); grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
+  @media (min-width: 1600px) { .layout { grid-template-columns: minmax(0, 1fr) 420px; } }
+  @media (min-width: 2000px) { .layout { grid-template-columns: minmax(0, 1fr) 500px; } }
   /* Sticky, but never taller than the window: a long summary scrolls inside its column. */
   .side-col { position: sticky; top: calc(var(--toolbar) + var(--sp-4));
     max-height: calc(100vh - var(--toolbar) - var(--sp-8)); overflow-y: auto; overscroll-behavior: contain;

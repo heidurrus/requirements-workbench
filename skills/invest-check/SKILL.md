@@ -1,7 +1,9 @@
 ---
 name: invest-check
-title: Проверка INVEST
-description: Проверяет пользовательские истории по INVEST и предлагает, как исправить.
+title: {ru: "Проверка INVEST", en: "INVEST check"}
+description:
+  ru: "Проверяет пользовательские истории по INVEST и предлагает, как исправить."
+  en: "Checks user stories against INVEST and suggests fixes."
 stage: invest
 version: 1
 ---

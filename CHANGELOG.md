@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.2.0 (2026-09-29): Document types, skills in your language, wide screens
+
+- **Several documents per project, of real BA types.** "FRD" is gone as a concept. The **Документы** (documents) screen has one tab per document and **＋ Документ** to add one of these types:
+  - **BRD** — business requirements: business context, goals and success metrics, stakeholders (a table), scope, business requirements, constraints.
+  - **SRS** — functional and non-functional requirements. This is the old FRD; existing projects keep their document.
+  - **Vision & Scope** — background, vision statement, objectives, stakeholders, major features, a scope-of-releases table.
+  - **Реестр и матрица рисков** (risk register and matrix) — a risk table with R-n IDs (probability, impact, response, owner, related requirements) and a probability × impact matrix built from it.
+  - **Текущее и целевое состояние** (As-Is / To-Be) — today's process, pain points (a table), the future process with requirement IDs, a gap analysis table, the transition.
+  - **ТЗ по ГОСТ 34** (technical specification, GOST 34 style).
+
+  Each document has its own versions, sign-off, quality check and export (Word and Markdown include the tables). Narrative documents also use the source summaries. A document's type can be changed, and your own types are skills you copy and edit.
+- **Tables in documents.** A document type's section can be a table (`format: table`, `columns: …`), with automatic row IDs and a heat map.
+- **Skills in the interface language.** Built-in skills have Russian and English titles and descriptions; you see the ones matching the app language. Editing a two-language skill changes the language you're working in.
+- **Clearer "where it's used".** A skill says whether this project uses it (chosen for the project, or the default) and what the other projects use. The buttons are "Использовать в этом проекте" (use in this project), "Вернуть общий выбор" (back to the default) and "Сделать по умолчанию" (make it the default). Document types instead offer "Создать документ этого типа" (create a document of this type).
+- **Big and wide screens.**
+  - Content grows with the window.
+  - On very large displays the whole UI scales up.
+  - Atoms get an inspector pane: the selected atom's quote in context from the transcript, its facts, actions and history.
+  - Transcript and Document use the width.
+- The backlog, Jira and the traceability matrix read the requirements from the document that has them: the first one, or else the newest SRS or BRD.
+
 ## 3.1.0 (2026-09-29): After the product review
 
 Acts on the whole product review in `docs/product/pm-review.md`. Item-by-item status and the decisions taken on its open questions are in `docs/product/implementation.md`.

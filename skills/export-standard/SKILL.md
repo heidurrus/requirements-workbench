@@ -1,7 +1,9 @@
 ---
 name: export-standard
-title: Word — обычный
-description: Современное оформление — Arial, заголовки с номерами, содержание, источники в сносках.
+title: {ru: "Word — обычный", en: "Word — standard"}
+description:
+  ru: "Современное оформление — Arial, заголовки с номерами, содержание, источники в сносках."
+  en: "A modern layout: Arial, numbered headings, a table of contents, sources as footnotes."
 stage: export
 version: 1
 template: builtin:neutral

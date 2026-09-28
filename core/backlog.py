@@ -9,7 +9,7 @@ so rebuilding never overwrites them (FR-DEC-05).
 import uuid
 
 from core import skills
-from core.frd import _lang_name, req_blocks
+from core.frd import _lang_name, req_blocks, requirements_document
 from core.llm import complete_json, for_project, model_name, output_language
 
 DECOMPOSE_CONTRACT = """- Use only the requirements listed; never invent features. Every FR ID must appear in the refs of at least one story.
@@ -98,7 +98,7 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
     """Rebuild the backlog from the latest FRD version (pinned items are kept)."""
     report = progress or (lambda pct, msg: None)
     project = store.get_project(project_id)
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
     if version is None:
         raise BacklogError("Build the document first: the backlog is made from its requirements.")
@@ -180,7 +180,7 @@ def invest(store, project_id, prefs, api_key, ollama_url, progress=None, complet
     if not stories:
         raise BacklogError("There are no stories to check yet.")
     prefs = for_project(prefs, project)
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
     lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
     labels = {f"S{i + 1}": s for i, s in enumerate(stories)}
@@ -217,7 +217,7 @@ def move_nfr_into(store, nfr_id, story_id):
 
 def stale(store, project_id):
     """The FRD version the backlog was built from vs. the latest one."""
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     latest = store.version(doc["id"])
     items = store.backlog(project_id)
     built = max((i["frd_version"] or 0 for i in items), default=0) or None

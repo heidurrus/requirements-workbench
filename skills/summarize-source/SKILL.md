@@ -1,7 +1,9 @@
 ---
 name: summarize-source
-title: Сводка источника
-description: Краткая сводка звонка, письма или документа — главное, требования, решения, вопросы, задачи — со ссылками на спикера и время.
+title: {ru: "Сводка источника", en: "Source summary"}
+description:
+  ru: "Краткая сводка звонка, письма или документа — главное, требования, решения, вопросы, задачи — со ссылками на спикера и время."
+  en: "A short summary of a call, email or document (key points, requirements, decisions, questions, tasks) with speaker and time references."
 stage: summary
 version: 1
 ---
