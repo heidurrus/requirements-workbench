@@ -12,7 +12,7 @@
     { n: 2, key: "nav.transcript", route: "transcript", path: null },
     { n: 3, key: "nav.atoms", route: "atoms", path: "/atoms" },
     { n: 4, key: "nav.document", route: "document", path: "/document" },
-    { n: 5, key: "nav.decomposition", soon: true },
+    { n: 5, key: "nav.decomposition", route: "backlog", path: "/backlog" },
     { n: 6, key: "nav.export", soon: true },
   ];
 

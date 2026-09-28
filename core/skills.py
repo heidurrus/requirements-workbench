@@ -26,10 +26,11 @@ from core.paths import app_data_dir
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-STAGES = ["global", "summary", "extract", "dedup", "frd", "quality", "fix", "export"]
+STAGES = ["global", "summary", "extract", "dedup", "frd", "quality", "fix", "export", "decompose", "invest"]
 DEFAULTS = {"global": "house-rules", "summary": "summarize-source", "extract": "extract-requirements",
             "dedup": "find-duplicates", "frd": "write-frd", "quality": "quality-check",
-            "fix": "fix-requirement", "export": "export-standard"}
+            "fix": "fix-requirement", "export": "export-standard", "decompose": "split-into-stories",
+            "invest": "invest-check"}
 FRD_KINDS = {"purpose", "context", "functional", "nfr", "out_of_scope", "questions"}
 FRD_REQUIRED = {"functional", "nfr", "questions"}            # requirements must always have a home
 BUILTIN_RULES = ["not_measurable", "vague", "ambiguous", "compound", "untestable"]

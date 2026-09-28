@@ -21,7 +21,8 @@ from contextlib import contextmanager
 
 from core.paths import app_data_dir
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+BACKLOG_KINDS = {"epic", "story", "subtask", "nfr"}
 ATOM_TYPES = {"functional", "nfr", "question"}
 ATOM_STATUSES = {"pending", "accepted", "rejected", "merged"}
 CONFLICT_ACTIONS = {"keep_a", "keep_b", "merge", "question"}
@@ -91,6 +92,14 @@ CREATE TABLE IF NOT EXISTS free_blocks (
   id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), section TEXT NOT NULL,
   text TEXT NOT NULL, position REAL NOT NULL, deleted_at REAL,
   created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS backlog_items (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), parent_id TEXT,
+  kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', goal TEXT NOT NULL DEFAULT '',
+  acceptance_json TEXT NOT NULL DEFAULT '[]', refs_json TEXT NOT NULL DEFAULT '[]', invest_json TEXT NOT NULL DEFAULT '[]',
+  included INTEGER NOT NULL DEFAULT 1, generated INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0,
+  position REAL NOT NULL, frd_version INTEGER, jira_key TEXT, deleted_at REAL,
+  created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS backlog_by_project ON backlog_items(project_id, deleted_at, position);
 CREATE TABLE IF NOT EXISTS project_skills (
   project_id TEXT NOT NULL REFERENCES projects(id), stage TEXT NOT NULL, skill TEXT NOT NULL,
   updated_at REAL NOT NULL, updated_by TEXT NOT NULL, PRIMARY KEY (project_id, stage));
@@ -904,6 +913,183 @@ class Store:
         with self._conn() as c:
             return {(r["atom_id"], r["rule"]): r["statement"] for r in c.execute(
                 "SELECT atom_id, rule, statement FROM quality_dismissals WHERE document_id = ?", (document_id,))}
+
+    # ── backlog (spec increment 4, FR-DEC-*) ─────────────────────────────────
+    _BACKLOG_JSON = ("acceptance", "refs", "invest")
+
+    def _backlog_row(self, r):
+        d = dict(r)
+        for k in self._BACKLOG_JSON:
+            d[k] = json.loads(d.pop(f"{k}_json") or "[]")
+        for k in ("included", "generated", "pinned"):
+            d[k] = bool(d[k])
+        return d
+
+    def backlog(self, project_id):
+        """Live items in tree order (parents before children, by position)."""
+        with self._conn() as c:
+            rows = [self._backlog_row(r) for r in c.execute(
+                "SELECT * FROM backlog_items WHERE project_id = ? AND deleted_at IS NULL ORDER BY position", (project_id,))]
+        children = {}
+        for r in rows:
+            children.setdefault(r["parent_id"], []).append(r)
+        out = []
+
+        def walk(parent):
+            for item in children.get(parent, []):
+                out.append(item)
+                walk(item["id"])
+        walk(None)
+        return out
+
+    def get_backlog_item(self, item_id):
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM backlog_items WHERE id = ? AND deleted_at IS NULL", (item_id,)).fetchone()
+        if r is None:
+            raise StoreError("backlog item not found")
+        return self._backlog_row(r)
+
+    def _insert_backlog(self, c, project_id, item, parent_id, position, frd_version):
+        if item["kind"] not in BACKLOG_KINDS:
+            raise StoreError(f"unknown backlog kind {item['kind']}")
+        now, by = self._stamp()
+        iid = item.get("id") or str(uuid.uuid4())
+        c.execute("INSERT INTO backlog_items (id, project_id, parent_id, kind, title, body, goal, acceptance_json, "
+                  "refs_json, invest_json, included, generated, pinned, position, frd_version, created_at, created_by, "
+                  "updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (iid, project_id, parent_id, item["kind"], item["title"].strip(), item.get("body", "").strip(),
+                   item.get("goal", "").strip(), json.dumps(item.get("acceptance") or [], ensure_ascii=False),
+                   json.dumps(item.get("refs") or [], ensure_ascii=False),
+                   json.dumps(item.get("invest") or [], ensure_ascii=False), int(item.get("included", True)),
+                   int(item.get("generated", False)), int(item.get("pinned", False)), position, frd_version,
+                   now, by, now, by))
+        return iid
+
+    def replace_backlog(self, project_id, tree, frd_version):
+        """Regenerate: drop items the BA hasn't edited (pinned ones stay, FR-DEC-05), insert the new tree.
+        tree = [{kind, title, …, children: [...]}]."""
+        self.get_project(project_id)
+        with self._write() as c:
+            now, by = self._stamp()
+            pinned = {r["id"] for r in c.execute(
+                "SELECT id FROM backlog_items WHERE project_id = ? AND deleted_at IS NULL AND pinned = 1", (project_id,))}
+            # Keep a pinned item's pinned ancestors too, so it stays attached somewhere sensible.
+            c.execute("UPDATE backlog_items SET deleted_at = ?, updated_at = ?, updated_by = ? "
+                      "WHERE project_id = ? AND deleted_at IS NULL AND pinned = 0", (now, now, by, project_id))
+            start = (c.execute("SELECT COALESCE(MAX(position), 0) FROM backlog_items WHERE project_id = ? "
+                               "AND deleted_at IS NULL", (project_id,)).fetchone()[0] or 0) + 1
+            counter = [start]
+
+            def add(items, parent):
+                for item in items:
+                    iid = self._insert_backlog(c, project_id, item, parent, counter[0], frd_version)
+                    counter[0] += 1
+                    add(item.get("children") or [], iid)
+            add(tree, None)
+            # A kept (pinned) item whose parent was dropped moves to the top level.
+            c.execute("UPDATE backlog_items SET parent_id = NULL WHERE project_id = ? AND deleted_at IS NULL AND "
+                      "parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM backlog_items WHERE deleted_at IS NULL)",
+                      (project_id,))
+            self._audit(c, "project", project_id, "backlog_build", after={"frd_version": frd_version,
+                                                                          "kept_pinned": len(pinned)})
+
+    def add_backlog_item(self, project_id, item, parent_id=None, after_id=None):
+        """A BA-created item (pinned: regeneration never removes it)."""
+        if parent_id:
+            self.get_backlog_item(parent_id)
+        with self._write() as c:
+            if after_id:
+                pos = c.execute("SELECT position FROM backlog_items WHERE id = ?", (after_id,)).fetchone()
+                pos = (pos[0] + 0.5) if pos else None
+            else:
+                pos = None
+            if pos is None:
+                pos = (c.execute("SELECT COALESCE(MAX(position), 0) FROM backlog_items WHERE project_id = ?",
+                                 (project_id,)).fetchone()[0] or 0) + 1
+            iid = self._insert_backlog(c, project_id, {**item, "pinned": True}, parent_id, pos, None)
+            self._audit(c, "backlog", iid, "create", after={"kind": item["kind"], "title": item["title"]})
+        return self.get_backlog_item(iid)
+
+    def update_backlog_item(self, item_id, pin=True, **changes):
+        """Edit an item. BA edits pin it (FR-DEC-05); toggling 'included' alone does not."""
+        allowed = {"title", "body", "goal", "acceptance", "refs", "invest", "included", "kind", "parent_id", "position"}
+        if not changes or set(changes) - allowed:
+            raise StoreError(f"cannot change {sorted(set(changes) - allowed) or 'nothing'}")
+        if "title" in changes and not str(changes["title"] or "").strip():
+            raise StoreError("the title must not be empty")
+        if "kind" in changes and changes["kind"] not in BACKLOG_KINDS:
+            raise StoreError("unknown kind")
+        if "acceptance" in changes:
+            ac = changes["acceptance"]
+            if not isinstance(ac, list) or any(not isinstance(x, dict) for x in ac):
+                raise StoreError("acceptance must be a list of {given, when, then}")
+            changes["acceptance"] = [{k: str(x.get(k) or "").strip() for k in ("given", "when", "then")} for x in ac
+                                     if any(str(x.get(k) or "").strip() for k in ("given", "when", "then"))]
+        before = self.get_backlog_item(item_id)
+        cols = {}
+        for k, v in changes.items():
+            if k in self._BACKLOG_JSON:
+                cols[f"{k}_json"] = json.dumps(v, ensure_ascii=False)
+            elif k == "included":
+                cols[k] = int(bool(v))
+            else:
+                cols[k] = v.strip() if isinstance(v, str) else v
+        if pin and set(changes) - {"included", "invest", "position"}:
+            cols["pinned"] = 1
+        with self._write() as c:
+            now, by = self._stamp()
+            sets = ", ".join(f"{k} = ?" for k in cols)
+            c.execute(f"UPDATE backlog_items SET {sets}, updated_at = ?, updated_by = ? WHERE id = ?",
+                      (*cols.values(), now, by, item_id))
+            self._audit(c, "backlog", item_id, "edit", {k: before.get(k) for k in changes}, changes)
+        return self.get_backlog_item(item_id)
+
+    def set_backlog_included(self, project_id, ids, included):
+        """Tick / untick several items (a parent's children follow it, FR-DEC-02 AC2)."""
+        items = {i["id"]: i for i in self.backlog(project_id)}
+        targets, stack = set(), [i for i in ids if i in items]
+        while stack:
+            iid = stack.pop()
+            if iid in targets:
+                continue
+            targets.add(iid)
+            if not included:                         # unticking a parent unticks its children
+                stack += [i["id"] for i in items.values() if i["parent_id"] == iid]
+        if included:                                 # ticking a child ticks its parents, so it has a home
+            for iid in list(targets):
+                p = items[iid]["parent_id"]
+                while p and p in items:
+                    targets.add(p)
+                    p = items[p]["parent_id"]
+        with self._write() as c:
+            now, by = self._stamp()
+            for iid in targets:
+                c.execute("UPDATE backlog_items SET included = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+                          (int(bool(included)), now, by, iid))
+            self._audit(c, "project", project_id, "backlog_include", after={"ids": sorted(targets), "included": included})
+        return sorted(targets)
+
+    def delete_backlog_item(self, item_id, restore=False):
+        """Soft-delete an item and its subtree (undo restores the same subtree)."""
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM backlog_items WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            raise StoreError("backlog item not found")
+        with self._write() as c:
+            now, by = self._stamp()
+            stamp = row["deleted_at"] if restore else now
+            ids, stack = [], [item_id]
+            while stack:
+                iid = stack.pop()
+                ids.append(iid)
+                stack += [r["id"] for r in c.execute("SELECT id FROM backlog_items WHERE parent_id = ? AND "
+                                                     + ("deleted_at = ?" if restore else "deleted_at IS NULL"),
+                                                     (iid, stamp) if restore else (iid,))]
+            for iid in ids:
+                c.execute("UPDATE backlog_items SET deleted_at = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+                          (None if restore else now, now, by, iid))
+            self._audit(c, "backlog", item_id, "restore" if restore else "delete", after={"items": len(ids)})
+        return ids
 
     # ── files ────────────────────────────────────────────────────────────────
     def attach_file(self, source, src_path, name, move=False):

@@ -23,7 +23,7 @@ from core.ffmpeg import ensure_ffmpeg_on_path
 from core import macos_audio, settings
 from core.summarize import SummaryError, summarize
 from core.atoms import extract_atoms
-from core import frd, skills
+from core import backlog, frd, skills
 from core import local_llm
 from core.llm import for_project, model_name
 from core.jobs import JobStore, SerialQueue
@@ -1208,6 +1208,135 @@ def api_fix(document_id):
 def api_dismiss(document_id):
     data = request.get_json(silent=True) or {}
     return _store_call(lambda: (library.dismiss_finding(document_id, data.get("atom_id"), data.get("rule")), {"ok": True})[1])
+
+
+# ── backlog (increment 4): epics, stories, criteria, INVEST ──────────────────
+_backlog_jobs = {}        # project_id → job_id
+
+
+def _backlog_payload(project_id):
+    items = library.backlog(project_id)
+    count = lambda kind: sum(1 for i in items if i["kind"] == kind)  # noqa: E731
+    job = _backlog_jobs.get(project_id)
+    return {"items": items, **backlog.stale(library, project_id),
+            "counts": {k: count(k) for k in ("epic", "story", "subtask", "nfr")},
+            "included": sum(1 for i in items if i["included"]),
+            "running": job if job and (jobs.get(job) or {}).get("status") == "processing" else None}
+
+
+@app.route("/api/projects/<project_id>/backlog")
+def api_backlog(project_id):
+    try:
+        library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    return jsonify(_backlog_payload(project_id))
+
+
+def _run_backlog(job_id, fn, project_id, prefs, api_key):
+    try:
+        result = fn(library, project_id, prefs, api_key, OLLAMA_URL,
+                    progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg), skillset=_skillset(project_id))
+    except (backlog.BacklogError, SummaryError, StoreError) as e:
+        jobs.fail(job_id, e)
+    except Exception as e:  # unexpected: keep the message, don't crash the worker
+        jobs.fail(job_id, f"The backlog step failed: {e}")
+    else:
+        jobs.finish(job_id, result)
+    finally:
+        _backlog_jobs.pop(project_id, None)
+
+
+def _start_backlog_job(project_id, fn, message):
+    try:
+        project = library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    running = _backlog_jobs.get(project_id)
+    if running and (jobs.get(running) or {}).get("status") == "processing":
+        return jsonify({"job_id": running})
+    prefs, api_key, problem = _ai_prefs(project)
+    if problem:
+        return problem
+    job_id = jobs.create()
+    _backlog_jobs[project_id] = job_id
+    jobs.set_progress(job_id, 0, message)
+    threading.Thread(target=_run_backlog, args=(job_id, fn, project_id, prefs, api_key), daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/projects/<project_id>/backlog/build", methods=["POST"])
+def api_backlog_build(project_id):
+    doc = library.document(project_id)
+    if library.version(doc["id"]) is None:
+        return jsonify({"error": "Build the document first: the backlog is made from its requirements."}), 400
+    return _start_backlog_job(project_id, backlog.build, "Writing stories…")
+
+
+@app.route("/api/projects/<project_id>/backlog/invest", methods=["POST"])
+def api_backlog_invest(project_id):
+    if not any(i["kind"] == "story" for i in library.backlog(project_id)):
+        return jsonify({"error": "There are no stories to check yet."}), 400
+    return _start_backlog_job(project_id, backlog.invest, "Checking stories…")
+
+
+@app.route("/api/projects/<project_id>/backlog", methods=["POST"])
+def api_backlog_add(project_id):
+    data = request.get_json(silent=True) or {}
+    item = {k: data[k] for k in ("kind", "title", "body", "goal", "acceptance") if k in data}
+    item.setdefault("kind", "story")
+    if not str(item.get("title") or "").strip():
+        return jsonify({"error": "the title must not be empty"}), 400
+    return _store_call(library.add_backlog_item, project_id, item, data.get("parent_id"), data.get("after_id"))
+
+
+@app.route("/api/backlog/<item_id>", methods=["PATCH"])
+def api_backlog_update(item_id):
+    return _store_call(library.update_backlog_item, item_id, **(request.get_json(silent=True) or {}))
+
+
+@app.route("/api/backlog/<item_id>", methods=["DELETE"])
+def api_backlog_delete(item_id):
+    return _store_call(lambda: {"ids": library.delete_backlog_item(item_id)})
+
+
+@app.route("/api/backlog/<item_id>/restore", methods=["POST"])
+def api_backlog_restore(item_id):
+    return _store_call(lambda: {"ids": library.delete_backlog_item(item_id, restore=True)})
+
+
+@app.route("/api/projects/<project_id>/backlog/include", methods=["POST"])
+def api_backlog_include(project_id):
+    data = request.get_json(silent=True) or {}
+    return _store_call(lambda: {"ids": library.set_backlog_included(project_id, data.get("ids") or [],
+                                                                    bool(data.get("included"))),
+                                **_backlog_payload(project_id)})
+
+
+@app.route("/api/backlog/<item_id>/move", methods=["POST"])
+def api_backlog_move(item_id):
+    """Reorder among siblings: direction up / down."""
+    direction = (request.get_json(silent=True) or {}).get("direction")
+    try:
+        item = library.get_backlog_item(item_id)
+        siblings = [i for i in library.backlog(item["project_id"]) if i["parent_id"] == item["parent_id"]]
+        idx = next(n for n, i in enumerate(siblings) if i["id"] == item_id)
+        j = idx - 1 if direction == "up" else idx + 1
+        if 0 <= j < len(siblings):
+            a, b = siblings[idx], siblings[j]
+            library.update_backlog_item(a["id"], pin=False, position=b["position"])
+            library.update_backlog_item(b["id"], pin=False, position=a["position"])
+    except (StoreError, StopIteration) as e:
+        return jsonify({"error": str(e) or "not found"}), 404
+    return jsonify(_backlog_payload(item["project_id"]))
+
+
+@app.route("/api/backlog/<item_id>/move-into/<story_id>", methods=["POST"])
+def api_backlog_move_into(item_id, story_id):
+    try:
+        return jsonify(backlog.move_nfr_into(library, item_id, story_id))
+    except (backlog.BacklogError, StoreError) as e:
+        return jsonify({"error": str(e)}), 400
 
 
 # ── skills (FR-SET-04): editable, shareable instructions per AI stage ─────────
