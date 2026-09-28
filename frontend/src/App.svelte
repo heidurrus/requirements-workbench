@@ -10,10 +10,21 @@
   import Backlog from "./screens/Backlog.svelte";
   import Export from "./screens/Export.svelte";
   import { api } from "./lib/api.js";
-  import { app, t, loadProjects, loadSources, setLang } from "./lib/state.svelte.js";
+  import { app, t, loadProjects, loadSources, setLang, applyTheme, setTheme, isDark, loadStatus } from "./lib/state.svelte.js";
 
   let ready = $state(false);
   let error = $state("");
+
+  applyTheme();
+  // The toolbar hairline appears only once the page has scrolled (HIG scroll edge).
+  const onScroll = () => document.body.classList.toggle("scrolled", window.scrollY > 4);
+  function onKey(e) {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "l" || e.key === "L")) {
+      e.preventDefault();
+      setTheme(isDark() ? "light" : "dark");
+    }
+  }
+  $effect(() => { app.atomsVersion; loadStatus(); });
 
   async function boot() {
     setLang(app.lang);
@@ -35,6 +46,8 @@
   }
   boot();
 </script>
+
+<svelte:window onscroll={onScroll} onkeydown={onKey} />
 
 {#if error}
   <div class="boot-error note danger">{t("err.generic", { error })}</div>

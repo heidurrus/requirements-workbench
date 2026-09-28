@@ -518,6 +518,18 @@ const ru = {
   "jr.retry": "Повторить неудачные",
 
   "err.generic": "Что-то пошло не так: {error}",
+  "nav.pipeline": "Конвейер",
+  "nav.tools": "Инструменты",
+  "nav.toggle": "Боковая панель",
+  "nav.badge_review": "на ревью: {n}",
+  "nav.badge_stale": "документ устарел",
+  "nav.badge_pushed": "выгружено в Jira: {n}",
+  "nav.cpu": "Распознавание на CPU",
+  "project.cloud_ok": "Облачный ИИ разрешён",
+  "project.switch": "Сменить проект",
+  "theme.toggle": "Сменить тему",
+  "theme.light": "Светлая тема",
+  "theme.dark": "Тёмная тема",
 };
 
 const en = {
@@ -1037,6 +1049,18 @@ const en = {
   "jr.retry": "Retry the failed ones",
 
   "err.generic": "Something went wrong: {error}",
+  "nav.pipeline": "Pipeline",
+  "nav.tools": "Tools",
+  "nav.toggle": "Sidebar",
+  "nav.badge_review": "to review: {n}",
+  "nav.badge_stale": "document is out of date",
+  "nav.badge_pushed": "pushed to Jira: {n}",
+  "nav.cpu": "Recognition on CPU",
+  "project.cloud_ok": "Cloud AI allowed",
+  "project.switch": "Switch project",
+  "theme.toggle": "Switch theme",
+  "theme.light": "Light theme",
+  "theme.dark": "Dark theme",
 };
 
 export const DICTS = { ru, en };
