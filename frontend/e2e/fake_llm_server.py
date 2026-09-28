@@ -16,7 +16,19 @@ from core import atoms  # noqa: E402
 
 
 def fake_complete(system, user, schema, prefs, api_key, ollama_url):
-    if "duplicates" in schema["properties"]:
+    props = schema["properties"]
+    reqs = re.findall(r"^((?:FR|NFR|Q)-\d+) \[\w+\] (.+?)(?:  \(conflicts.*)?$", user, flags=re.M)
+    if "groups" in props:                                        # FRD: full build
+        return {"purpose": "Документ описывает требования к карточке клиента.", "context": "Операторы колл-центра.",
+                "assumptions": [], "out_of_scope": [],
+                "groups": [{"title": "Карточка клиента", "ids": [r for r, _ in reqs if r.startswith("FR-")]}],
+                "items": [{"id": r, "text": "Требование: " + t} for r, t in reqs], "issues": []}
+    if "items" in props:                                         # FRD: rebuild of changed atoms
+        return {"items": [{"id": r, "text": "Требование: " + t, "group": "Карточка клиента"} for r, t in reqs],
+                "issues": []}
+    if "statement" in props:                                     # FRD: quality fix
+        return {"statement": "Карточка открывается не дольше [уточнить: N секунд]"}
+    if "duplicates" in props:
         new = re.findall(r"^(N\d+) ", user, flags=re.M)
         return {"duplicates": [], "conflicts": [{"a": new[0], "b": new[1], "description": "Разные требования к сроку"}]
                 if len(new) > 1 else []}
@@ -28,6 +40,8 @@ def fake_complete(system, user, schema, prefs, api_key, ollama_url):
 
 
 app_module.extract_atoms = functools.partial(atoms.extract_atoms, complete=fake_complete)
+app_module.frd.build = functools.partial(app_module.frd.build, complete=fake_complete)
+app_module.frd.suggest_fix = functools.partial(app_module.frd.suggest_fix, complete=fake_complete)
 app_module.settings.secret = lambda name: "fake-key"
 
 # Pretend to be another machine for screenshots: FAKE_GPU="none" or a size in GB.

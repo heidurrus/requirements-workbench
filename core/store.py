@@ -20,7 +20,7 @@ from contextlib import contextmanager
 
 from core.paths import app_data_dir
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ATOM_TYPES = {"functional", "nfr", "question"}
 ATOM_STATUSES = {"pending", "accepted", "rejected", "merged"}
 CONFLICT_ACTIONS = {"keep_a", "keep_b", "merge", "question"}
@@ -73,6 +73,27 @@ CREATE TABLE IF NOT EXISTS conflicts (
   description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', resolution TEXT, question_atom TEXT,
   created_at REAL NOT NULL, created_by TEXT NOT NULL, resolved_at REAL, resolved_by TEXT);
 CREATE INDEX IF NOT EXISTS conflicts_by_project ON conflicts(project_id, status);
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), title TEXT NOT NULL,
+  template TEXT NOT NULL DEFAULT 'neutral',
+  created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS doc_versions (
+  id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), number INTEGER NOT NULL,
+  content_json TEXT NOT NULL, snapshot_json TEXT NOT NULL, atom_count INTEGER NOT NULL,
+  provider TEXT, model TEXT, mode TEXT, created_at REAL NOT NULL, created_by TEXT NOT NULL,
+  UNIQUE(document_id, number));
+CREATE TABLE IF NOT EXISTS requirement_ids (
+  project_id TEXT NOT NULL REFERENCES projects(id), prefix TEXT NOT NULL, number INTEGER NOT NULL,
+  atom_id TEXT NOT NULL REFERENCES atoms(id), created_at REAL NOT NULL,
+  PRIMARY KEY (project_id, prefix, number), UNIQUE (atom_id, prefix));
+CREATE TABLE IF NOT EXISTS free_blocks (
+  id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), section TEXT NOT NULL,
+  text TEXT NOT NULL, position REAL NOT NULL, deleted_at REAL,
+  created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS quality_dismissals (
+  document_id TEXT NOT NULL REFERENCES documents(id), atom_id TEXT NOT NULL, rule TEXT NOT NULL,
+  statement TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL,
+  PRIMARY KEY (document_id, atom_id, rule));
 """
 
 PROJECT_FIELDS = ("id", "name", "local_only", "archived", "created_at", "created_by", "updated_at", "updated_by")
@@ -481,12 +502,12 @@ class Store:
         if not atom_ids:
             return out
         marks = ",".join("?" * len(atom_ids))
-        for r in c.execute(f"""SELECT e.*, s.title AS source_title, s.kind AS source_kind,
+        for r in c.execute(f"""SELECT e.*, s.title AS source_title, s.kind AS source_kind, s.created_at AS source_date,
                                COALESCE(sp.name, e.speaker) AS speaker_name
                                FROM evidence e JOIN sources s ON s.id = e.source_id
                                LEFT JOIN speakers sp ON sp.source_id = e.source_id AND sp.label = e.speaker
                                WHERE e.atom_id IN ({marks}) ORDER BY e.created_at, e.start""", atom_ids):
-            out[r["atom_id"]].append({k: r[k] for k in ("id", "source_id", "source_title", "source_kind",
+            out[r["atom_id"]].append({k: r[k] for k in ("id", "source_id", "source_title", "source_kind", "source_date",
                                                          "segment_idx", "start", "speaker", "speaker_name", "quote")})
         return out
 
@@ -659,6 +680,164 @@ class Store:
             n = c.execute("UPDATE conflicts SET status = 'resolved', resolved_at = ?, resolved_by = ? "
                           "WHERE question_atom = ? AND status = 'awaiting_answer'", (now, by, question_atom_id)).rowcount
         return n
+
+    # ── FRD documents (spec increment 3, FR-DOC-*) ────────────────────────────
+    DOC_TEMPLATES = ("neutral", "gost")
+    FREE_SECTIONS = ("purpose", "context", "functional", "nfr", "out_of_scope", "questions")
+
+    def document(self, project_id, create=True):
+        """The project's FRD (one per project, spec A-11), created on first use."""
+        project = self.get_project(project_id)
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM documents WHERE project_id = ? ORDER BY created_at LIMIT 1",
+                            (project_id,)).fetchone()
+        if row is not None or not create:
+            return dict(row) if row else None
+        with self._write() as c:
+            now, by = self._stamp()
+            did = str(uuid.uuid4())
+            c.execute("INSERT INTO documents VALUES (?,?,?,?,?,?,?,?)",
+                      (did, project_id, f"FRD — {project['name']}", "neutral", now, by, now, by))
+            self._audit(c, "document", did, "create")
+        return self.get_document(did)
+
+    def get_document(self, document_id):
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if row is None:
+            raise StoreError("document not found")
+        return dict(row)
+
+    def update_document(self, document_id, **changes):
+        if set(changes) - {"title", "template"}:
+            raise StoreError("only the title and template can be changed")
+        if "template" in changes and changes["template"] not in self.DOC_TEMPLATES:
+            raise StoreError(f"template must be one of {self.DOC_TEMPLATES}")
+        if "title" in changes:
+            changes["title"] = (changes["title"] or "").strip()[:200]
+            if not changes["title"]:
+                raise StoreError("the title must not be empty")
+        before = self.get_document(document_id)
+        with self._write() as c:
+            now, by = self._stamp()
+            sets = ", ".join(f"{k} = ?" for k in changes)
+            c.execute(f"UPDATE documents SET {sets}, updated_at = ?, updated_by = ? WHERE id = ?",
+                      (*changes.values(), now, by, document_id))
+            self._audit(c, "document", document_id, "edit", {k: before[k] for k in changes}, changes)
+        return self.get_document(document_id)
+
+    def requirement_ids(self, project_id, atoms):
+        """Stable IDs (FR-n, NFR-n, Q-n) per atom and type; numbers are never reused (BR-14)."""
+        prefix_of = {"functional": "FR", "nfr": "NFR", "question": "Q"}
+        out = {}
+        with self._write() as c:
+            for atom in atoms:
+                prefix = prefix_of[atom["type"]]
+                row = c.execute("SELECT number FROM requirement_ids WHERE atom_id = ? AND prefix = ?",
+                                (atom["id"], prefix)).fetchone()
+                if row is None:
+                    n = c.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM requirement_ids "
+                                  "WHERE project_id = ? AND prefix = ?", (project_id, prefix)).fetchone()[0]
+                    c.execute("INSERT INTO requirement_ids VALUES (?,?,?,?,?)",
+                              (project_id, prefix, n, atom["id"], self._clock()))
+                else:
+                    n = row["number"]
+                out[atom["id"]] = f"{prefix}-{n}"
+        return out
+
+    def add_version(self, document_id, content, snapshot, atom_count, provider=None, model=None, mode=None):
+        with self._write() as c:
+            n = c.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM doc_versions WHERE document_id = ?",
+                          (document_id,)).fetchone()[0]
+            now, by = self._stamp()
+            vid = str(uuid.uuid4())
+            c.execute("INSERT INTO doc_versions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                      (vid, document_id, n, json.dumps(content, ensure_ascii=False),
+                       json.dumps(snapshot, ensure_ascii=False), atom_count, provider, model, mode, now, by))
+            self._audit(c, "document", document_id, "build", after={"version": n, "atoms": atom_count, "mode": mode})
+        return n
+
+    def versions(self, document_id):
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT number, atom_count, provider, model, mode, created_at, created_by FROM doc_versions "
+                "WHERE document_id = ? ORDER BY number DESC", (document_id,))]
+
+    def version(self, document_id, number=None):
+        """A version with its content (the latest when number is None); None if never built."""
+        q = "SELECT * FROM doc_versions WHERE document_id = ?"
+        args = [document_id]
+        if number is not None:
+            q += " AND number = ?"
+            args.append(int(number))
+        with self._conn() as c:
+            row = c.execute(q + " ORDER BY number DESC LIMIT 1", args).fetchone()
+        if row is None:
+            return None
+        v = dict(row)
+        v["content"] = json.loads(v.pop("content_json"))
+        v["snapshot"] = json.loads(v.pop("snapshot_json"))
+        return v
+
+    # pinned free-text blocks (FR-DOC-04, BR-07): the BA's own text, kept verbatim
+    def free_blocks(self, document_id):
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT id, section, text, position, updated_at, updated_by FROM free_blocks "
+                "WHERE document_id = ? AND deleted_at IS NULL ORDER BY section, position", (document_id,))]
+
+    def add_free_block(self, document_id, section, text):
+        self.get_document(document_id)
+        if section not in self.FREE_SECTIONS:
+            raise StoreError("unknown section")
+        text = (text or "").strip()
+        if not text:
+            raise StoreError("the text must not be empty")
+        with self._write() as c:
+            pos = c.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM free_blocks WHERE document_id = ? AND section = ?",
+                            (document_id, section)).fetchone()[0]
+            now, by = self._stamp()
+            bid = str(uuid.uuid4())
+            c.execute("INSERT INTO free_blocks VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (bid, document_id, section, text, pos, None, now, by, now, by))
+            self._audit(c, "free_block", bid, "create", after={"section": section, "text": text})
+        return bid
+
+    def update_free_block(self, block_id, text):
+        text = (text or "").strip()
+        if not text:
+            raise StoreError("the text must not be empty")
+        with self._write() as c:
+            row = c.execute("SELECT text FROM free_blocks WHERE id = ? AND deleted_at IS NULL", (block_id,)).fetchone()
+            if row is None:
+                raise StoreError("block not found")
+            now, by = self._stamp()
+            c.execute("UPDATE free_blocks SET text = ?, updated_at = ?, updated_by = ? WHERE id = ?", (text, now, by, block_id))
+            self._audit(c, "free_block", block_id, "edit", {"text": row["text"]}, {"text": text})
+
+    def delete_free_block(self, block_id, restore=False):
+        with self._write() as c:
+            now, by = self._stamp()
+            n = c.execute("UPDATE free_blocks SET deleted_at = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+                          (None if restore else now, now, by, block_id)).rowcount
+            if not n:
+                raise StoreError("block not found")
+            self._audit(c, "free_block", block_id, "restore" if restore else "delete")
+
+    # quality findings the BA chose to ignore (FR-DOC-06 AC2: dismiss)
+    def dismiss_finding(self, document_id, atom_id, rule):
+        atom = self.get_atom(atom_id)
+        with self._write() as c:
+            now, by = self._stamp()
+            c.execute("INSERT OR REPLACE INTO quality_dismissals VALUES (?,?,?,?,?,?)",
+                      (document_id, atom_id, rule, atom["statement"], now, by))
+            self._audit(c, "atom", atom_id, "dismiss_finding", after={"rule": rule})
+
+    def dismissed(self, document_id):
+        """{(atom_id, rule): statement} — a dismissal lapses when the statement changes."""
+        with self._conn() as c:
+            return {(r["atom_id"], r["rule"]): r["statement"] for r in c.execute(
+                "SELECT atom_id, rule, statement FROM quality_dismissals WHERE document_id = ?", (document_id,))}
 
     # ── files ────────────────────────────────────────────────────────────────
     def attach_file(self, source, src_path, name, move=False):

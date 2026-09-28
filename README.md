@@ -36,8 +36,8 @@ Full requirements: [`docs/specs/requirements-workbench-spec.md`](docs/specs/requ
 | 0 | **Stable base** | Installers with no prerequisites and automatic setup, native app on Windows and macOS, call recording with separate mic/system channels (incl. macOS system audio), local-only server | ✅ **v2.0** |
 | 1 | Source library | Projects, everything saved locally, sources list, transcript viewer with playback, emails and documents, channel-aware recordings, Russian + English UI | ✅ **2.3.0** |
 | 2 | Atoms | AI extraction of requirement atoms with source quotes, review (accept / edit / reject, keyboard), duplicates, conflicts between sources, open questions | ✅ **2.4.0** |
-| 3 | FRD | Document built from accepted atoms, versions and diff, stale-section detection, quality check, DOCX export (neutral or GOST template) | ⏳ next |
-| 4 | Backlog & Jira | Epics / stories / acceptance criteria, INVEST check, dry-run preview and push to Jira Cloud through the Atlassian MCP | planned |
+| 3 | FRD | Document built from accepted atoms, versions and diff, stale-section detection, quality check, DOCX export (neutral or GOST template) | ✅ **2.6.0** (custom templates/skills next) |
+| 4 | Backlog & Jira | Epics / stories / acceptance criteria, INVEST check, dry-run preview and push to Jira Cloud through the Atlassian MCP | ⏳ next |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
 

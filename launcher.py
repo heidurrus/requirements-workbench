@@ -137,16 +137,14 @@ def open_window_or_browser(browser_mode, url):
         webbrowser.open(url)
         return False
 
-    class _Api:
-        def open_in_browser(self):
-            webbrowser.open(url)
+    from core.desktop_api import DesktopApi, pywebview_asker
 
     from core.paths import app_data_dir
     import os
     storage = os.path.join(app_data_dir(), "webview")
     os.makedirs(storage, exist_ok=True)
     try:
-        webview.create_window(APP_TITLE, url, width=1200, height=820, min_size=(800, 600), js_api=_Api())
+        webview.create_window(APP_TITLE, url, width=1200, height=820, min_size=(800, 600), js_api=DesktopApi(url, pywebview_asker(webview)))
         webview.start(private_mode=False, storage_path=storage)  # blocks until the window closes
     except Exception as e:
         # e.g. WebView2 runtime missing on an older Windows 10: fall back to the browser

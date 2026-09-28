@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ from core.ffmpeg import ensure_ffmpeg_on_path
 from core import macos_audio, settings
 from core.summarize import SummaryError, summarize
 from core.atoms import extract_atoms
+from core import frd
 from core import local_llm
 from core.llm import for_project, model_name
 from core.jobs import JobStore, SerialQueue
@@ -1008,6 +1010,181 @@ def api_conflicts(project_id):
 def api_resolve_conflict(conflict_id):
     data = request.get_json(silent=True) or {}
     return _store_call(library.resolve_conflict, conflict_id, data.get("action"), data.get("statement"))
+
+
+# ── FRD document (increment 3) ──────────────────────────────────────────────
+_building = {}            # project_id → job_id
+
+
+def _visible_issues(document_id, content):
+    """Hide quality findings the BA dismissed; a dismissal lapses once the atom's wording changes."""
+    dismissed = library.dismissed(document_id)
+    if not dismissed:
+        return content
+    current = {}
+    for _num, _key, b in frd.req_blocks(content):
+        aid = b["atom_id"]
+        if aid not in current:
+            try:
+                current[aid] = library.get_atom(aid)["statement"]
+            except StoreError:
+                current[aid] = None
+        b["issues"] = [i for i in b.get("issues") or [] if dismissed.get((aid, i["rule"])) != current[aid]]
+    return content
+
+
+@app.route("/api/projects/<project_id>/document")
+def api_document(project_id):
+    try:
+        doc = library.document(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    version = library.version(doc["id"], request.args.get("version"))
+    stats = library.atom_stats(project_id)
+    if version:
+        version["content"] = _visible_issues(doc["id"], version["content"])
+        latest = library.versions(doc["id"])[0]["number"]
+        stale = frd.staleness(library, project_id, library.version(doc["id"]) if version["number"] != latest else version)
+        version.pop("snapshot", None)
+    else:
+        stale = None
+    job = _building.get(project_id)
+    return jsonify({"document": doc, "versions": library.versions(doc["id"]), "version": version, "stale": stale,
+                    "free_blocks": library.free_blocks(doc["id"]), "stats": stats,
+                    "building": job if job and (jobs.get(job) or {}).get("status") == "processing" else None})
+
+
+def _run_build(job_id, project_id, prefs, api_key, mode):
+    try:
+        result = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode=mode,
+                           progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg))
+    except (frd.BuildError, SummaryError) as e:
+        jobs.fail(job_id, e)
+    except Exception as e:  # unexpected: keep the message, don't crash the worker
+        jobs.fail(job_id, f"Building the document failed: {e}")
+    else:
+        jobs.finish(job_id, result)
+    finally:
+        _building.pop(project_id, None)
+
+
+@app.route("/api/projects/<project_id>/document/build", methods=["POST"])
+def api_build_document(project_id):
+    try:
+        project = library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    mode = (request.get_json(silent=True) or {}).get("mode", "changed")
+    if mode not in ("changed", "full"):
+        return jsonify({"error": "mode must be changed or full"}), 400
+    if not library.atom_stats(project_id)["accepted"]:
+        return jsonify({"error": "There are no accepted atoms yet. Review the atoms first."}), 400
+    running = _building.get(project_id)
+    if running and (jobs.get(running) or {}).get("status") == "processing":
+        return jsonify({"job_id": running})
+    prefs, api_key, problem = _ai_prefs(project)
+    if problem:
+        return problem
+    job_id = jobs.create()
+    _building[project_id] = job_id
+    jobs.set_progress(job_id, 0, "Writing the document…")
+    threading.Thread(target=_run_build, args=(job_id, project_id, prefs, api_key, mode), daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/documents/<document_id>", methods=["PATCH"])
+def api_update_document(document_id):
+    return _store_call(library.update_document, document_id, **(request.get_json(silent=True) or {}))
+
+
+@app.route("/api/documents/<document_id>/diff")
+def api_document_diff(document_id):
+    try:
+        new = library.version(document_id, request.args.get("to"))
+        old = library.version(document_id, request.args.get("from") or (new["number"] - 1 if new else None))
+    except (StoreError, ValueError) as e:
+        return jsonify({"error": str(e)}), 400
+    if not new or not old or old["number"] == new["number"]:
+        return jsonify({"error": "there is no earlier version to compare with"}), 400
+    return jsonify({"from": old["number"], "to": new["number"], "changes": frd.diff(old, new)})
+
+
+@app.route("/api/documents/<document_id>/export.docx")
+def api_export_docx(document_id):
+    try:
+        doc = library.get_document(document_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    version = library.version(document_id, request.args.get("version"))
+    if not version:
+        return jsonify({"error": "build the document first"}), 400
+    template = request.args.get("template") or doc["template"]
+    if template not in library.DOC_TEMPLATES:
+        return jsonify({"error": "unknown template"}), 400
+    try:
+        from core import docx_export          # loaded on demand: the rest of the app works without it
+    except ImportError:
+        return jsonify({"error": "Word export is still being installed: restart the app to let setup finish."}), 503
+    data = docx_export.render(doc, version, library.free_blocks(document_id), template=template)
+    library.audit_event("document", document_id, "export", after={"version": version["number"], "template": template})
+    name = "".join(ch for ch in doc["title"] if ch not in '\\/:*?"<>|').strip() or "FRD"
+    return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{name} v{version['number']}.docx",
+                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
+@app.route("/api/documents/<document_id>/free-blocks", methods=["POST"])
+def api_add_free_block(document_id):
+    data = request.get_json(silent=True) or {}
+    return _store_call(lambda: {"id": library.add_free_block(document_id, data.get("section"), data.get("text")),
+                                "free_blocks": library.free_blocks(document_id)})
+
+
+@app.route("/api/free-blocks/<block_id>", methods=["PATCH"])
+def api_update_free_block(block_id):
+    return _store_call(lambda: (library.update_free_block(block_id, (request.get_json(silent=True) or {}).get("text")),
+                                {"ok": True})[1])
+
+
+@app.route("/api/free-blocks/<block_id>", methods=["DELETE"])
+def api_delete_free_block(block_id):
+    return _store_call(lambda: (library.delete_free_block(block_id), {"ok": True})[1])
+
+
+@app.route("/api/free-blocks/<block_id>/restore", methods=["POST"])
+def api_restore_free_block(block_id):
+    return _store_call(lambda: (library.delete_free_block(block_id, restore=True), {"ok": True})[1])
+
+
+def _run_fix(job_id, project_id, atom_id, rule, message, prefs, api_key):
+    try:
+        jobs.finish(job_id, frd.suggest_fix(library, project_id, atom_id, rule, message, prefs, api_key, OLLAMA_URL))
+    except (SummaryError, StoreError) as e:
+        jobs.fail(job_id, e)
+    except Exception as e:
+        jobs.fail(job_id, f"Could not suggest a fix: {e}")
+
+
+@app.route("/api/documents/<document_id>/fix", methods=["POST"])
+def api_fix(document_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        doc = library.get_document(document_id)
+        library.get_atom(data.get("atom_id"))
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    prefs, api_key, problem = _ai_prefs(library.get_project(doc["project_id"]))
+    if problem:
+        return problem
+    job_id = jobs.create()
+    threading.Thread(target=_run_fix, args=(job_id, doc["project_id"], data["atom_id"], data.get("rule", ""),
+                                            data.get("message", ""), prefs, api_key), daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/documents/<document_id>/dismiss", methods=["POST"])
+def api_dismiss(document_id):
+    data = request.get_json(silent=True) or {}
+    return _store_call(lambda: (library.dismiss_finding(document_id, data.get("atom_id"), data.get("rule")), {"ok": True})[1])
 
 
 if __name__ == "__main__":
