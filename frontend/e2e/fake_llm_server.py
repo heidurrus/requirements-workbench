@@ -5,6 +5,7 @@ Extraction turns every transcript line into an atom quoting that line; the
 duplicate check reports the first two new atoms as conflicting.
 """
 import functools
+import json
 import os
 import re
 import sys
@@ -85,8 +86,32 @@ class FakeAuth:
         return "fake"
 
 
-app_module.jira_auth = FakeAuth()
-app_module._jira_session = lambda: FAKE_JIRA
+if os.getenv("REAL_JIRA"):
+    # Live check against the user's sandbox: real sign-in and real Jira, but every write is
+    # refused unless it targets the one allowed project, and every call is logged.
+    ALLOWED = os.environ["REAL_JIRA"]                       # e.g. "SCRUM"
+    LOG = os.getenv("JIRA_LOG", "/tmp/jira-live.log")
+    real_session = app_module._jira_session
+
+    class Guarded:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def call(self, tool, **args):
+            if tool in ("createJiraIssue", "editJiraIssue", "createIssueLink", "addCommentToJiraIssue",
+                        "transitionJiraIssue"):
+                key = args.get("projectKey") or str(args.get("issueIdOrKey") or args.get("inwardIssue") or "").split("-")[0]
+                if key != ALLOWED:
+                    raise RuntimeError(f"blocked: writes are only allowed to {ALLOWED}, not {key!r}")
+            out = self.inner.call(tool, **args)
+            with open(LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"tool": tool, "args": {k: v for k, v in args.items() if k != "description"},
+                                    "result": out}, ensure_ascii=False, default=str)[:4000] + "\n")
+            return out
+    app_module._jira_session = lambda: Guarded(real_session())
+else:
+    app_module.jira_auth = FakeAuth()
+    app_module._jira_session = lambda: FAKE_JIRA
 
 # Pretend to be another machine for screenshots: FAKE_GPU="none" or a size in GB.
 if os.getenv("FAKE_GPU"):

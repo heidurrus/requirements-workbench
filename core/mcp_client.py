@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 
-from core.atlassian_auth import AuthRequired
+from core.atlassian_auth import AuthRequired, user_agent
 
 PROTOCOL = "2025-06-18"
 
@@ -37,7 +37,7 @@ class McpSession:
     def _post(self, message, expect_reply=True, refreshed=False):
         headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                    "Authorization": f"Bearer {self.token(force_refresh=refreshed)}",
-                   "MCP-Protocol-Version": PROTOCOL}
+                   "MCP-Protocol-Version": PROTOCOL, "User-Agent": user_agent()}
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
         req = urllib.request.Request(self.url, data=json.dumps(message).encode(), headers=headers, method="POST")

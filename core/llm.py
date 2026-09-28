@@ -76,6 +76,24 @@ def _local_model(prefs):
         return prefs.get("local_model") or None
 
 
+LANGUAGE_NAMES = {"ru": "Russian", "en": "English"}
+
+
+def output_language(project, fallback=None):
+    """The language the AI writes in for this project: its setting, or the fallback when "auto"."""
+    lang = (project or {}).get("language") or "auto"
+    return lang if lang in LANGUAGE_NAMES else fallback
+
+
+def language_rule(project):
+    """Added to every stage's prompt when the project has a fixed output language."""
+    lang = output_language(project)
+    if not lang:
+        return ""
+    return (f"Write everything you produce (statements, headings, text, stories) in {LANGUAGE_NAMES[lang]}, "
+            "translating from the source's language when it differs. Quotes and evidence stay exactly as in the source.")
+
+
 def for_project(prefs, project):
     """A "Local only" project never uses the cloud: the built-in model, or Ollama if that's the choice."""
     if project and project["local_only"] and prefs["llm_provider"] == "claude":

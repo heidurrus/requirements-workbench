@@ -13,7 +13,7 @@ AC2): unchanged requirements keep their text and place word for word.
 import re
 
 from core import skills
-from core.llm import LLMError, complete_json, for_project, model_name
+from core.llm import LLMError, complete_json, for_project, model_name, output_language
 
 LABELS = {
     "ru": {"assumptions": "Допущения", "other": "Прочее"},
@@ -291,12 +291,14 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
     atoms.sort(key=lambda a: (order[rids[a["id"]].split("-")[0]], int(rids[a["id"]].split("-")[1])))
     by_rid = {rids[a["id"]]: a for a in atoms}
     conflicts = _open_conflicts(store, project_id)
-    lang = language_of([a["statement"] for a in atoms])
+    lang = output_language(project) or language_of([a["statement"] for a in atoms])
     ctx = {"store": store, "project": project, "atoms": atoms, "rids": rids, "by_rid": by_rid, "conflicts": conflicts,
            "lang": lang, "prefs": prefs, "api_key": api_key, "ollama_url": ollama_url, "report": report,
            "complete": complete, "skillset": skillset, "quality": Quality(skillset.get("quality")),
            "spec": section_spec(skillset["frd"], lang)}
     previous = store.version(doc["id"])
+    if previous is not None and previous["content"].get("language") != lang:
+        mode = "full"                                   # a new output language means rewriting everything
     if previous is None or mode == "full":
         content = _build_full(ctx)
         mode = "full"
@@ -493,8 +495,9 @@ def suggest_fix(store, project_id, atom_id, rule, message, prefs, api_key, ollam
                 skillset=None):
     """A rewrite of the atom that fixes a quality finding; the BA accepts, edits or dismisses it (FR-DOC-06 AC2)."""
     atom = store.get_atom(atom_id)
-    prefs = for_project(prefs, store.get_project(project_id))
-    lang = _lang_name(language_of([atom["statement"]]))
+    project = store.get_project(project_id)
+    prefs = for_project(prefs, project)
+    lang = _lang_name(output_language(project) or language_of([atom["statement"]]))
     system = skills.compose(skillset or skills.resolve(), "fix", FIX_CONTRACT, language=lang)
     user = f"Requirement ({atom['type']}): {atom['statement']}\n\nProblem ({rule}): {message}"
     reply = complete(system, user, FIX_SCHEMA, prefs, api_key, ollama_url)

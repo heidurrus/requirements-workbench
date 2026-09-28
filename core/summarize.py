@@ -145,11 +145,13 @@ def summarize_with_local(transcript, model_id, on_delta, title=None, opener=None
 
 # ── entry point ──────────────────────────────────────────────────────────────
 
-def summarize(transcript, settings, api_key, ollama_url, on_delta, title=None, skillset=None):
+def summarize(transcript, settings, api_key, ollama_url, on_delta, title=None, skillset=None, language_rule=""):
     """Summarise with the provider chosen in Settings and the summary skill in effect (global or project)."""
     if not transcript or not transcript.strip():
         raise SummaryError("There is no transcript text to summarise.")
     system = skills.compose(skillset or skills.resolve(), "summary")
+    if language_rule:
+        system += "\n\n" + language_rule
     if settings["llm_provider"] == "local":
         return summarize_with_local(transcript, local_model_id(settings), on_delta, title, system=system)
     if settings["llm_provider"] == "ollama":

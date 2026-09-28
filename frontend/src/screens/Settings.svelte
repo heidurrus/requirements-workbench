@@ -87,6 +87,16 @@
             {t("project.local_only")}
           </label>
           <p class="hint">{t("set.local_only_hint")}</p>
+          <div class="field">
+            <span class="label">{t("set.out_lang")}</span>
+            <div class="seg out-lang" role="group" aria-label={t("set.out_lang")}>
+              {#each ["auto", "ru", "en"] as l (l)}
+                <button aria-pressed={(currentProject().language || "auto") === l}
+                        onclick={() => updateProject({ language: l })}>{t("set.out_lang." + l)}</button>
+              {/each}
+            </div>
+            <span class="hint">{t("set.out_lang_hint")}</span>
+          </div>
           {#if currentProject().local_only && !localReady && s && s.llm_provider !== "ollama"}
             <div class="need-local">
               <p class="note warn">{t("llm.local_only_needs")}</p>

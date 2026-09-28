@@ -10,7 +10,7 @@ import re
 import unicodedata
 
 from core import skills
-from core.llm import LLMError, complete_json, for_project, model_name
+from core.llm import LLMError, complete_json, for_project, language_rule, model_name
 from core.transcripts import format_time
 
 CHUNK_CHARS = 12000
@@ -142,7 +142,8 @@ def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=No
     if not segments:
         raise LLMError("This source has no text yet.")
     skillset = skillset or skills.resolve()
-    system = skills.compose(skillset, "extract", EXTRACT_CONTRACT)
+    rule = language_rule(store.get_project(source["project_id"]))
+    system = skills.compose(skillset, "extract", EXTRACT_CONTRACT + (f"\n- {rule}" if rule else ""))
     report = progress or (lambda done, total, message: None)
     chunks = chunk_segments(segments)
     steps = len(chunks) + 1

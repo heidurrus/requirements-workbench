@@ -10,7 +10,7 @@ import uuid
 
 from core import skills
 from core.frd import _lang_name, req_blocks
-from core.llm import complete_json, for_project, model_name
+from core.llm import complete_json, for_project, model_name, output_language
 
 DECOMPOSE_CONTRACT = """- Use only the requirements listed; never invent features. Every FR ID must appear in the refs of at least one story.
 - epics: title and goal; stories inside epics: title (short), story (the user-story sentence), refs (FR IDs it implements), acceptance (list of given / when / then), subtasks (short titles, may be empty).
@@ -93,7 +93,7 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
         raise BacklogError("The document has no functional requirements to turn into stories.")
     prefs = for_project(prefs, project)
     skillset = skillset or skills.resolve()
-    lang = version["content"].get("language", "ru")
+    lang = output_language(project) or version["content"].get("language", "ru")
     t = TEXT[lang]
     sections = {s["key"]: s for s in version["content"]["sections"]}
     purpose = next((b["text"] for b in sections.get("purpose", {}).get("blocks", []) if b["kind"] == "text"), "")
@@ -162,7 +162,7 @@ def invest(store, project_id, prefs, api_key, ollama_url, progress=None, complet
     prefs = for_project(prefs, project)
     doc = store.document(project_id)
     version = store.version(doc["id"])
-    lang = (version or {}).get("content", {}).get("language", "ru")
+    lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
     labels = {f"S{i + 1}": s for i, s in enumerate(stories)}
 
     def describe(key, s):

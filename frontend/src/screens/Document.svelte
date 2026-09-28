@@ -51,6 +51,7 @@
         if (b.kind === "req") for (const i of b.issues || []) out.push({ ...i, block: b });
     return out;
   });
+  const projectLang = $derived(({ ru: "ru", en: "en" })[app.projects.find(p => p.id === app.currentProjectId)?.language] || null);
   const staleSections = $derived(body?.stale ? Object.keys(body.stale.sections).sort().join(", ") : "");
 
   async function follow(jobId) {
@@ -241,6 +242,10 @@
           </p>
         {/if}
         {#if stats.open_conflicts}<p class="note warn">{t("doc.conflicts", { n: stats.open_conflicts })}</p>{/if}
+        {#if isLatest && projectLang && content.language !== projectLang}
+          <p class="note warn row-note"><span>{t("doc.lang_mismatch", { doc: t("lang." + content.language), want: t("lang." + projectLang) })}</span>
+            <button class="btn btn-sm" disabled={!!build} onclick={() => runBuild("full")}>{t("doc.full")}</button></p>
+        {/if}
         {#if stats.pending}<p class="hint">{t("doc.pending", { n: stats.pending })}</p>{/if}
 
         <div class="toolbar">

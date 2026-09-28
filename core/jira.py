@@ -12,6 +12,7 @@ import hashlib
 import json
 
 from core.frd import req_blocks
+from core.llm import output_language
 
 APP_LABEL = "requirements-workbench"
 ORDER = {"epic": 0, "story": 1, "nfr": 2, "subtask": 3}
@@ -155,7 +156,7 @@ def plan(store, project_id, session):
     types = target.get("types") or {}
     doc = store.document(project_id)
     version = store.version(doc["id"])
-    lang = (version or {}).get("content", {}).get("language", "ru")
+    lang = output_language(store.get_project(project_id)) or (version or {}).get("content", {}).get("language", "ru")
     items = store.backlog(project_id)
     by_id = {i["id"]: i for i in items}
 
@@ -236,7 +237,7 @@ def push(store, project_id, session, item_ids, progress=None):
         raise JiraError("Nothing to push: tick at least one row to create or update.")
     doc = store.document(project_id)
     version = store.version(doc["id"])
-    lang = (version or {}).get("content", {}).get("language", "ru")
+    lang = output_language(store.get_project(project_id)) or (version or {}).get("content", {}).get("language", "ru")
     keys = {i["id"]: i.get("jira_key") for i in store.backlog(project_id)}
     for r in preview["rows"]:
         if r.get("key"):
