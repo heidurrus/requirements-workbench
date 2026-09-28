@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.7.2 (2026-09-28): Action items are no longer requirements
+
+- Extraction now tells **requirements** (what the system must do) apart from **action items**
+  ("отправлю письмо", "Иван пришлёт выгрузку", "созвонимся в четверг") and other non-requirements
+  (process, complaints without a stated need). Those are set aside instead of becoming
+  functional requirements. The result shows how many action items were skipped.
+- It still keeps real requirements that mention email when the *system* does it ("система
+  отправляет клиенту письмо-подтверждение").
+- Works with your own extraction skills too: the app's format contract now includes the two
+  new labels. **Попробовать** in the skill editor lists what was skipped, so you can tune
+  the rules.
+- The built-in extraction skill has clearer rules and Russian examples of what is not a
+  requirement.
+
 ## 2.7.1 (2026-09-28): Bulk review of atoms
 
 - **Review hundreds of atoms at once.** Tick atoms (shift-click selects a range), or tick

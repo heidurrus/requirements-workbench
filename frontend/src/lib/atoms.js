@@ -15,6 +15,7 @@ export async function extractAtoms(sourceId) {
     loadSources();
     const parts = [t("at.found", { n: r.extracted })];
     if (r.merged) parts.push(t("at.merged_n", { n: r.merged }));
+    if (r.skipped_actions) parts.push(t("at.skipped_actions", { n: r.skipped_actions }));
     if (r.conflicts) parts.push(t("at.conflicts_n", { n: r.conflicts }));
     toast(parts.join(" · "), app.route.name === "atoms" ? {} : { action: t("at.open"), onAction: () => go("/atoms") });
   } catch (err) {
