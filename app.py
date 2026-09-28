@@ -847,7 +847,8 @@ def api_create_project():
 def api_update_project(project_id):
     data = request.get_json(silent=True) or {}
     return _store_call(library.update_project, project_id,
-                       **{k: data[k] for k in ("name", "local_only", "archived", "language") if k in data})
+                       **{k: data[k] for k in ("name", "local_only", "archived", "language", "jira_quotes", "auto_extract")
+                          if k in data})
 
 
 @app.route("/api/projects/<project_id>/current", methods=["POST"])
@@ -1033,6 +1034,21 @@ def api_import_project():
                 with open(os.path.join(folder, name[len(prefix):]), "wb") as f:
                     f.write(z.read(name))
     return jsonify(project)
+
+
+@app.route("/api/notify", methods=["POST"])
+def api_notify():
+    """A system notification when a long job finishes and the BA is elsewhere (PM-30). macOS only for now."""
+    d = request.get_json(silent=True) or {}
+    title, text = str(d.get("title") or "Requirements Workbench")[:120], str(d.get("text") or "")[:240]
+    if sys.platform == "darwin":
+        script = f'display notification {json.dumps(text)} with title {json.dumps(title)}'
+        try:
+            subprocess.run(["osascript", "-e", script], timeout=5, capture_output=True)
+        except (OSError, subprocess.SubprocessError):
+            return jsonify({"shown": False})
+        return jsonify({"shown": True})
+    return jsonify({"shown": False})
 
 
 @app.route("/api/ai/check", methods=["POST"])

@@ -61,7 +61,7 @@ await sub.filter({ hasText: "SBX · Sandbox" }).waitFor();
 step("choose project; types mapped automatically");
 
 // Preview: read only.
-await page.getByRole("button", { name: "Показать предпросмотр" }).click();
+// The read-only preview runs by itself once the target is set.
 await page.locator(".counts").getByText("создать: 3").waitFor({ timeout: 15000 });
 await page.locator(".counts").getByText("пропустить: 5").waitFor();
 if (shots) await page.screenshot({ path: join(shots, "export.png"), fullPage: true });
@@ -75,7 +75,7 @@ await page.getByText("Готово: 3 задачи").waitFor({ timeout: 15000 })
 await page.locator(".result a", { hasText: "SBX-1" }).waitFor();
 step("push with confirmation: 3 issues created with links");
 
-await page.getByRole("button", { name: "Показать предпросмотр" }).click();
+await page.locator(".screen-head").getByRole("button", { name: /Обновить|Показать предпросмотр/ }).click();
 await page.locator(".counts").getByText("без изменений: 3").waitFor({ timeout: 15000 });
 step("a second preview: everything unchanged, nothing to push");
 

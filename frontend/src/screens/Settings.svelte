@@ -2,6 +2,8 @@
   import Block from "../components/Block.svelte";
   import LocalModel from "../components/LocalModel.svelte";
   import { api } from "../lib/api.js";
+  import Icon from "../components/Icon.svelte";
+  import { saveUrl } from "../lib/save.js";
   import { LANGS } from "../lib/i18n.js";
   import { app, t, setLang, setTheme, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
 
@@ -51,6 +53,16 @@
   async function restore(id) {
     await api(`/api/projects/${id}`, { method: "PATCH", body: { archived: false } });
     await loadProjects();
+  }
+
+  const effectiveQuotes = $derived.by(() => {
+    const p = currentProject();
+    const q = p?.jira_quotes || "auto";
+    return q === "auto" ? (p?.local_only ? "link" : "full") : q;
+  });
+  function exportProject() {
+    const p = currentProject();
+    saveUrl(`/api/projects/${p.id}/export.zip`, `${p.name}.rwproject.zip`.replace(/[\\/:*?"<>|]/g, ""));
   }
 
   const env = $derived(app.health ? [
@@ -103,6 +115,25 @@
             {/each}
           </div>
         </div>
+      </div>
+      <label class="form-row">
+        <span class="l"><b>{t("set.auto_extract")}</b><span>{t("set.auto_extract_hint")}</span></span>
+        <span class="c"><input type="checkbox" class="switch" checked={currentProject().auto_extract !== false}
+               onchange={e => updateProject({ auto_extract: e.currentTarget.checked })} /></span>
+      </label>
+      <div class="form-row">
+        <span class="l"><b>{t("set.jira_quotes")}</b><span>{t("set.jira_quotes_hint." + effectiveQuotes)}</span></span>
+        <div class="c">
+          <div class="seg jira-quotes" role="group" aria-label={t("set.jira_quotes")}>
+            {#each ["auto", "full", "link", "none"] as q (q)}
+              <button aria-pressed={(currentProject().jira_quotes || "auto") === q} onclick={() => updateProject({ jira_quotes: q })}>{t("set.jq." + q)}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <span class="l"><b>{t("set.project_file")}</b><span>{t("set.project_file_hint")}</span></span>
+        <div class="c"><button class="btn" onclick={exportProject}><Icon name="download" size={14} /> {t("set.export_project")}</button></div>
       </div>
       <div class="form-row">
         <span class="l"><b>{t("set.archive")}</b><span>{t("set.archive_hint")}</span></span>

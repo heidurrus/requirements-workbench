@@ -111,6 +111,20 @@
     } catch (err) { fail(err); }
     finally { busy = null; }
   }
+  // The preview only reads, so it simply runs when the screen opens (PM review 2.5).
+  let autoRan = $state(null);
+  $effect(() => {
+    if (connected && target && !editingTarget && !preview && !busy && autoRan !== app.currentProjectId) {
+      autoRan = app.currentProjectId;
+      runPreview();
+    }
+  });
+  async function forgetOrphan(o) {
+    try {
+      const r = await api(`/api/projects/${app.currentProjectId}/jira/orphans/${encodeURIComponent(o.key)}/forget`, { method: "POST" });
+      preview = { ...preview, orphans: r.orphans };
+    } catch (err) { fail(err); }
+  }
   const pushable = $derived(preview ? preview.rows.filter(r => ["create", "update"].includes(r.action) && selected[r.item_id]) : []);
 
   async function push(ids = pushable.map(r => r.item_id)) {
@@ -280,6 +294,15 @@
           <span class="readonly"><Icon name="lock" size={12} /> {t("jr.no_writes")}</span>
         </div>
 
+        {#if preview?.stale?.document || preview?.stale?.backlog}
+          <p class="banner warn stale-banner"><Icon name="warn" size={14} />
+            <span class="grow">{preview.stale.document ? t("jr.stale_doc") : t("jr.stale_backlog")}</span>
+            <button class="btn btn-sm" onclick={() => go(preview.stale.document ? "/document" : "/backlog")}>{t("home.cta.update")}</button></p>
+        {/if}
+        {#if preview && preview.quotes !== "full"}
+          <p class="hint-line"><Icon name="lock" size={12} /> {t("jr.quotes." + preview.quotes)} ·
+            <button class="link" onclick={() => go("/settings")}>{t("err.open_settings")}</button></p>
+        {/if}
         {#if busy}
           <div class="banner info running"><span class="spinner"></span><span class="num">{busy.message}</span>
             <div class="grow"><div class="bar"><i style="width: {busy.progress}%"></i></div></div></div>
@@ -322,6 +345,20 @@
             <div class="glyph"><Icon name="export" /></div>
             <p class="panel-title">{t("jr.show_preview")}</p>
             <p>{t("jr.no_writes")}</p>
+          </div>
+        {/if}
+
+        {#if preview?.orphans?.length}
+          <div class="card orphans">
+            <p class="orph-h"><Icon name="warn" size={14} /> <b>{t("jr.orphans_title", { n: preview.orphans.length })}</b></p>
+            <p class="t3 orph-d">{t("jr.orphans_desc")}</p>
+            {#each preview.orphans as o (o.key)}
+              <div class="orph-row">
+                <a href={o.url} target="_blank" rel="noreferrer" class="mono">{o.key}</a>
+                <span class="grow">{o.title}</span>
+                <button class="btn btn-sm btn-ghost" onclick={() => forgetOrphan(o)}>{t("jr.orphan_done")}</button>
+              </div>
+            {/each}
           </div>
         {/if}
 
@@ -419,6 +456,14 @@
   .pushbar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-6);
     background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--line);
     border-radius: 0 0 var(--r-lg) var(--r-lg); }
+  .stale-banner { align-items: center; margin-bottom: var(--sp-4); }
+  .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; margin-bottom: var(--sp-4); }
+  .link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+  .orphans { margin-top: var(--sp-6); padding: var(--sp-5) var(--sp-6); }
+  .orph-h { display: flex; align-items: center; gap: 6px; color: var(--warn); }
+  .orph-d { font-size: var(--fs-12); margin: 2px 0 var(--sp-4); }
+  .orph-row { display: flex; gap: var(--sp-5); align-items: center; padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
+  .orph-row .mono { color: var(--accent); }
   .pushbar p { flex: 1; font-size: var(--fs-12); color: var(--text-3); min-width: 0; }
   .result { margin-top: var(--sp-6); overflow: hidden; }
   .res-h { padding: var(--sp-5) var(--sp-6); border-bottom: 1px solid var(--line); }

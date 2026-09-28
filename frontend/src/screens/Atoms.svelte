@@ -90,6 +90,16 @@
   const statementOf = $derived(Object.fromEntries(atoms.map(a => [a.id, a.statement])));
   const openConflicts = $derived(conflicts.filter(c => c.status === "open"));
 
+  // Opened from a transcript line or a document: show that atom, whatever the filters were.
+  let routedAtom = null;
+  $effect(() => {
+    const target = app.route.atom;
+    if (!target || !loaded || routedAtom === target || !atoms.some(a => a.id === target)) return;
+    routedAtom = target;
+    statusFilter = "all"; typeFilter = "all"; conflictOnly = false; search = ""; tab = "atoms";
+    requestAnimationFrame(() => select(target));
+  });
+
   $effect(() => {
     // Keep a valid selection while the list changes under the filters.
     if (!visible.length) selectedId = null;

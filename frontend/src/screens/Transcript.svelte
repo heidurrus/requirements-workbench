@@ -29,6 +29,32 @@
   let names = $state({});
   let copied = $state(false);
 
+  // Lines that became atoms (FR-TR-03 / PM-17) and in-place corrections (PM-25).
+  const marks = $derived(source?.atom_marks || {});
+  let editSeg = $state(null);            // {idx, text}
+  async function saveSegment() {
+    const e = editSeg;
+    editSeg = null;
+    try {
+      const r = await api(`/api/sources/${id}/segments/${e.idx}`, { method: "PATCH", body: { text: e.text } });
+      await load();
+      if (r.broken.length) toast(t("tr.quote_broken", { n: r.broken.length }), { kind: "danger", action: t("at.open"),
+                                                                                  onAction: () => go(`/atoms/atom/${r.broken[0]}`) });
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+  function markClass(list) {
+    if (list.some(m => m.status === "accepted")) return "m-accepted";
+    if (list.some(m => m.status === "pending")) return "m-pending";
+    return "m-rejected";
+  }
+  let summaryCopied = $state(false);
+  async function copySummaryAsEmail() {
+    const plain = summaryText.replace(/^#+\s*/gm, "").replace(/\*\*(.+?)\*\*/g, "$1").replace(/\[(\d\d:\d\d)[^\]]*\]/g, "($1)");
+    await navigator.clipboard.writeText(t("tr.recap_intro", { title: source.title }) + "\n\n" + plain.trim());
+    summaryCopied = true;
+    setTimeout(() => (summaryCopied = false), 1500);
+  }
+
   async function load() {
     loadError = "";
     try {
@@ -257,14 +283,33 @@
                   {#if isText}
                     <p class="para" id="seg-{seg.idx}" class:flash={seg.idx === flashIdx}>{seg.text}</p>
                   {:else}
-                  <div class="seg-row" class:active={seg.idx === activeIdx} class:flash={seg.idx === flashIdx} id="seg-{seg.idx}">
+                  {@const m = marks[seg.idx]}
+                  <div class="seg-row {m ? markClass(m) : ''}" class:active={seg.idx === activeIdx} class:flash={seg.idx === flashIdx} id="seg-{seg.idx}">
                     <div class="seg-meta">
                       {#if seg.start != null}
                         <button class="time" disabled={!source.audio_url} onclick={() => seek(seg.start)}>{fmtTime(seg.start)}</button>
                       {/if}
                       {#if seg.speaker}<span class="spk {speakerClass(seg.speaker, speakerOrder)}" title={speakerDisplay(seg.speaker, seg.speaker_name, t)}>{speakerDisplay(seg.speaker, seg.speaker_name, t)}</span>{/if}
                     </div>
-                    <p class="seg-text">{seg.text}</p>
+                    <div class="seg-text">
+                      {#if editSeg?.idx === seg.idx}
+                        <!-- svelte-ignore a11y_autofocus -->
+                        <textarea class="input seg-edit" rows="2" bind:value={editSeg.text} autofocus aria-label={t("tr.correct")}
+                                  onkeydown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveSegment(); }
+                                                    if (e.key === "Escape") editSeg = null; }}></textarea>
+                        <span class="hint">{t("tr.correct_hint")}</span>
+                      {:else}
+                        <p>{seg.text}{#if seg.corrected} <span class="tag outline" title={t("tr.corrected_hint")}>{t("tr.corrected")}</span>{/if}</p>
+                        {#if m}
+                          <p class="marks">{#each m as a (a.atom_id)}<button class="mark-chip {a.status}" title={a.statement}
+                              onclick={() => go(`/atoms/atom/${a.atom_id}`)}>{t("at.type." + a.type)} · {a.statement.slice(0, 48)}{a.statement.length > 48 ? "…" : ""}</button>{/each}</p>
+                        {/if}
+                      {/if}
+                    </div>
+                    {#if editSeg?.idx !== seg.idx}
+                      <span class="row-actions seg-acts"><button class="btn btn-ghost btn-sm icon-btn" aria-label={t("tr.correct")} title={t("tr.correct")}
+                              onclick={() => (editSeg = { idx: seg.idx, text: seg.text })}><Icon name="pencil" size={12} /></button></span>
+                    {/if}
                   </div>
                   {/if}
                 {/each}
@@ -277,6 +322,10 @@
           <Block id="tr-summary" title={t("tr.summary")} meta={summaryMeta}>
             {#if summaryText}
               <div class="md">{@html renderMarkdown(summaryText)}</div>
+              {#if !summarizing}
+                <button class="btn btn-sm recap" onclick={copySummaryAsEmail}>
+                  <Icon name={summaryCopied ? "check" : "mail"} size={14} /> {summaryCopied ? t("tr.copied") : t("tr.recap")}</button>
+              {/if}
             {:else if !summarizing && !summaryError}
               <p class="muted">{t("tr.no_summary")}</p>
             {/if}
@@ -329,6 +378,18 @@
   .seg-row { display: grid; grid-template-columns: 56px 120px minmax(0, 1fr); gap: var(--sp-5); padding: var(--sp-5) var(--sp-6);
     border-top: 1px solid var(--line); scroll-margin: 120px; font-size: var(--fs-14); line-height: 20px; }
   .seg-row.active { background: var(--accent-bg); }
+  .seg-row { position: relative; grid-template-columns: 56px 120px minmax(0, 1fr) auto; }
+  .seg-row.m-accepted { box-shadow: inset 3px 0 0 var(--ok); }
+  .seg-row.m-pending { box-shadow: inset 3px 0 0 var(--accent); }
+  .seg-row.m-rejected { box-shadow: inset 3px 0 0 var(--line-control); }
+  .marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .mark-chip { border: 0; border-radius: var(--r-full); padding: 1px 8px; font: 500 var(--fs-11)/18px var(--font); cursor: pointer;
+    background: var(--accent-bg); color: var(--accent); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mark-chip.accepted { background: var(--ok-bg); color: var(--ok); }
+  .mark-chip.rejected { background: var(--surface-2); color: var(--text-3); text-decoration: line-through; }
+  .seg-edit { height: auto; font-size: var(--fs-14); line-height: 20px; resize: vertical; }
+  .seg-acts { align-self: start; }
+  .recap { margin-top: var(--sp-5); }
   .seg-row:last-child { border-radius: 0 0 var(--r-lg) var(--r-lg); }
   .seg-meta { display: contents; }
   .time { border: 0; background: none; padding: 0; font: 12px/20px var(--mono); color: var(--text-3); cursor: pointer; text-align: left; align-self: start; }

@@ -88,6 +88,22 @@
     }
   }
 
+  let importInput = $state(null);
+  async function importProject(e) {
+    const f = e.currentTarget.files[0];
+    e.currentTarget.value = "";
+    if (!f) return;
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const p = await api("/api/projects/import", { method: "POST", form });
+      await loadProjects();
+      await switchProject(p.id);
+      menuOpen = false;
+      toast(t("project.imported", { name: p.name }));
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
   async function pick(id) {
     menuOpen = false;
     if (id !== app.currentProjectId) await switchProject(id);
@@ -121,6 +137,9 @@
             {#if p.local_only}<Icon name="lock" size={12} />{/if}
           </button>
         {/each}
+        <button class="menu-item import" role="menuitem" onclick={() => importInput.click()}>
+          <span><Icon name="upload" size={12} /> {t("project.import")}</span></button>
+        <input type="file" accept=".zip" class="hidden" bind:this={importInput} onchange={importProject} aria-label={t("project.import")} />
         <form class="menu-new" onsubmit={createProject}>
           <input class="input" bind:value={newName} placeholder={t("project.new_placeholder")} aria-label={t("project.new")} />
           <button class="btn btn-sm btn-primary" disabled={creating || !newName.trim()}>{t("project.create")}</button>
@@ -190,6 +209,8 @@
     padding: var(--sp-3) var(--sp-4); border: 0; background: none; border-radius: var(--r-sm); cursor: pointer; text-align: left; }
   .menu-item:hover, .menu-item.on { background: var(--surface-2); }
   .menu-item.on { font-weight: 600; }
+  .menu-item.import { color: var(--text-2); border-top: 1px solid var(--line); border-radius: 0; margin-top: var(--sp-2); }
+  .menu-item.import span { display: inline-flex; align-items: center; gap: 6px; }
   .menu-new { display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-2) var(--sp-2); border-top: 1px solid var(--line); margin-top: var(--sp-2); }
   .menu-new .input { height: 24px; font-size: var(--fs-12); }
 

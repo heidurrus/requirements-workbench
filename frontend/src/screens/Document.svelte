@@ -71,9 +71,12 @@
     }
   }
 
-  async function runBuild(mode) {
+  async function runBuild(mode, note = null) {
+    confirmFull = false;
+    refineOpen = false;
     try {
-      const { job_id } = await api(`/api/projects/${app.currentProjectId}/document/build`, { method: "POST", body: { mode } });
+      const { job_id } = await api(`/api/projects/${app.currentProjectId}/document/build`, { method: "POST",
+                                                                                          body: note ? { mode, note } : { mode } });
       follow(job_id);
     } catch (err) {
       const e = explain(err);
@@ -94,6 +97,85 @@
     if (diff) { diff = null; return; }
     try { diff = await api(`/api/documents/${doc.id}/diff?to=${version.number}`); }
     catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
+  // PM-12: a full rewrite is one click away from approved prose — ask first, and say what's kept.
+  let confirmFull = $state(false);
+  // PM-32: a one-off instruction for this build
+  let refineOpen = $state(false);
+  let refineNote = $state("");
+  let exportMenu = $state(false);
+  let reviewInput = $state(null);
+
+  function exportMarkdown() {
+    exportMenu = false;
+    saveUrl(`/api/documents/${doc.id}/export.md?version=${version.number}`, `${doc.title} v${version.number}.md`.replace(/[\\/:*?"<>|]/g, ""));
+  }
+  function exportTrace() {
+    exportMenu = false;
+    saveUrl(`/api/projects/${app.currentProjectId}/traceability.xlsx?lang=${app.lang}`, `${doc.title} — traceability.xlsx`.replace(/[\\/:*?"<>|]/g, ""));
+  }
+  async function importReview(e) {
+    exportMenu = false;
+    const f = e.currentTarget.files[0];
+    e.currentTarget.value = "";
+    if (!f) return;
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const r = await api(`/api/documents/${doc.id}/review`, { method: "POST", form });
+      toast(t("doc.review_imported", { n: r.comments, linked: r.linked }), { action: t("doc.review_open"),
+                                                                             onAction: () => go(`/source/${r.source_id}`) });
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
+  // Sign-off and change requests (PM-34)
+  const baseline = $derived(body?.versions?.filter(v => v.status === "approved").map(v => v.number).sort((a, b) => b - a)[0] || null);
+  let changes = $state(null);
+  $effect(() => {
+    if (doc && baseline && latest > baseline) {
+      api(`/api/documents/${doc.id}/changes`).then(r => (changes = r)).catch(() => (changes = null));
+    } else changes = null;
+  });
+  let showChanges = $state(false);
+  async function setStatus(status) {
+    try {
+      const r = await api(`/api/documents/${doc.id}/versions/${version.number}/status`, { method: "POST", body: { status } });
+      body.versions = r.versions;
+      toast(t("doc.st_set", { v: version.number, s: t("doc.st." + status) }));
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
+  // Jira keys on requirements (PM-11)
+  let jiraByReq = $state({});
+  $effect(() => {
+    app.currentProjectId; body;
+    api(`/api/projects/${app.currentProjectId}/backlog`).then(b => {
+      const m = {};
+      for (const i of b.items) if (i.jira_key) for (const r of i.refs || []) (m[r.id] ||= []).push({ key: i.jira_key, url: i.jira_url });
+      jiraByReq = m;
+    }).catch(() => {});
+  });
+
+  // PM-27: fix every finding, accept the proposals, update once — one version, not one per finding.
+  let fixingAll = $state(null);
+  async function fixAll() {
+    const list = findings.filter(f => !fixes[fixKey(f)]);
+    fixingAll = { done: 0, total: list.length };
+    let applied = 0;
+    for (const f of list) {
+      try {
+        const { job_id } = await api(`/api/documents/${doc.id}/fix`, { method: "POST",
+          body: { atom_id: f.block.atom_id, rule: f.rule, message: f.message } });
+        const job = await pollJob(job_id, null, { interval: 700 });
+        await api(`/api/atoms/${f.block.atom_id}`, { method: "PATCH", body: { statement: job.result.statement } });
+        applied++;
+      } catch (_) { /* skip this one, keep going */ }
+      fixingAll = { done: fixingAll.done + 1, total: list.length };
+    }
+    fixingAll = null;
+    app.atomsVersion++;
+    if (applied) { toast(t("doc.fixed_all", { n: applied })); runBuild("changed"); }
   }
 
   function exportDocx() {
@@ -212,14 +294,15 @@
             <button class="btn btn-ghost" aria-pressed={!!diff} onclick={toggleDiff}>
               <Icon name="compare" size={14} /> {diff ? t("doc.hide_diff") : t("doc.diff", { v: version.number - 1 })}</button>
           {/if}
+          <button class="btn btn-ghost" onclick={() => (refineOpen = !refineOpen)} title={t("ai.refine_hint")}>{t("ai.refine")}</button>
           {#if body.stale?.stale}
             <div class="split">
               <button class="btn btn-primary" disabled={!!build} onclick={() => runBuild("changed")}>
-                <Icon name="refresh" size={14} /> {t("doc.rebuild")}</button>
-              <button class="btn" disabled={!!build} onclick={() => runBuild("full")} title={t("doc.full_hint")}>{t("doc.full")}</button>
+                <Icon name="refresh" size={14} /> {t("doc.rebuild_n", { n: body.stale.changed + body.stale.removed + body.stale.added })}</button>
+              <button class="btn" disabled={!!build} onclick={() => (confirmFull = true)} title={t("doc.full_hint")}>{t("doc.full")}</button>
             </div>
           {:else}
-            <button class="btn btn-ghost" disabled={!!build} onclick={() => runBuild("full")} title={t("doc.full_hint")}>
+            <button class="btn btn-ghost" disabled={!!build} onclick={() => (confirmFull = true)} title={t("doc.full_hint")}>
               <Icon name="refresh" size={14} /> {t("doc.full")}</button>
           {/if}
           <span class="tb-sep"></span>
@@ -229,6 +312,18 @@
                     title={t("doc.template")} onchange={e => patchDoc({ template: e.currentTarget.value })}>
               {#each exportSkills as s (s.name)}<option value={s.name}>{s.title}</option>{/each}
             </select>
+          </div>
+          <div class="menu-wrap">
+            <button class="btn icon-btn" aria-label={t("doc.more_export")} title={t("doc.more_export")} aria-expanded={exportMenu}
+                    onclick={() => (exportMenu = !exportMenu)}><Icon name="more" /></button>
+            {#if exportMenu}
+              <div class="menu" role="menu">
+                <button role="menuitem" onclick={exportMarkdown}><Icon name="file" size={14} /> {t("doc.export_md")}</button>
+                <button role="menuitem" onclick={exportTrace}><Icon name="tree" size={14} /> {t("doc.export_trace")}</button>
+                <button role="menuitem" onclick={() => reviewInput.click()}><Icon name="upload" size={14} /> {t("doc.import_review")}</button>
+              </div>
+            {/if}
+            <input type="file" accept=".docx" class="hidden" bind:this={reviewInput} onchange={importReview} aria-label={t("doc.import_review")} />
           </div>
           <button class="btn btn-ghost" onclick={() => go("/backlog")}>{t("doc.to_backlog")} <Icon name="arrow" size={14} /></button>
         {/if}
@@ -285,6 +380,46 @@
         </nav>
 
         <div class="paper-col">
+      {#if refineOpen}
+        <div class="card refine">
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea class="input" rows="2" bind:value={refineNote} autofocus placeholder={t("ai.refine_ph.doc")} aria-label={t("ai.refine")}></textarea>
+          <div class="actions"><span class="hint">{t("ai.refine_hint")}</span><span class="spacer"></span>
+            <button class="btn btn-sm btn-ghost" onclick={() => (refineOpen = false)}>{t("at.cancel")}</button>
+            <button class="btn btn-sm" disabled={!refineNote.trim() || !!build} onclick={() => runBuild("changed", refineNote)}>{t("doc.rebuild")}</button>
+            <button class="btn btn-sm btn-primary" disabled={!refineNote.trim() || !!build} onclick={() => runBuild("full", refineNote)}>{t("doc.full_short")}</button>
+          </div>
+        </div>
+      {/if}
+      <div class="version-bar">
+        <span class="t3">v{version.number}</span>
+        <div class="seg" role="group" aria-label={t("doc.st.label")}>
+          {#each ["draft", "review", "approved"] as st (st)}
+            <button aria-pressed={(version.status || "draft") === st} disabled={!isLatest && st !== "approved" && false}
+                    onclick={() => setStatus(st)}>{t("doc.st." + st)}</button>
+          {/each}
+        </div>
+        {#if baseline && baseline !== version.number}<span class="t3">{t("doc.baseline", { v: baseline })}</span>{/if}
+        {#if changes && changes.changes.length}
+          <button class="btn btn-sm" onclick={() => (showChanges = !showChanges)}>
+            <Icon name="compare" size={12} /> {t("doc.cr_n", { n: changes.changes.length, v: baseline })}</button>
+        {/if}
+      </div>
+      {#if showChanges && changes}
+        <div class="card cr">
+          <p class="cr-h">{t("doc.cr_title", { a: changes.baseline, b: changes.to })}</p>
+          {#each changes.changes as c (c.id + c.change)}
+            <div class="cr-row">
+              <span class="mono">{c.id}</span>
+              <span class="tag {c.change === 'added' ? 'ok' : c.change === 'removed' ? 'danger' : 'warn'}">{t("doc.change." + c.change)}</span>
+              <span class="grow">{c.new || c.old}</span>
+              {#if c.impact.length}
+                <span class="impact">{t("doc.cr_impact")}: {#each c.impact as im, i (i)}{#if im.key}<a href={im.url} target="_blank" rel="noreferrer" class="mono">{im.key}</a>{:else}{im.title}{/if}{i < c.impact.length - 1 ? ", " : ""}{/each}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
       <div class="banners">
             {#if isLatest && body.stale?.stale}
               <p class="banner warn row-note">
@@ -350,6 +485,10 @@
             {/if}
             {#if findings.length && isLatest}
               <h4><span>{t("doc.quality")}</span><span class="num">{t("doc.findings", { n: findings.length })}</span></h4>
+              {#if findings.length > 1}
+                <button class="btn btn-sm fix-all" disabled={!!fixingAll || !!build} onclick={fixAll}>
+                  {#if fixingAll}<span class="spinner"></span> {fixingAll.done}/{fixingAll.total}{:else}<Icon name="bolt" size={12} /> {t("doc.fix_all", { n: findings.length })}{/if}</button>
+              {/if}
               {#each findings as f (fixKey(f))}
                 <div class="finding">
                   <div class="fh">
@@ -381,6 +520,25 @@
     {/if}
   {/if}
 </div>
+
+{#if confirmFull}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scrim" onclick={e => e.target === e.currentTarget && (confirmFull = false)} onkeydown={e => e.key === "Escape" && (confirmFull = false)}>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="full-h">
+      <h2 id="full-h">{t("doc.full_q")}</h2>
+      <p class="t2">{t("doc.full_body")}</p>
+      <dl class="facts">
+        <dt>{t("doc.full_kept")}</dt><dd>{t("doc.full_kept_v")}</dd>
+        <dt>{t("doc.full_new")}</dt><dd>{t("doc.full_new_v")}</dd>
+      </dl>
+      <div class="acts">
+        <!-- svelte-ignore a11y_autofocus -->
+        <button class="btn" autofocus onclick={() => (confirmFull = false)}>{t("at.cancel")}</button>
+        <button class="btn btn-primary" onclick={() => runBuild("full")}>{t("doc.full_yes")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#snippet freeEditor()}
   <div class="free-edit">
@@ -437,6 +595,9 @@
                 {s.source_title}{#if sourceRef(s)}<span class="num"> · {sourceRef(s)}</span>{/if}</button>{/each}
             </p>
           {/if}
+          {#if jiraByReq[b.id]}
+            <p class="src">{#each jiraByReq[b.id] as j (j.key)}<a class="src-chip jira" href={j.url} target="_blank" rel="noreferrer"><Icon name="link" size={12} /> {j.key}</a>{/each}</p>
+          {/if}
           {#if b.conflict || (b.issues || []).length || staleIds.has(b.atom_id)}
             <p class="flag">
               {#if b.conflict}<span class="tag danger" title={b.conflict}><Icon name="warn" size={12} /> {t("at.conflict_with", { text: b.conflict })}</span>
@@ -484,8 +645,32 @@
   .narrow-card { max-width: 560px; margin: var(--sp-8) auto 0; }
   .narrow-card .hint { margin-top: calc(-1 * var(--sp-4)); }
   .paper-col { min-width: 0; }
+  .refine { padding: var(--sp-5); margin-bottom: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); }
+  .refine textarea { height: auto; }
+  .spacer { flex: 1; }
+  .version-bar { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-5); font-size: var(--fs-12); }
+  .cr { padding: var(--sp-5) var(--sp-6); margin-bottom: var(--sp-5); font-size: var(--fs-13); }
+  .cr-h { font-weight: 600; margin-bottom: var(--sp-4); }
+  .cr-row { display: flex; gap: var(--sp-4); align-items: baseline; padding: var(--sp-3) 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .cr-row .grow { flex: 1; min-width: 200px; }
+  .impact { font-size: var(--fs-12); color: var(--text-3); }
+  .impact a { color: var(--accent); }
+  .menu-wrap { position: relative; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; background: var(--surface); border-radius: var(--r-md);
+    box-shadow: var(--e2); padding: var(--sp-2); min-width: 240px; }
+  .menu button { display: flex; align-items: center; gap: var(--sp-4); width: 100%; border: 0; background: none; text-align: left;
+    padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer; font: inherit; color: var(--text); }
+  .menu button:hover { background: var(--surface-2); }
+  .src-chip.jira { background: var(--accent-bg); color: var(--accent); text-decoration: none; }
+  .fix-all { align-self: flex-start; }
   .banners { margin: 0 0 var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); }
   .banners:empty { display: none; }
+  /* several warnings read as one strip, not a stack (PM review 2.4) */
+  .banners:has(.banner + .banner) { gap: 0; }
+  .banners:has(.banner + .banner) .banner { border-radius: 0; }
+  .banners:has(.banner + .banner) .banner:first-child { border-radius: var(--r-md) var(--r-md) 0 0; }
+  .banners:has(.banner + .banner) .banner:last-of-type { border-radius: 0 0 var(--r-md) var(--r-md); }
+  .banners .banner + .banner { box-shadow: inset 0 1px 0 color-mix(in srgb, currentColor 18%, transparent); }
   .banners .banner :global(.icon) { margin-top: 1px; }
   .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 
@@ -566,12 +751,15 @@
   @media (max-width: 1360px) {
     .doc-layout, .doc-layout:not(.has-notes) { grid-template-columns: 188px minmax(0, 760px); }
     .notes { position: static; grid-column: 2; grid-row: 1; max-height: none; display: grid; grid-template-columns: 1fr 1fr; }
+    .toc { grid-row: 1 / span 2; }
+    .paper-col { grid-column: 2; }
     .notes h4 { grid-column: 1 / -1; }
   }
   @media (max-width: 1120px) {
     .doc-layout, .doc-layout:not(.has-notes) { grid-template-columns: minmax(0, 1fr); max-width: 760px; margin: 0 auto; }
     .toc { display: none; }
     .notes { grid-column: 1; }
+    .paper-col { grid-column: 1; }
     .paper { padding: 40px 40px 56px; --pad-l: 40px; }
     .add-free { right: -24px; }
     .req { margin: 0 -12px; grid-template-columns: minmax(0, 1fr) auto; }
