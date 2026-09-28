@@ -525,11 +525,16 @@ const ru = {
   "nav.badge_stale": "документ устарел",
   "nav.badge_pushed": "выгружено в Jira: {n}",
   "nav.cpu": "Распознавание на CPU",
-  "project.cloud_ok": "Облачный ИИ разрешён",
+  "project.cloud_ok": "Облачный ИИ",
   "project.switch": "Сменить проект",
   "theme.toggle": "Сменить тему",
   "theme.light": "Светлая тема",
   "theme.dark": "Тёмная тема",
+  "at.resolve": "Разобрать",
+  "at.hide": "Свернуть",
+  "at.conflicts_desc": "Атомы противоречат друг другу: оставьте один, объедините или спросите заказчика.",
+  "at.done_title": "Все атомы разобраны",
+  "at.done_meta": "Принято {accepted} из {total}",
 };
 
 const en = {
@@ -1056,11 +1061,16 @@ const en = {
   "nav.badge_stale": "document is out of date",
   "nav.badge_pushed": "pushed to Jira: {n}",
   "nav.cpu": "Recognition on CPU",
-  "project.cloud_ok": "Cloud AI allowed",
+  "project.cloud_ok": "Cloud AI",
   "project.switch": "Switch project",
   "theme.toggle": "Switch theme",
   "theme.light": "Light theme",
   "theme.dark": "Dark theme",
+  "at.resolve": "Resolve",
+  "at.hide": "Collapse",
+  "at.conflicts_desc": "These atoms contradict each other: keep one, merge them or ask the customer.",
+  "at.done_title": "All atoms reviewed",
+  "at.done_meta": "{accepted} of {total} accepted",
 };
 
 export const DICTS = { ru, en };
