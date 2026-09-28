@@ -34,11 +34,17 @@
     toast(err.message, { kind: "danger", ms: 10000 });
   }
 
-  async function connect() {
+  let privateNote = $state("");
+  async function connect(privateWindow = true) {
     try {
-      const { url } = await api("/api/jira/connect", { method: "POST" });
-      if (window.pywebview?.api?.open_url) await window.pywebview.api.open_url(url);
-      else window.open(url, "_blank");
+      const { url, opened_private } = await api("/api/jira/connect", { method: "POST", body: { private: privateWindow } });
+      if (opened_private) {
+        privateNote = t("jr.private_opened", { browser: opened_private });
+      } else {
+        privateNote = privateWindow ? t("jr.private_missing") : "";
+        if (window.pywebview?.api?.open_url) await window.pywebview.api.open_url(url);
+        else window.open(url, "_blank");
+      }
       waiting = true;
       for (let i = 0; i < 150 && waiting; i++) {          // up to 5 minutes for the sign-in
         await new Promise(r => setTimeout(r, 2000));
@@ -149,12 +155,20 @@
       </div>
       {#if connected && sites.length}
         <p class="hint">{t("jr.access", { sites: sites.map(s => s.url.replace("https://", "")).join(", ") })}</p>
-        <p class="hint">{t("jr.wrong_account")}</p>
+        {#if target && !sites.some(s => s.cloud_id === target.cloud_id)}
+          <p class="note danger">{t("jr.target_not_visible", { site: target.site_url.replace("https://", "") })}</p>
+        {:else}
+          <p class="hint">{t("jr.wrong_account")}</p>
+        {/if}
       {/if}
       {#if connected === false}
         <p class="panel-desc">{t("jr.connect_hint")}</p>
-        <button class="btn btn-primary" disabled={waiting} onclick={connect}>
-          {#if waiting}<span class="spinner"></span> {t("jr.waiting")}{:else}{t("jr.connect")}{/if}</button>
+        <div class="actions">
+          <button class="btn btn-primary" disabled={waiting} onclick={() => connect(true)}>
+            {#if waiting}<span class="spinner"></span> {t("jr.waiting")}{:else}{t("jr.connect")}{/if}</button>
+          {#if !waiting}<button class="btn btn-ghost btn-sm" onclick={() => connect(false)}>{t("jr.normal_window")}</button>{/if}
+        </div>
+        {#if privateNote}<p class="hint" style="margin-top: var(--s-2)">{privateNote}</p>{/if}
       {/if}
     </section>
 

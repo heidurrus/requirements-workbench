@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.9.3 (2026-09-28): Jira sign-in asks which account
+
+- **Подключить Jira** now opens the Atlassian sign-in in a **private browser window**
+  (Chrome, Edge, Brave, Chromium or Firefox). A normal window silently reused whatever
+  Atlassian account the browser was already logged into, e.g. a work account, and
+  Atlassian's sign-in gives apps no way to ask for an account choice. In a private window you
+  log in with the account you want. **в обычном окне** is still there if you prefer.
+- The Выгрузка screen warns when the connected account can't see the site the project is set
+  to push to.
+
 ## 2.9.2 (2026-09-28): Jira without the Keychain
 
 - Connecting Jira no longer involves the macOS Keychain, which kept asking for access. You

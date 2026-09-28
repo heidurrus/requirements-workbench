@@ -111,6 +111,8 @@ if os.getenv("REAL_JIRA"):
     app_module._jira_session = lambda: Guarded(real_session())
 else:
     app_module.jira_auth = FakeAuth()
+    import core.private_browser
+    core.private_browser.open_private = lambda url, **k: None       # tests open the sign-in in the test browser
     app_module._jira_session = lambda: FAKE_JIRA
 
 # Pretend to be another machine for screenshots: FAKE_GPU="none" or a size in GB.
