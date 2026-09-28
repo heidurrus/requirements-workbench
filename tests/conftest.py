@@ -60,5 +60,5 @@ def pytest_runtest_logreport(report):
     path, line, _ = report.location
     text = str(report.longrepr).strip().splitlines()
     message = " | ".join(text[-6:])[:900].replace("%", "%25").replace("\r", "").replace("\n", " ")
-    sys.__stdout__.write(f"\n::error file={path},line={(line or 0) + 1},title={report.nodeid.replace("::", " · ")}::{message}\n")
+    sys.__stdout__.write(f"\n::error file={path},line={(line or 0) + 1},title={report.nodeid.replace('::', ' · ')}::{message}\n")
     sys.__stdout__.flush()
