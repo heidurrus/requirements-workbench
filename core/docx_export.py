@@ -362,6 +362,30 @@ class _Writer:
                     self.para().add_run(b["title"]).bold = True
                 for item in b["items"]:
                     self.bullet(item)
+            elif b["kind"] == "table":
+                self.table(b)
+
+    def table(self, block):
+        """A document table (risk register, stakeholders, gaps…), placed where the body goes."""
+        if block.get("title"):
+            self.para().add_run(block["title"]).bold = True
+        cols = block.get("columns") or []
+        t = self.doc.add_table(rows=1, cols=len(cols))
+        try:
+            t.style = self.doc.styles["Table Grid"]
+        except KeyError:
+            pass
+        for i, name in enumerate(cols):
+            cell = t.rows[0].cells[i]
+            cell.text = ""
+            cell.paragraphs[0].add_run(str(name)).bold = True
+        for row in block.get("rows") or []:
+            cells = t.add_row().cells
+            for i, value in enumerate(row[:len(cols)]):
+                cells[i].text = str(value)
+        if self.anchor is not None:                      # keep the body where the {{body}} placeholder was
+            self.anchor._p.addprevious(t._tbl)
+        self.para("")
 
     def section(self, sec, free):
         self.heading(sec["number"], sec["title"], 1)

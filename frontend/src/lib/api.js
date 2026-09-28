@@ -8,7 +8,12 @@ export class ApiError extends Error {
   }
 }
 
+// The interface language, sent with every request: skills, document types and section titles come in both.
+let currentLang = () => "ru";
+export function setLangSource(fn) { currentLang = fn; }
+
 export async function api(path, { method = "GET", body, form, headers } = {}) {
+  if (path.startsWith("/api/") && !/[?&]lang=/.test(path)) path += (path.includes("?") ? "&" : "?") + "lang=" + currentLang();
   const init = { method, headers: { ...(headers || {}) } };
   if (form) init.body = form;
   else if (body !== undefined) {

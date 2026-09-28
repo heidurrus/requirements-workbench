@@ -58,12 +58,21 @@ class Skill:
     error: str = None
     version: int = 1
 
-    def summary(self):
-        return {"name": self.name, "title": self.title, "description": self.description, "stage": self.stage,
-                "builtin": self.builtin, "error": self.error, "version": self.version}
+    def title_in(self, lang):
+        """The title in the interface language: skills carry {ru, en} titles (a plain string is one language)."""
+        return title_text(self.meta.get("title"), lang) or self.title
 
-    def full(self):
-        return {**self.summary(), "instructions": self.instructions, "meta": self.settings(),
+    def description_in(self, lang):
+        return title_text(self.meta.get("description"), lang) if self.meta.get("description") else self.description
+
+    def summary(self, lang="ru"):
+        return {"name": self.name, "title": self.title_in(lang), "description": self.description_in(lang),
+                "stage": self.stage, "builtin": self.builtin, "error": self.error, "version": self.version,
+                "bilingual": isinstance(self.meta.get("title"), dict),
+                "short": title_text(self.meta.get("short"), lang) if self.meta.get("short") else None}
+
+    def full(self, lang="ru"):
+        return {**self.summary(lang), "instructions": self.instructions, "meta": self.settings(),
                 "path": None if self.builtin else self.path}
 
     def settings(self):
@@ -126,12 +135,12 @@ def validate(meta, instructions, folder=None):
         errors.append("name: 2–63 characters, lowercase latin letters, digits and '-'")
     if stage not in STAGES:
         errors.append(f"stage: one of {', '.join(STAGES)}")
-    if not str(meta.get("title") or "").strip():
+    if not title_text(meta.get("title"), "ru").strip() and not title_text(meta.get("title"), "en").strip():
         errors.append("title: must not be empty")
     if stage not in ("global", "export") and not instructions.strip():
         errors.append("the instructions must not be empty")
     if stage == "frd":
-        errors += _validate_sections(meta.get("sections"))
+        errors += _validate_sections(meta.get("sections"), meta.get("requirements", "all") != "none")
     if stage == "quality":
         errors += _validate_quality(meta)
     if stage == "export":
@@ -145,7 +154,7 @@ def validate(meta, instructions, folder=None):
         raise SkillError("; ".join(errors))
 
 
-def _validate_sections(sections):
+def _validate_sections(sections, place_all=True):
     if not isinstance(sections, list) or not sections:
         return ["sections: a list of document sections"]
     errors, keys = [], set()
@@ -164,7 +173,15 @@ def _validate_sections(sections):
             errors.append(f"section '{key}': title must not be empty")
         if key not in FRD_KINDS and not str(sec.get("instructions") or "").strip():
             errors.append(f"section '{key}': say what the AI should write there (instructions)")
-    missing = FRD_REQUIRED - keys
+        if sec.get("format") not in (None, "text", "table"):
+            errors.append(f"section '{key}': format is text or table")
+        if sec.get("format") == "table":
+            cols = sec.get("columns")
+            if key in FRD_KINDS:
+                errors.append(f"section '{key}': the built-in sections can't be tables")
+            if not isinstance(cols, list) or len(cols) < 2 or any(not title_text(c, "ru").strip() for c in cols):
+                errors.append(f"section '{key}': a table needs at least two named columns")
+    missing = FRD_REQUIRED - keys if place_all else set()
     if missing:
         errors.append("sections must include " + ", ".join(sorted(missing)) + " (requirements must have a place)")
     return errors
@@ -200,7 +217,7 @@ def _load(folder, builtin):
         validate(meta, body, folder)
         if meta["name"] != fallback:
             raise SkillError(f"name '{meta['name']}' must match the folder name '{fallback}'")
-        return Skill(meta["name"], str(meta["title"]), str(meta.get("description") or ""), meta["stage"], body,
+        return Skill(meta["name"], title_text(meta["title"], "ru"), title_text(meta.get("description") or "", "ru"), meta["stage"], body,
                      meta, builtin, folder, None, int(meta.get("version") or 1))
     except (OSError, SkillError, ValueError, TypeError) as e:
         return Skill(fallback, fallback, "", "", "", {}, builtin, folder, str(e))
@@ -262,7 +279,14 @@ def create(from_name, title=None, name=None):
     folder = os.path.join(custom_dir(), new)
     shutil.copytree(src.path, folder, ignore=shutil.ignore_patterns(".history", "*.tmp"))
     meta = dict(src.meta)
-    meta.update(name=new, title=(title or f"{src.title} (копия)").strip(), version=1)
+    if title:
+        new_title = title.strip()
+    elif isinstance(src.meta.get("title"), dict):
+        new_title = {"ru": f"{src.title_in('ru')} (копия)", "en": f"{src.title_in('en')} (copy)"}
+    else:
+        new_title = f"{src.title} (копия)"
+    meta.update(name=new, title=new_title, version=1)
+    meta.pop("short", None)                 # a copy is known by its own title, not the original's short name
     if src.stage == "export" and str(meta.get("template", "")).startswith("builtin:"):
         from core import docx_export             # the built-in look becomes an editable Word file
         with open(os.path.join(folder, "template.docx"), "wb") as f:
@@ -281,14 +305,24 @@ def _snapshot(skill, suffix="md"):
         shutil.copy2(src, os.path.join(hist, f"{stamp}.{suffix}"))
 
 
-def save(name, title=None, description=None, instructions=None, settings=None):
+def _set_text(meta, key, value, lang):
+    """A two-language field changes only in the language being edited; a plain one stays plain."""
+    value = value.strip()
+    cur = meta.get(key)
+    if isinstance(cur, dict) and lang:
+        meta[key] = {**cur, lang: value}
+    else:
+        meta[key] = value
+
+
+def save(name, title=None, description=None, instructions=None, settings=None, lang=None):
     """Update your own skill; the previous version goes to its history."""
     skill = _custom(name)
     meta = dict(skill.meta) if not skill.error else {"name": name}
     if title is not None:
-        meta["title"] = title.strip()
+        _set_text(meta, "title", title, lang)
     if description is not None:
-        meta["description"] = description.strip()
+        _set_text(meta, "description", description, lang)
     for key, value in (settings or {}).items():
         if key in ("name", "stage", "version"):
             continue

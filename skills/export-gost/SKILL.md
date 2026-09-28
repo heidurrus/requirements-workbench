@@ -1,7 +1,9 @@
 ---
 name: export-gost
-title: Word — ГОСТ
-description: Оформление по ГОСТ 2.105 — титульный лист, Times New Roman 14, полуторный интервал, поля 30/15/20/20 мм, номера страниц.
+title: {ru: "Word — ГОСТ", en: "Word — GOST"}
+description:
+  ru: "Оформление по ГОСТ 2.105 — титульный лист, Times New Roman 14, полуторный интервал, поля 30/15/20/20 мм, номера страниц."
+  en: "GOST 2.105 layout: title page, Times New Roman 14, 1.5 line spacing, 30/15/20/20 mm margins, page numbers."
 stage: export
 version: 1
 template: builtin:gost

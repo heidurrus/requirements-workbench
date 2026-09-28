@@ -180,6 +180,7 @@ class Store:
                             ("atoms", ("reject_reason TEXT", "priority TEXT", "q_state TEXT", "answer TEXT",
                                        "answer_source TEXT", "origin TEXT")),
                             ("doc_versions", ("status TEXT NOT NULL DEFAULT 'draft'", "status_at REAL", "status_by TEXT")),
+                            ("documents", ("kind TEXT", "deleted_at REAL")),
                             ("segments", ("original_text TEXT",))):
             have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
             for col in cols:
@@ -1058,17 +1059,44 @@ class Store:
         """The project's FRD (one per project, spec A-11), created on first use."""
         project = self.get_project(project_id)
         with self._conn() as c:
-            row = c.execute("SELECT * FROM documents WHERE project_id = ? ORDER BY created_at LIMIT 1",
+            row = c.execute("SELECT * FROM documents WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at LIMIT 1",
                             (project_id,)).fetchone()
         if row is not None or not create:
             return self._doc_row(row) if row else None
         with self._write() as c:
             now, by = self._stamp()
             did = str(uuid.uuid4())
-            c.execute("INSERT INTO documents VALUES (?,?,?,?,?,?,?,?)",
-                      (did, project_id, f"FRD — {project['name']}", "export-standard", now, by, now, by))
+            c.execute("INSERT INTO documents (id, project_id, title, template, created_at, created_by, updated_at, updated_by) "
+                      "VALUES (?,?,?,?,?,?,?,?)", (did, project_id, f"SRS — {project['name']}", "export-standard", now, by, now, by))
             self._audit(c, "document", did, "create")
         return self.get_document(did)
+
+    def documents(self, project_id):
+        """All documents of a project (BRD, SRS, Vision & Scope, …), oldest first; the first is the primary one."""
+        self.get_project(project_id)
+        with self._conn() as c:
+            return [self._doc_row(r) for r in c.execute(
+                "SELECT * FROM documents WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, rowid", (project_id,))]
+
+    def create_document(self, project_id, kind, title):
+        """Another document of a given type (its document skill)."""
+        self.get_project(project_id)
+        title = (title or "").strip()[:200]
+        if not title:
+            raise StoreError("the title must not be empty")
+        with self._write() as c:
+            now, by = self._stamp()
+            did = str(uuid.uuid4())
+            c.execute("INSERT INTO documents (id, project_id, title, template, kind, created_at, created_by, updated_at, updated_by) "
+                      "VALUES (?,?,?,?,?,?,?,?,?)", (did, project_id, title, "export-standard", kind, now, by, now, by))
+            self._audit(c, "document", did, "create", after={"kind": kind, "title": title})
+        return self.get_document(did)
+
+    def delete_document(self, document_id):
+        with self._write() as c:
+            now, by = self._stamp()
+            c.execute("UPDATE documents SET deleted_at = ?, updated_at = ?, updated_by = ? WHERE id = ?", (now, now, by, document_id))
+            self._audit(c, "document", document_id, "delete")
 
     def get_document(self, document_id):
         with self._conn() as c:
@@ -1083,8 +1111,8 @@ class Store:
         return d
 
     def update_document(self, document_id, **changes):
-        if set(changes) - {"title", "template"}:
-            raise StoreError("only the title and template can be changed")
+        if set(changes) - {"title", "template", "kind"}:
+            raise StoreError("only the title, template and type can be changed")
         if "template" in changes and not re.match(r"^[a-z0-9][a-z0-9-]{1,62}$", str(changes["template"])):
             raise StoreError("template must be the name of an export skill")
         if "title" in changes:

@@ -116,9 +116,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* ── Shell ──────────────────────────────────────────────────────────────── */
 .shell { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); min-height: 100vh; }
 .screen { padding: 0 var(--gutter) var(--sp-11); min-width: 0; overflow-x: clip; }
-.screen-inner { width: min(1180px, 100%); margin: 0 auto; animation: fadein var(--t-med) var(--ease); }
-.screen-inner.narrow { width: min(720px, 100%); }
-.screen-inner.wide { width: 100%; }
+/* Content grows with the window instead of floating in a 1180-px column (big and wide screens). */
+:root { --content-w: 1180px; --content-wide: 1600px; --narrow-w: 720px; }
+@media (min-width: 1600px) { :root { --content-w: 1400px; --content-wide: 1760px; --narrow-w: 800px; } }
+@media (min-width: 2000px) { :root { --content-w: 1640px; --content-wide: 2000px; --narrow-w: 880px; } }
+/* Very large displays (27–32" at 100 %): scale the whole UI so 13-px text doesn't turn into a footnote. */
+@media (min-width: 2200px) { html { zoom: 1.12; } }
+@media (min-width: 2800px) { html { zoom: 1.28; } }
+.screen-inner { width: min(var(--content-w), 100%); margin: 0 auto; animation: fadein var(--t-med) var(--ease); }
+.screen-inner.narrow { width: min(var(--narrow-w), 100%); }
+.screen-inner.wide { width: min(var(--content-wide), 100%); }
 
 /* The sticky toolbar: title + state on the left, actions on the right. */
 .screen-head { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;

@@ -12,7 +12,7 @@ import zipfile
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
-from core.frd import req_blocks
+from core.frd import req_blocks, requirements_document
 
 T = {
     "ru": {"id": "ID", "section": "Раздел", "req": "Требование", "type": "Тип", "status": "Статус атома",
@@ -48,7 +48,7 @@ def _clock(seconds):
 
 def traceability_rows(store, project_id, lang="ru"):
     t = _t(lang)
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
     if version is None:
         return [], None
@@ -157,6 +157,14 @@ def markdown(document, version, free_blocks, lang="ru"):
                 if b.get("title"):
                     out.append(f"**{b['title']}**")
                 out.extend(f"- {x}" for x in b["items"])
+                out.append("")
+            elif b["kind"] == "table":
+                if b.get("title"):
+                    out.extend([f"**{b['title']}**", ""])
+                cell = lambda v: str(v).replace("|", "\\|").replace("\n", " ")  # noqa: E731
+                out.append("| " + " | ".join(cell(c) for c in b["columns"]) + " |")
+                out.append("|" + "---|" * len(b["columns"]))
+                out.extend("| " + " | ".join(cell(v) for v in r) + " |" for r in b["rows"])
                 out.append("")
     for sec in version["content"]["sections"]:
         out += [f"## {sec['number']}. {sec['title']}", ""]

@@ -43,8 +43,8 @@
       tryState = null;
     } catch (err) { skill = draft = null; toast(err.message, { kind: "danger" }); }
   }
-  $effect(() => { app.currentProjectId; loadList(); });
-  $effect(() => { loadSkill(selected); });
+  $effect(() => { app.currentProjectId; app.lang; loadList(); });
+  $effect(() => { app.lang; loadSkill(selected); });
 
   const dirty = $derived(!!(skill && draft) && JSON.stringify(draft) !== JSON.stringify(
     { title: skill.title, description: skill.description, instructions: skill.instructions, meta: skill.meta }));
@@ -69,7 +69,7 @@
     if (!editable || !dirty) return;
     saving = true;
     try {
-      const updated = await api(`/api/skills/${skill.name}`, { method: "PUT", body: draft });
+      const updated = await api(`/api/skills/${skill.name}`, { method: "PUT", body: { ...draft, lang: app.lang } });
       skill = updated;
       draft = clone({ title: updated.title, description: updated.description,
                                 instructions: updated.instructions, meta: updated.meta });
@@ -115,6 +115,7 @@
     try { list = await api("/api/skills/active", { method: "PUT", body: { stage: skill.stage, skill: skill.name } }); }
     catch (err) { toast(err.message, { kind: "danger" }); }
   }
+  const titleOf2 = name => list?.skills.find(x => x.name === name)?.title || name;
   async function useForProject(on) {
     try {
       list = await api("/api/skills/active", { method: "PUT",
@@ -263,10 +264,10 @@
             {#if g.id === "broken" || !s.error}
               <button class="item" class:on={s.name === selected} class:err={!!s.error} onclick={() => open(s.name)}
                       aria-current={s.name === selected ? "true" : undefined}>
-                <span class="dot" class:off={!(g.id !== "broken" && g.effective === s.name)}></span>
+                <span class="dot" class:off={!(g.id !== "broken" && g.id !== "frd" && g.effective === s.name)} class:none={g.id === "frd"}></span>
                 <span class="i-title">{s.title}</span>
                 <span class="own">{s.builtin ? t("sk.builtin") : t("sk.custom")}</span>
-                {#if g.id !== "broken" && g.effective === s.name}<span class="in-use">{t("sk.in_use")}</span>{/if}
+                {#if g.id !== "broken" && g.id !== "frd" && g.effective === s.name}<span class="in-use">{t("sk.in_use")}</span>{/if}
               </button>
             {/if}
           {/each}
@@ -333,7 +334,9 @@
                     <li class="sec-row">
                       <div class="sec-head">
                         <span class="mono t3">{i + 1}. {sec.key}</span>
-                        {#if REQUIRED.includes(sec.key)}<span class="tag outline">{t("sk.sec.required")}</span>{/if}
+                        {#if REQUIRED.includes(sec.key) && draft.meta.requirements !== "none"}<span class="tag outline">{t("sk.sec.required")}</span>{/if}
+                        {#if sec.format === "table"}<span class="tag fr" title={(sec.columns || []).map(c => titleOf(c, app.lang) || titleOf(c, "ru")).join(" | ")}>
+                          {t("sk.sec.table", { n: (sec.columns || []).length })}</span>{/if}
                         <span class="spacer"></span>
                         {#if editable}
                           <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.up")} title={t("sk.sec.up")} disabled={i === 0} onclick={() => move(i, -1)}><Icon name="up" size={14} /></button>
@@ -350,6 +353,9 @@
                         <input class="input" placeholder={t("sk.sec.title_en")} aria-label={t("sk.sec.title_en")} readonly={!editable}
                                value={titleOf(sec.title, "en")} oninput={e => setTitle(sec, "en", e.currentTarget.value)} />
                       </div>
+                      {#if sec.format === "table"}
+                        <p class="hint cols">{t("sk.sec.columns")}: {(sec.columns || []).map(c => titleOf(c, app.lang) || titleOf(c, "ru")).join(" · ")}</p>
+                      {/if}
                       {#if !KINDS.includes(sec.key)}
                         <textarea class="input area" rows="2" placeholder={t("sk.sec.instructions")} aria-label={t("sk.sec.instructions")}
                                   readonly={!editable} bind:value={sec.instructions}></textarea>
@@ -499,22 +505,38 @@
               {/if}
             </div>
 
-            {#if stageInfo && !skill.error}
+            {#if stageInfo && !skill.error && skill.stage === "frd"}
+              <div class="usage doc-type">
+                <Icon name="doc" size={14} />
+                <span class="grow">{t("sk.doc_type_hint")}</span>
+                <button class="btn btn-sm btn-primary" onclick={() => go(`/document/new/${skill.name}`)}>{t("sk.doc_type_create")}</button>
+              </div>
+            {:else if stageInfo && !skill.error}
+              {@const here = stageInfo.effective === skill.name}
+              {@const pinnedHere = stageInfo.project === skill.name}
+              {@const isDefault = stageInfo.global === skill.name}
               <div class="usage">
-                <span class="label">{t("sk.use")}</span>
-                {#if stageInfo.global === skill.name}
-                  <span class="status ok"><Icon name="check" size={14} /> {t("sk.is_global")}</span>
-                {:else}
-                  <button class="btn btn-sm" onclick={useGlobally}>{t("sk.use_global")}</button>
-                {/if}
-                <label class="check">
-                  <input type="checkbox" class="switch" checked={stageInfo.project === skill.name}
-                         onchange={e => useForProject(e.currentTarget.checked)} />
-                  {t("sk.use_project", { name: currentProject()?.name || "" })}
-                </label>
-                {#if stageInfo.effective !== skill.name && stageInfo.project && stageInfo.project !== skill.name}
-                  <span class="hint">{t("sk.project_override", { name: list.skills.find(x => x.name === stageInfo.project)?.title || stageInfo.project })}</span>
-                {/if}
+                <p class="u-title">{t("sk.u.title", { stage: t("sk.stage." + skill.stage) })}</p>
+                <div class="u-row">
+                  <span class="u-dot" class:on={here}></span>
+                  <div class="grow">
+                    <b>{t("sk.u.this_project", { name: currentProject()?.name || "" })}</b>
+                    <p class="t3">{#if here && pinnedHere}{t("sk.u.here_pinned")}{:else if here}{t("sk.u.here_default")}{:else}{t("sk.u.here_other", { name: titleOf2(stageInfo.effective) })}{/if}</p>
+                  </div>
+                  {#if pinnedHere}
+                    <button class="btn btn-sm" onclick={() => useForProject(false)}>{t("sk.u.unpin", { name: titleOf2(stageInfo.global) })}</button>
+                  {:else if !here}
+                    <button class="btn btn-sm btn-primary" onclick={() => useForProject(true)}>{t("sk.u.use_here")}</button>
+                  {/if}
+                </div>
+                <div class="u-row">
+                  <span class="u-dot" class:on={isDefault}></span>
+                  <div class="grow">
+                    <b>{t("sk.u.others")}</b>
+                    <p class="t3">{isDefault ? t("sk.u.is_default") : t("sk.u.default_is", { name: titleOf2(stageInfo.global) })}</p>
+                  </div>
+                  {#if !isDefault}<button class="btn btn-sm" onclick={useGlobally}>{t("sk.u.make_default")}</button>{/if}
+                </div>
               </div>
             {/if}
           </div>
@@ -545,6 +567,7 @@
   .item:hover { background: var(--surface-2); }
   .item.on { background: var(--accent-bg); }
   .item .dot { background: var(--ok); align-self: center; }
+  .item .dot.none { visibility: hidden; }
   .item .dot.off { background: transparent; box-shadow: inset 0 0 0 1px var(--line-control); }
   .i-title { font-weight: 500; line-height: 17px; min-width: 0; }
   .item.err .i-title { color: var(--danger); }
@@ -610,8 +633,15 @@
   .compare ul { margin: var(--sp-2) 0 var(--sp-4); padding-left: 18px; }
   .cmp-h { font-weight: 600; font-size: var(--fs-12); margin-top: var(--sp-4); }
   .cmp-h.ok { color: var(--ok); } .cmp-h.danger { color: var(--danger); }
-  .usage { display: flex; align-items: center; gap: var(--sp-6); flex-wrap: wrap; padding: var(--sp-5) var(--sp-7); border-top: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+  .usage { padding: var(--sp-5) var(--sp-7); border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+  .usage.doc-type { display: flex; align-items: center; gap: var(--sp-4); }
+  .u-title { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin-bottom: var(--sp-3); }
+  .u-row { display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-4) 0; }
+  .u-row + .u-row { border-top: 1px solid var(--line); }
+  .u-row b { font-weight: 500; }
+  .u-row p { font-size: var(--fs-12); }
+  .u-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line-control); flex: none; }
+  .u-dot.on { background: var(--ok); box-shadow: none; }
   .savebar { position: sticky; bottom: var(--sp-5); display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-5);
     padding: 6px 6px 6px var(--sp-6); border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--e3); z-index: 20;
     animation: fadein var(--t-slow) var(--ease); }

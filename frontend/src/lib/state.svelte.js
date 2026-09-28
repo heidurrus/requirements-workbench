@@ -14,7 +14,8 @@ export function parseRoute(hash = location.hash) {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "source" && parts[1]) return { name: "transcript", id: parts[1], summarize: parts[2] === "summarize",
                                                   seg: parts[2] === "seg" ? Number(parts[3]) : null };
-  if (parts[0] === "document") return { name: "document" };
+  if (parts[0] === "document") return { name: "document", doc: parts[1] && parts[1] !== "new" ? parts[1] : null,
+                                       newKind: parts[1] === "new" ? parts[2] : null };
   if (parts[0] === "backlog") return { name: "backlog" };
   if (parts[0] === "export") return { name: "export" };
   if (parts[0] === "skills") return { name: "skills", skill: parts[1] || null };

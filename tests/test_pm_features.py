@@ -165,3 +165,31 @@ def test_status_flows_downstream_and_counts_open_items(client, lib):
     lib.update_atom(ids[0], statement="Открывать карточку клиента до ответа на звонок")
     st = client.get(f"/api/projects/{pid}/status").get_json()
     assert st["document"]["stale"] and st["document"]["changed"] == 1
+
+
+def test_documents_api_lists_types_creates_and_switches_type(client, lib):
+    pid, ids, sid = seed(lib)
+    body = client.get(f"/api/projects/{pid}/documents?lang=en").get_json()
+    names = {t["name"] for t in body["types"]}
+    assert {"write-frd", "write-brd", "write-vision-scope", "write-risk-register", "write-as-is-to-be"} <= names
+    assert next(t for t in body["types"] if t["name"] == "write-brd")["title"] == "BRD — business requirements"
+    assert not next(t for t in body["types"] if t["name"] == "write-risk-register")["requirements"]
+    d = client.post(f"/api/projects/{pid}/documents?lang=ru", json={"kind": "write-vision-scope"}).get_json()
+    assert d["short"] == "Vision & Scope" and d["title"].startswith("Vision & Scope — ")
+    assert client.post(f"/api/projects/{pid}/documents", json={"kind": "extract-requirements"}).status_code == 400
+    assert len(client.get(f"/api/projects/{pid}/documents").get_json()["documents"]) == 2
+    got = client.get(f"/api/projects/{pid}/document?document={d['id']}").get_json()
+    assert got["document"]["kind"] == "write-vision-scope"
+    client.patch(f"/api/documents/{d['id']}", json={"kind": "write-brd"})
+    assert client.get(f"/api/projects/{pid}/document?document={d['id']}").get_json()["document"]["kind"] == "write-brd"
+    first = client.get(f"/api/projects/{pid}/documents").get_json()["documents"][0]
+    assert client.delete(f"/api/documents/{first['id']}").status_code == 400, "the first document stays"
+    assert client.delete(f"/api/documents/{d['id']}").status_code == 200
+
+
+def test_skills_come_in_the_interface_language(client, lib):
+    en = {s["name"]: s["title"] for s in client.get("/api/skills?lang=en").get_json()["skills"]}
+    ru = {s["name"]: s["title"] for s in client.get("/api/skills?lang=ru").get_json()["skills"]}
+    assert en["extract-requirements"] == "Requirement extraction" and ru["extract-requirements"] == "Извлечение требований"
+    one = client.get("/api/skills/house-rules?lang=en").get_json()
+    assert one["title"] == "House rules" and one["description"].startswith("Rules added")

@@ -9,7 +9,7 @@
   import Skills from "./screens/Skills.svelte";
   import Backlog from "./screens/Backlog.svelte";
   import Export from "./screens/Export.svelte";
-  import { api, setProgressTranslator } from "./lib/api.js";
+  import { api, setProgressTranslator, setLangSource } from "./lib/api.js";
   import { progressText } from "./lib/progress.js";
   import { app, t, loadProjects, loadSources, setLang, applyTheme, setTheme, isDark, loadStatus, undoLast } from "./lib/state.svelte.js";
 
@@ -18,6 +18,7 @@
 
   applyTheme();
   setProgressTranslator(progressText);
+  setLangSource(() => app.lang);
   // The toolbar hairline appears only once the page has scrolled (HIG scroll edge).
   const onScroll = () => document.body.classList.toggle("scrolled", window.scrollY > 4);
   function onKey(e) {

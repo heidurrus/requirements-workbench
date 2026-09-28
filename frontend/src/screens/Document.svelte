@@ -20,10 +20,54 @@
   let exportSkills = $state([]);
   $effect(() => { api("/api/skills").then(b => (exportSkills = b.skills.filter(s => s.stage === "export" && !s.error))).catch(() => {}); });
 
+  // Several documents per project (BRD, SRS, Vision & Scope, risks, As-Is/To-Be…), one tab each.
+  let docList = $state(null);            // {documents, types, requirements_document}
+  let addMenu = $state(false);
+  const docId = $derived(app.route.doc || docList?.documents?.[0]?.id || null);
+  async function loadDocs() {
+    try { docList = await api(`/api/projects/${app.currentProjectId}/documents`); } catch (err) { error = err.message; }
+  }
+  $effect(() => { app.currentProjectId; app.atomsVersion; app.lang; loadDocs(); });
+  async function createDoc(kind) {
+    addMenu = false;
+    try {
+      const d = await api(`/api/projects/${app.currentProjectId}/documents`, { method: "POST", body: { kind } });
+      await loadDocs();
+      go(`/document/${d.id}`);
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+  // Opened from a skill: "create a document of this type"
+  let createdFor = null;
+  $effect(() => {
+    const kind = app.route.newKind;
+    if (kind && docList && createdFor !== kind) { createdFor = kind; createDoc(kind); }
+  });
+  async function deleteDoc() {
+    exportMenu = false;
+    if (!confirm(t("doc.delete_q", { title: doc.title }))) return;
+    try {
+      await api(`/api/documents/${doc.id}`, { method: "DELETE" });
+      await loadDocs();
+      go("/document");
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+  async function changeType(kind) {
+    exportMenu = false;
+    if (kind === doc.kind) return;
+    try {
+      await api(`/api/documents/${doc.id}`, { method: "PATCH", body: { kind } });
+      await loadDocs();
+      await load();
+      toast(t("doc.type_changed"));
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+  const hasRequirements = $derived(docList?.types?.find(x => x.name === body?.document?.kind)?.requirements !== false);
+
   async function load() {
     const pid = app.currentProjectId;
+    if (!docId) return;
     try {
-      const q = viewing ? `?version=${viewing}` : "";
+      const q = `?document=${docId}` + (viewing ? `&version=${viewing}` : "");
       const b = await api(`/api/projects/${pid}/document${q}`);
       if (pid !== app.currentProjectId) return;
       body = b;
@@ -31,7 +75,8 @@
       if (b.building && !build) follow(b.building);
     } catch (err) { error = err.message; }
   }
-  $effect(() => { app.currentProjectId; app.atomsVersion; viewing; load(); });
+  $effect(() => { app.currentProjectId; app.atomsVersion; app.lang; docId; viewing; load(); });
+  $effect(() => { docId; viewing = null; diff = null; });
 
   const doc = $derived(body?.document);
   const version = $derived(body?.version);
@@ -76,7 +121,7 @@
     refineOpen = false;
     try {
       const { job_id } = await api(`/api/projects/${app.currentProjectId}/document/build`, { method: "POST",
-                                                                                          body: note ? { mode, note } : { mode } });
+                                                                                          body: { mode, document_id: doc?.id || docId, ...(note ? { note } : {}) } });
       follow(job_id);
     } catch (err) {
       const e = explain(err);
@@ -258,6 +303,8 @@
     }
     return out;
   });
+  // probability rows (high → low) × impact columns (low → high)
+  const heatClass = (i, j) => { const score = (2 - i) + (j - 1); return score >= 3 ? "h-high" : score >= 2 ? "h-mid" : "h-low"; };
   const typeOf = b => (b.type === "question" ? "q" : b.type === "nfr" || /^NFR/.test(b.id) ? "nfr" : "fr");
 </script>
 
@@ -321,15 +368,50 @@
                 <button role="menuitem" onclick={exportMarkdown}><Icon name="file" size={14} /> {t("doc.export_md")}</button>
                 <button role="menuitem" onclick={exportTrace}><Icon name="tree" size={14} /> {t("doc.export_trace")}</button>
                 <button role="menuitem" onclick={() => reviewInput.click()}><Icon name="upload" size={14} /> {t("doc.import_review")}</button>
+                {#if docList}
+                  <p class="menu-h">{t("doc.change_type")}</p>
+                  {#each docList.types as ty (ty.name)}
+                    <button role="menuitem" class:on={ty.name === doc.kind} onclick={() => changeType(ty.name)}>
+                      <Icon name={ty.name === doc.kind ? "check" : "doc"} size={14} /> {ty.title}</button>
+                  {/each}
+                {/if}
+                {#if docList && docList.documents[0]?.id !== doc.id}
+                  <button role="menuitem" class="danger-item" onclick={deleteDoc}><Icon name="trash" size={14} /> {t("doc.delete")}</button>
+                {/if}
               </div>
             {/if}
             <input type="file" accept=".docx" class="hidden" bind:this={reviewInput} onchange={importReview} aria-label={t("doc.import_review")} />
           </div>
-          <button class="btn btn-ghost" onclick={() => go("/backlog")}>{t("doc.to_backlog")} <Icon name="arrow" size={14} /></button>
+          {#if hasRequirements}<button class="btn btn-ghost" onclick={() => go("/backlog")}>{t("doc.to_backlog")} <Icon name="arrow" size={14} /></button>{/if}
         {/if}
       </div>
     {/if}
   </header>
+
+  {#if docList}
+    <div class="doc-tabs" role="tablist" aria-label={t("nav.document")}>
+      {#each docList.documents as d (d.id)}
+        <button role="tab" aria-selected={d.id === docId} onclick={() => go(`/document/${d.id}`)} title={d.title}>
+          <b>{d.short}</b>{#if d.version}<span class="n">v{d.version}</span>{/if}
+          {#if d.stale}<span class="dot warn" title={t("nav.badge_stale")}></span>{/if}
+          {#if d.status === "approved"}<Icon name="check" size={12} />{/if}
+        </button>
+      {/each}
+      <div class="add-wrap">
+        <button class="btn btn-ghost btn-sm" onclick={() => (addMenu = !addMenu)} aria-expanded={addMenu}><Icon name="plus" size={14} /> {t("doc.add")}</button>
+        {#if addMenu}
+          <div class="menu types" role="menu">
+            {#each docList.types as ty (ty.name)}
+              <button role="menuitem" onclick={() => createDoc(ty.name)}>
+                <b>{ty.title}</b><span class="t3">{ty.description}</span></button>
+            {/each}
+            <button role="menuitem" class="custom" onclick={() => { addMenu = false; go("/skills"); }}>
+              <span class="t3">{t("doc.add_custom")}</span></button>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   {#if error}<p class="note danger">{error}</p>{/if}
 
@@ -437,7 +519,7 @@
             {#if stats.pending}<p class="hint-line"><Icon name="info" size={12} /> {t("doc.pending", { n: stats.pending })}</p>{/if}
           </div>
         <article class="paper" class:diff-on={!!diff}>
-          <p class="doc-kicker">FRD · {t("doc.sub", { v: version.number, n: version.atom_count, when: ago(version.created_at) })}{#if version.model} · {version.model}{/if}</p>
+          <p class="doc-kicker">{doc.short} · {t("doc.sub", { v: version.number, n: version.atom_count, when: ago(version.created_at) })}{#if version.model} · {version.model}{/if}</p>
           <h1>{doc.title}</h1>
           {#each content.sections as sec (sec.key)}
             <section class="sec" id="sec-{sec.key}">
@@ -616,6 +698,18 @@
     {:else if b.kind === "list"}
       {#if b.title}<p class="list-title">{b.title}</p>{/if}
       <ul class="prose-list">{#each b.items as item, i (i)}<li>{item}</li>{/each}</ul>
+    {:else if b.kind === "table"}
+      {#if b.title}<p class="list-title">{b.title}</p>{/if}
+      <div class="doc-table-wrap" class:heat={b.heatmap}>
+        <table class="doc-table">
+          <thead><tr>{#each b.columns as c, i (i)}<th>{c}</th>{/each}</tr></thead>
+          <tbody>
+            {#each b.rows as r, i (i)}
+              <tr>{#each r as v, j (j)}<td class={b.heatmap && j > 0 ? heatClass(i, j) : ""}>{v}</td>{/each}</tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   {/each}
 {/snippet}
@@ -645,6 +739,36 @@
   .narrow-card { max-width: 560px; margin: var(--sp-8) auto 0; }
   .narrow-card .hint { margin-top: calc(-1 * var(--sp-4)); }
   .paper-col { min-width: 0; }
+  .doc-tabs { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; border-bottom: 1px solid var(--line);
+    margin: calc(-1 * var(--sp-2)) 0 var(--sp-6); }
+  .doc-tabs [role="tab"] { border: 0; background: transparent; padding: 8px 10px; color: var(--text-2); border-bottom: 2px solid transparent;
+    margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; font: inherit; }
+  .doc-tabs [role="tab"] b { font-weight: 500; }
+  .doc-tabs [role="tab"]:hover { color: var(--text); }
+  .doc-tabs [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .doc-tabs [role="tab"][aria-selected="true"] b { font-weight: 600; }
+  .doc-tabs .n { color: var(--text-3); font-size: var(--fs-12); }
+  .doc-tabs .dot.warn { background: var(--warn); }
+  .add-wrap { position: relative; margin-left: var(--sp-2); }
+  .menu.types { left: 0; right: auto; width: min(420px, 90vw); max-height: 70vh; overflow: auto; }
+  .menu.types button { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .menu.types button span { font-size: var(--fs-12); line-height: 16px; }
+  .menu-h { font-size: var(--fs-11); font-weight: 600; color: var(--text-3); padding: var(--sp-4) var(--sp-4) var(--sp-2);
+    border-top: 1px solid var(--line); margin-top: var(--sp-2); }
+  .menu button.on { font-weight: 600; }
+  .menu .danger-item { color: var(--danger); border-top: 1px solid var(--line); border-radius: 0; margin-top: var(--sp-2); }
+  .doc-table-wrap { overflow-x: auto; margin: var(--sp-4) 0 var(--sp-6); }
+  .doc-table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); line-height: 18px; }
+  .doc-table th { text-align: left; font-weight: 600; font-size: var(--fs-12); color: var(--text-2); background: var(--surface-2);
+    padding: 6px 8px; border: 1px solid var(--line); vertical-align: bottom; }
+  .doc-table td { padding: 6px 8px; border: 1px solid var(--line); vertical-align: top; }
+  .doc-table td:first-child { white-space: nowrap; }
+  .heat .doc-table { width: auto; }
+  .heat .doc-table td { min-width: 110px; text-align: center; font-weight: 600; }
+  .heat .doc-table td:first-child { text-align: left; font-weight: 500; background: var(--surface-2); }
+  .h-high { background: var(--danger-bg); color: var(--danger); }
+  .h-mid { background: var(--warn-bg); color: var(--warn); }
+  .h-low { background: var(--ok-bg); color: var(--ok); }
   .refine { padding: var(--sp-5); margin-bottom: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); }
   .refine textarea { height: auto; }
   .spacer { flex: 1; }
@@ -674,8 +798,9 @@
   .banners .banner :global(.icon) { margin-top: 1px; }
   .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 
-  .doc-layout { display: grid; grid-template-columns: 200px minmax(0, 760px) 280px; gap: var(--sp-8); justify-content: center; align-items: start; }
-  .doc-layout:not(.has-notes) { grid-template-columns: 200px minmax(0, 760px) 200px; }
+  .doc-layout { display: grid; grid-template-columns: 220px minmax(0, 820px) minmax(260px, 340px); gap: var(--sp-9); justify-content: center; align-items: start; }
+  .doc-layout:not(.has-notes) { grid-template-columns: 220px minmax(0, 860px) 220px; justify-content: center; }
+  @media (min-width: 1800px) { .doc-layout { grid-template-columns: 240px minmax(0, 880px) minmax(300px, 380px); } }
   .toc { position: sticky; top: calc(var(--toolbar) + var(--sp-5)); font-size: 12.5px; max-height: calc(100vh - var(--toolbar) - 32px);
     overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
   .toc h4, .notes h4 { font-size: var(--fs-11); font-weight: 600; color: var(--text-3); margin: 0 0 var(--sp-4) var(--sp-4); }

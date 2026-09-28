@@ -36,15 +36,15 @@ for (let i = 0; i < 2; i++) await page.keyboard.press("a");
 await page.getByText("Все атомы разобраны").waitFor();
 
 await page.locator(".rail").getByRole("button", { name: "Скиллы" }).click();
-await list.getByText("Сборка документа").waitFor();
-await list.getByRole("button", { name: /Сборка FRD/ }).click();
-await page.locator(".e-title h2", { hasText: "Сборка FRD" }).waitFor();
+await list.getByText("Типы документов").waitFor();
+await list.getByRole("button", { name: /SRS — спецификация требований/ }).click();
+await page.locator(".e-title h2", { hasText: "SRS" }).waitFor();
 await page.getByText("Встроенный скилл нельзя менять").waitFor();
 step("skills listed by stage; built-in is read-only");
 
 await page.getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
-await page.locator(".title-input").fill("FRD для банка");
+await page.locator(".title-input").fill("SRS для банка");
 await page.locator("#sk-instr").fill("Пиши сухо и коротко. Язык: {language}.");
 await page.getByRole("tab", { name: /Разделы/ }).click();
 await page.getByRole("button", { name: "Раздел, который напишет ИИ" }).click();
@@ -54,13 +54,11 @@ await last.getByPlaceholder("Что ИИ должен написать в это
 await page.getByText("Есть несохранённые изменения").waitFor();
 await page.keyboard.press(process.platform === "darwin" ? "Meta+s" : "Control+s");
 await page.getByText("Сохранено (версия 2)").waitFor();
-await list.getByRole("button", { name: /FRD для банка/ }).waitFor();
+await list.getByRole("button", { name: /SRS для банка/ }).waitFor();
 step("copy, edit instructions and sections, save with ⌘S");
 
-await page.getByRole("button", { name: "По умолчанию для всех проектов" }).click();
-await page.getByText("Используется по умолчанию").waitFor();
-await list.getByRole("button", { name: /FRD для банка/ }).getByText("используется").waitFor();
-step("set as the default");
+await page.getByRole("button", { name: "Создать документ этого типа" }).waitFor();
+step("a document type is used by creating a document of that type");
 
 await page.getByRole("tab", { name: /История/ }).click();
 await page.getByRole("button", { name: "Показать" }).first().click();
@@ -77,7 +75,7 @@ const [zip] = await Promise.all([page.waitForEvent("download"), page.getByRole("
 const zipPath = join(dir, zip.suggestedFilename());
 await zip.saveAs(zipPath);
 await page.locator(".screen-head input[type=file]").setInputFiles(zipPath);
-await page.getByText(/Скилл «FRD для банка» импортирован/).waitFor();
+await page.getByText(/Скилл «SRS для банка» импортирован/).waitFor();
 if (!page.url().endsWith("-2")) throw new Error("imported skill not opened: " + page.url());
 step("export .zip and import it back");
 
@@ -108,7 +106,11 @@ await page.locator(".editor input[type=file]").setInputFiles(tplPath);
 await page.getByText("Шаблон обновлён").waitFor();
 step("export skill: download and upload the Word template");
 
-await page.goto(base + "/#/document");
+await list.getByRole("button", { name: /SRS для банка/ }).first().click();
+await page.getByRole("button", { name: "Создать документ этого типа" }).click();
+await page.waitForURL(/#\/document\/[0-9a-f-]{36}$/);
+await page.locator(".doc-tabs [role=tab]").nth(1).waitFor();                // the new document next to the first one
+await page.locator(".screen-title", { hasText: "SRS для банка" }).waitFor();
 await page.getByRole("button", { name: "Собрать документ" }).click();
 await page.locator(".screen-sub", { hasText: "версия 1" }).waitFor({ timeout: 15000 });
 await page.locator(".sec h2", { hasText: "Глоссарий" }).waitFor();

@@ -874,9 +874,17 @@ def api_project_status(project_id):
     except StoreError as e:
         return jsonify({"error": str(e)}), 404
     stats = library.atom_stats(project_id)
-    doc = library.document(project_id, create=False)
+    docs = library.documents(project_id)
+    doc = frd.requirements_document(library, project_id) if docs else None
     latest = library.version(doc["id"]) if doc else None
     stale = frd.staleness(library, project_id, latest) if latest else None
+    others_stale = 0
+    for d in docs:
+        if doc and d["id"] == doc["id"]:
+            continue
+        v = library.version(d["id"])
+        st = frd.staleness(library, project_id, v) if v else None
+        others_stale += bool(st and st["stale"])
     items = library.backlog(project_id)
     bl_stale = backlog.stale(library, project_id)["stale"] if items else False
     doc_stale = bool(stale and stale["stale"])
@@ -889,7 +897,8 @@ def api_project_status(project_id):
         "processing": sum(1 for s in sources if s["status"] == "processing"),
         "atoms": {"review": stats["pending"], "total": stats["total"], "accepted": stats["accepted"],
                   "conflicts": stats["open_conflicts"]},
-        "document": {"version": latest["number"] if latest else None, "stale": doc_stale,
+        "document": {"version": latest["number"] if latest else None, "stale": doc_stale, "count": len(docs),
+                     "others_stale": others_stale,
                      "status": latest.get("status") if latest else None, "changed": (stale or {}).get("changed", 0)
                      + (stale or {}).get("added", 0) + (stale or {}).get("removed", 0)},
         "backlog": {"items": len(items), "included": sum(1 for i in items if i["included"]),
@@ -1310,7 +1319,7 @@ def api_resolve_conflict(conflict_id):
 
 
 # ── FRD document (increment 3) ──────────────────────────────────────────────
-_building = {}            # project_id → job_id
+_building = {}            # document_id → job_id
 
 
 def _visible_issues(document_id, content):
@@ -1330,10 +1339,71 @@ def _visible_issues(document_id, content):
     return content
 
 
+def _doc_summary(doc, project_id, lang):
+    """A document for the tab bar: its type, latest version and whether it is behind the atoms."""
+    skill = frd.document_skill(doc, _skillset(project_id))
+    latest = library.version(doc["id"])
+    stale = frd.staleness(library, project_id, latest) if latest else None
+    return {**doc, "kind": skill.name, "type": skill.title_in(lang), "short": title_text_short(skill, lang),
+            "version": latest["number"] if latest else None, "stale": bool(stale and stale["stale"]),
+            "status": latest.get("status") if latest else None}
+
+
+def title_text_short(skill, lang):
+    return skills.title_text(skill.meta.get("short"), lang) if skill.meta.get("short") else skill.title_in(lang)
+
+
+@app.route("/api/projects/<project_id>/documents")
+def api_documents(project_id):
+    """The project's documents (BRD, SRS, Vision & Scope, risks, As-Is/To-Be…) and the types one can add."""
+    lang = _lang()
+    try:
+        library.document(project_id)                 # every project has at least its primary document
+        docs = [_doc_summary(d, project_id, lang) for d in library.documents(project_id)]
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    types = [{"name": sk.name, "title": sk.title_in(lang), "short": title_text_short(sk, lang),
+              "description": sk.description_in(lang), "builtin": sk.builtin,
+              "requirements": sk.meta.get("requirements", "all") != "none"}
+             for sk in skills.all_skills() if sk.stage == "frd" and not sk.error]
+    return jsonify({"documents": docs, "types": types,
+                    "requirements_document": frd.requirements_document(library, project_id)["id"]})
+
+
+@app.route("/api/projects/<project_id>/documents", methods=["POST"])
+def api_create_document(project_id):
+    d = request.get_json(silent=True) or {}
+    lang = _lang()
+
+    def create():
+        project = library.get_project(project_id)
+        skill = skills.get(d.get("kind") or "")
+        if skill.stage != "frd" or skill.error:
+            raise StoreError("choose a document type")
+        title = (d.get("title") or "").strip() or f"{title_text_short(skill, lang)} — {project['name']}"
+        return _doc_summary(library.create_document(project_id, skill.name, title), project_id, lang)
+    try:
+        return _store_call(create)
+    except skills.SkillError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/documents/<document_id>", methods=["DELETE"])
+def api_delete_document(document_id):
+    try:
+        doc = library.get_document(document_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    if library.documents(doc["project_id"])[0]["id"] == document_id:
+        return jsonify({"error": "The first document of a project can't be deleted; rename it or change its type."}), 400
+    library.delete_document(document_id)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/projects/<project_id>/document")
 def api_document(project_id):
     try:
-        doc = library.document(project_id)
+        doc = library.get_document(request.args["document"]) if request.args.get("document") else library.document(project_id)
     except StoreError as e:
         return jsonify({"error": str(e)}), 404
     version = library.version(doc["id"], request.args.get("version"))
@@ -1345,15 +1415,16 @@ def api_document(project_id):
         version.pop("snapshot", None)
     else:
         stale = None
-    job = _building.get(project_id)
+    job = _building.get(doc["id"])
+    doc = _doc_summary(doc, project_id, _lang())
     return jsonify({"document": doc, "versions": library.versions(doc["id"]), "version": version, "stale": stale,
                     "free_blocks": library.free_blocks(doc["id"]), "stats": stats,
                     "building": job if job and (jobs.get(job) or {}).get("status") == "processing" else None})
 
 
-def _run_build(job_id, project_id, prefs, api_key, mode, note=None):
+def _run_build(job_id, project_id, prefs, api_key, mode, note=None, document_id=None):
     try:
-        result = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode=mode, note=note,
+        result = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode=mode, note=note, document_id=document_id,
                            progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg), skillset=_skillset(project_id))
     except (frd.BuildError, SummaryError) as e:
         jobs.fail(job_id, e)
@@ -1362,7 +1433,7 @@ def _run_build(job_id, project_id, prefs, api_key, mode, note=None):
     else:
         jobs.finish(job_id, result)
     finally:
-        _building.pop(project_id, None)
+        _building.pop(document_id or library.document(project_id)["id"], None)
 
 
 @app.route("/api/projects/<project_id>/document/build", methods=["POST"])
@@ -1377,16 +1448,21 @@ def api_build_document(project_id):
         return jsonify({"error": "mode must be changed or full"}), 400
     if not library.atom_stats(project_id)["accepted"]:
         return jsonify({"error": "There are no accepted atoms yet. Review the atoms first."}), 400
-    running = _building.get(project_id)
+    try:
+        doc = library.get_document(body["document_id"]) if body.get("document_id") else library.document(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    running = _building.get(doc["id"])
     if running and (jobs.get(running) or {}).get("status") == "processing":
         return jsonify({"job_id": running})
     prefs, api_key, problem = _ai_prefs(project)
     if problem:
         return problem
     job_id = jobs.create()
-    _building[project_id] = job_id
+    _building[doc["id"]] = job_id
     jobs.set_progress(job_id, 0, "Writing the document…")
-    threading.Thread(target=_run_build, args=(job_id, project_id, prefs, api_key, mode, note), daemon=True).start()
+    threading.Thread(target=_run_build, args=(job_id, project_id, prefs, api_key, mode, note, doc["id"]),
+                     daemon=True).start()
     return jsonify({"job_id": job_id})
 
 
@@ -1884,8 +1960,14 @@ def _skill_call(fn, *args, **kwargs):
     return jsonify(out if out is not None else {"ok": True})
 
 
+def _lang():
+    """The interface language a request asks for (skill titles and descriptions are in both)."""
+    lang = request.args.get("lang") or (request.get_json(silent=True) or {}).get("lang") if request else None
+    return lang if lang in ("ru", "en") else "ru"
+
+
 def _skill_payload(skill):
-    body = skill.full()
+    body = skill.full(_lang())
     body["contract"] = _contracts().get(skill.stage, "")
     body["history"] = [] if skill.builtin or skill.error else skills.history(skill.name)
     if skill.stage == "export":
@@ -1905,7 +1987,7 @@ def api_skills():
         "stages": [{"id": st, "default": skills.DEFAULTS[st], "global": chosen.get(st) or skills.DEFAULTS[st],
                     "project": overrides.get(st), "effective": effective[st].name if effective[st] else None}
                    for st in skills.STAGES],
-        "skills": [s.summary() for s in skills.all_skills()],
+        "skills": [s.summary(_lang()) for s in skills.all_skills()],
         "project_id": project_id,
     })
 
@@ -1925,7 +2007,7 @@ def api_skill_create():
 def api_skill_save(name):
     data = request.get_json(silent=True) or {}
     return _skill_call(skills.save, name, title=data.get("title"), description=data.get("description"),
-                       instructions=data.get("instructions"), settings=data.get("meta"))
+                       instructions=data.get("instructions"), settings=data.get("meta"), lang=data.get("lang"))
 
 
 @app.route("/api/skills/<name>", methods=["DELETE"])

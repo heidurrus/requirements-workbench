@@ -11,7 +11,7 @@ import datetime
 import hashlib
 import json
 
-from core.frd import req_blocks
+from core.frd import req_blocks, requirements_document
 from core.llm import output_language
 
 APP_LABEL = "requirements-workbench"
@@ -143,7 +143,7 @@ def local_status(store, project_id):
     pushed = [i for i in items if i.get("jira_key")]
     if not target or not pushed:
         return {"pushed": len(pushed), "pending": None}
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
     project = store.get_project(project_id)
     lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
@@ -191,7 +191,7 @@ def plan(store, project_id, session):
     if not target:
         raise JiraError("Choose the Jira site and project first.")
     types = target.get("types") or {}
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
     project = store.get_project(project_id)
     quotes = quote_policy(project)
@@ -282,7 +282,7 @@ def push(store, project_id, session, item_ids, progress=None):
     rows = [r for r in preview["rows"] if r["item_id"] in chosen and r["action"] in ("create", "update")]
     if not rows:
         raise JiraError("Nothing to push: tick at least one row to create or update.")
-    doc = store.document(project_id)
+    doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
     project = store.get_project(project_id)
     quotes = quote_policy(project)

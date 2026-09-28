@@ -2,6 +2,7 @@
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
   import OpenItems from "../components/OpenItems.svelte";
+  import AtomInspector from "../components/AtomInspector.svelte";
   import { api } from "../lib/api.js";
   import { extractAtoms } from "../lib/atoms.js";
   import { fmtTime, speakerDisplay } from "../lib/format.js";
@@ -84,6 +85,7 @@
     return [...out.values()];
   });
   const visible = $derived(groups.flatMap(g => g.items));
+  const focused = $derived(visible.find(a => a.id === selectedId) || null);
   const inConflict = $derived(atoms.filter(a => a.conflicts.length).length);
   const manySources = $derived(new Set(atoms.flatMap(a => a.evidence.map(e => e.source_id))).size > 1);
   const readySources = $derived(app.sources.filter(s => s.status === "ready"));
@@ -559,6 +561,7 @@
     </div>
   {/if}
 
+  <div class="at-layout" class:has-insp={!!focused}>
   <section class="list">
     {#if loaded && !atoms.length}
       <div class="empty">
@@ -668,6 +671,8 @@
       </p>
     {/if}
   </section>
+  <div class="insp-col"><AtomInspector atom={focused} {statementOf} onDecide={(a, st) => decide(a, st, { toggle: false })} onEdit={startEdit} /></div>
+  </div>
 
   {#if checkedVisible.length}
     <div class="bulkbar" role="toolbar" aria-label={t("at.selected", { n: checkedVisible.length })}>
@@ -849,6 +854,13 @@
   @media (max-width: 720px) { .bulkbar { left: 50%; max-width: calc(100vw - 32px); } }
 
   .sources-block { margin-top: var(--sp-8); }
+  .at-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
+  .insp-col { display: none; }
+  @media (min-width: 1500px) {
+    .at-layout.has-insp { grid-template-columns: minmax(0, 1fr) 380px; }
+    .at-layout.has-insp .insp-col { display: block; }
+  }
+  @media (min-width: 2000px) { .at-layout.has-insp { grid-template-columns: minmax(0, 1fr) 460px; } }
   .tabs { display: flex; gap: var(--sp-7); border-bottom: 1px solid var(--line); margin: calc(-1 * var(--sp-2)) 0 var(--sp-6); }
   .tabs button { border: 0; background: transparent; padding: 8px 0; font-weight: 500; color: var(--text-2); border-bottom: 2px solid transparent;
     margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }

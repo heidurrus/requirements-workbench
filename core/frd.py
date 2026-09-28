@@ -66,9 +66,10 @@ def _issue_schema(rule_ids):
         "required": ["id", "rule", "message"], "additionalProperties": False}}
 
 
-def full_schema(rule_ids, extra_keys=()):
+def full_schema(rule_ids, extra_keys=(), table_keys=()):
     strings = {"type": "array", "items": {"type": "string"}}
     key = {"type": "string", "enum": list(extra_keys)} if extra_keys else {"type": "string"}
+    tkey = {"type": "string", "enum": list(table_keys)} if table_keys else {"type": "string"}
     return {
         "type": "object",
         "properties": {
@@ -83,9 +84,12 @@ def full_schema(rule_ids, extra_keys=()):
             "extra": {"type": "array", "items": {
                 "type": "object", "properties": {"key": key, "text": {"type": "string"}},
                 "required": ["key", "text"], "additionalProperties": False}},
+            "tables": {"type": "array", "items": {
+                "type": "object", "properties": {"key": tkey, "rows": {"type": "array", "items": strings}},
+                "required": ["key", "rows"], "additionalProperties": False}},
             "issues": _issue_schema(rule_ids),
         },
-        "required": ["purpose", "context", "assumptions", "groups", "items", "out_of_scope", "extra", "issues"],
+        "required": ["purpose", "context", "assumptions", "groups", "items", "out_of_scope", "extra", "tables", "issues"],
         "additionalProperties": False,
     }
 
@@ -183,13 +187,81 @@ def section_spec(skill, lang):
             for s in skill.meta.get("sections") or []]
 
 
-def _extra_contract(spec):
-    custom = [(k, t, i) for k, t, i in spec if k not in skills.FRD_KINDS]
+def section_formats(skill, lang):
+    """Sections that are tables: key → {columns (in lang), id_prefix, heatmap}."""
+    out = {}
+    for s in skill.meta.get("sections") or []:
+        if s.get("format") == "table":
+            out[s["key"]] = {"columns": [skills.title_text(c, lang) for c in s.get("columns") or []],
+                             "id_prefix": s.get("id_prefix"), "heatmap": s.get("heatmap")}
+    return out
+
+
+def _extra_contract(spec, tables=None):
+    tables = tables or {}
+    custom = [(k, t, i) for k, t, i in spec if k not in skills.FRD_KINDS and k not in tables]
+    out = ""
     if not custom:
-        return "- extra: return an empty list.\n"
-    lines = "\n".join(f"  - {k} (“{t}”): {i}" for k, t, i in custom)
-    return ("- extra: one entry per additional section below, with its key and its text (based only on the atoms "
-            "and sources; empty text when they give nothing):\n" + lines + "\n")
+        out += "- extra: return an empty list.\n"
+    else:
+        lines = "\n".join(f"  - {k} (“{t}”): {i}" for k, t, i in custom)
+        out += ("- extra: one entry per additional section below, with its key and its text (based only on the atoms "
+                "and sources; empty text when they give nothing):\n" + lines + "\n")
+    tab = [(k, t, i) for k, t, i in spec if k in tables]
+    if not tab:
+        out += "- tables: return an empty list.\n"
+    else:
+        lines = []
+        for k, t, i in tab:
+            cols = tables[k]["columns"][1:] if tables[k].get("id_prefix") else tables[k]["columns"]
+            lines.append(f"  - {k} (“{t}”): {i} Each row is an array of exactly {len(cols)} strings, in this order: "
+                         + " | ".join(cols) + (". Do not number the rows: IDs are added by the app." if tables[k].get("id_prefix") else "."))
+        out += ("- tables: one entry per table section below, with its key and its rows (based only on the atoms, "
+                "the sources and their summaries; no rows when they give nothing):\n" + "\n".join(lines) + "\n")
+    return out
+
+
+LEVELS = {"high": 2, "medium": 1, "low": 0, "высок": 2, "средн": 1, "низк": 0, "h": 2, "m": 1, "l": 0}
+HEAT = {"ru": {"corner": "Вероятность \\ Влияние", "levels": ["Низкое", "Среднее", "Высокое"],
+               "p": ["Низкая", "Средняя", "Высокая"], "title": "Матрица рисков"},
+        "en": {"corner": "Probability \\ Impact", "levels": ["Low", "Medium", "High"],
+               "p": ["Low", "Medium", "High"], "title": "Risk matrix"}}
+
+
+def _level(text):
+    t = str(text or "").strip().lower()
+    for k, v in LEVELS.items():
+        if t.startswith(k):
+            return v
+    return None
+
+
+def _table_blocks(key, fmt, rows, lang):
+    """A table block (IDs added when the section asks), plus a probability × impact heat map if configured."""
+    width = len(fmt["columns"]) - (1 if fmt.get("id_prefix") else 0)
+    clean = []
+    for r in rows or []:
+        cells = [str(c).strip() for c in (r if isinstance(r, list) else [r])][:width]
+        if any(cells):
+            clean.append(cells + [""] * (width - len(cells)))
+    if fmt.get("id_prefix"):
+        clean = [[f"{fmt['id_prefix']}-{n}"] + r for n, r in enumerate(clean, 1)]
+    if not clean:
+        return []
+    blocks = [{"id": key, "kind": "table", "columns": fmt["columns"], "rows": clean}]
+    hm = fmt.get("heatmap")
+    if isinstance(hm, dict):
+        pi, ii = int(hm.get("probability", 0)), int(hm.get("impact", 0))
+        t = HEAT.get(lang, HEAT["ru"])
+        grid = [[[] for _ in range(3)] for _ in range(3)]
+        for r in clean:
+            p, i = _level(r[pi] if pi < len(r) else ""), _level(r[ii] if ii < len(r) else "")
+            if p is not None and i is not None:
+                grid[p][i].append(r[0])
+        blocks.append({"id": key + "_heatmap", "kind": "table", "title": t["title"], "heatmap": True,
+                       "columns": [t["corner"]] + t["levels"],
+                       "rows": [[t["p"][p]] + [", ".join(grid[p][i]) for i in range(3)] for p in (2, 1, 0)]})
+    return blocks
 
 
 def _sources(evidence):
@@ -255,10 +327,29 @@ def _assemble(spec, lang, parts):
             sec["blocks"] = [{"id": "out_of_scope", "kind": "list", "items": parts["out_of_scope"]}]
         elif key == "questions":
             sec["blocks"] = parts["questions"]
+        elif key in parts.get("formats", {}):
+            sec["blocks"] = _table_blocks(key, parts["formats"][key], parts.get("tables", {}).get(key), lang)
         elif key not in skills.FRD_KINDS and (parts["extra"].get(key) or "").strip():
             sec["blocks"] = [{"id": key, "kind": "text", "text": parts["extra"][key].strip()}]
         sections.append(sec)
     return {"sections": _number(sections)}
+
+
+def requirements_document(store, project_id):
+    """The document the backlog, Jira and traceability read requirements from: the primary document
+    when it holds FR/NFR requirements, otherwise the most recently built one that does."""
+    docs = store.documents(project_id)
+    if not docs:
+        return store.document(project_id)
+    best, best_at = None, -1
+    for i, d in enumerate(docs):
+        v = store.version(d["id"])
+        if v and any(b["id"].startswith(("FR-", "NFR-")) for _n, _k, b in req_blocks(v["content"])):
+            if i == 0:
+                return d
+            if v["created_at"] > best_at:
+                best, best_at = d, v["created_at"]
+    return best or docs[0]
 
 
 def req_blocks(content):
@@ -278,17 +369,20 @@ NOTE = "\n\nThe analyst's instruction for this run (follow it unless it breaks t
 
 
 def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progress=None, complete=complete_json,
-          skillset=None, save=True, note=None):
-    """Build a new version. mode "changed": rewrite only new/changed atoms; "full": rewrite everything.
+          skillset=None, save=True, note=None, document_id=None):
+    """Build a new version of a project document. mode "changed": rewrite only new/changed atoms; "full":
+    rewrite everything. The document's type (BRD, SRS, Vision & Scope, …) is its own document skill.
     save=False returns the content without storing a version (used to try a skill)."""
     report = progress or (lambda pct, msg: None)
     project = store.get_project(project_id)
-    doc = store.document(project_id)
+    doc = store.get_document(document_id) if document_id else store.document(project_id)
     atoms = store.list_atoms(project_id, status="accepted")
     if not atoms:
         raise BuildError("There are no accepted atoms yet. Review the atoms first.")
     prefs = for_project(prefs, project)
-    skillset = skillset or skills.resolve()
+    skillset = dict(skillset or skills.resolve())
+    doc_skill = document_skill(doc, skillset)
+    skillset["frd"] = doc_skill
     rids = store.requirement_ids(project_id, atoms)
     order = {"FR": 0, "NFR": 1, "Q": 2}
     atoms.sort(key=lambda a: (order[rids[a["id"]].split("-")[0]], int(rids[a["id"]].split("-")[1])))
@@ -298,10 +392,13 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
     ctx = {"store": store, "project": project, "atoms": atoms, "rids": rids, "by_rid": by_rid, "conflicts": conflicts,
            "lang": lang, "prefs": prefs, "api_key": api_key, "ollama_url": ollama_url, "report": report,
            "complete": complete, "skillset": skillset, "quality": Quality(skillset.get("quality")),
-           "spec": section_spec(skillset["frd"], lang), "note": (note or "").strip()}
+           "spec": section_spec(doc_skill, lang), "formats": section_formats(doc_skill, lang), "note": (note or "").strip(),
+           "summaries": _summaries(store, project_id) if doc_skill.meta.get("use_summaries") else ""}
     previous = store.version(doc["id"])
     if previous is not None and previous["content"].get("language") != lang:
         mode = "full"                                   # a new output language means rewriting everything
+    if previous is not None and (previous["content"].get("skills") or {}).get("frd") not in (None, doc_skill.name):
+        mode = "full"                                   # the document changed type: its sections are different
     if previous is None or mode == "full":
         content = _build_full(ctx)
         mode = "full"
@@ -309,7 +406,7 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
         content = _build_changed(ctx, previous)
     _add_scoped_out(content, store, project_id, ctx["spec"], lang)
     content["language"] = lang
-    content["skills"] = {"frd": skillset["frd"].name, "quality": skillset["quality"].name}
+    content["skills"] = {"frd": doc_skill.name, "quality": skillset["quality"].name}
     content["rule_titles"] = ctx["quality"].titles
     if not save:
         report(100, "Done")
@@ -335,6 +432,33 @@ def _add_scoped_out(content, store, project_id, spec, lang):
         sec["blocks"].append({"id": "out_of_scope_ba", "kind": "list", "items": scoped})
 
 
+def document_skill(doc, skillset):
+    """The skill that shapes this document: its own type, else the project's default document skill."""
+    name = (doc or {}).get("kind")
+    if name:
+        try:
+            sk = skills.get(name)
+            if sk.stage == "frd" and not sk.error:
+                return sk
+        except skills.SkillError:
+            pass
+    return skillset["frd"]
+
+
+def _summaries(store, project_id, limit=12000):
+    """Source summaries, for documents that describe processes rather than list requirements (As-Is, Vision)."""
+    out, used = [], 0
+    for s in store.list_sources(project_id):
+        summ = store.latest_summary(s["id"]) if s["status"] == "ready" else None
+        if summ and summ.get("text"):
+            chunk = f"### {s['title']}\n{summ['text'].strip()}"
+            if used + len(chunk) > limit:
+                break
+            out.append(chunk)
+            used += len(chunk)
+    return "\n\n".join(out)
+
+
 def _sources_line(store, project_id):
     lines = [f"- {s['title']} ({s['kind']})" for s in store.list_sources(project_id) if s["status"] == "ready"]
     return "\n".join(lines[:40])
@@ -355,13 +479,16 @@ def _model_issues(reply):
 def _build_full(ctx):
     ctx["report"](5, "Writing the document…")
     q, by_rid, lang = ctx["quality"], ctx["by_rid"], ctx["lang"]
-    contract = FULL_CONTRACT.replace("{extra}", _extra_contract(ctx["spec"])).replace("{rules}", q.prompt(_lang_name(lang)))
+    contract = FULL_CONTRACT.replace("{extra}", _extra_contract(ctx["spec"], ctx["formats"])).replace("{rules}", q.prompt(_lang_name(lang)))
     user = (f"Project: {ctx['project']['name']}\n\nSources:\n{_sources_line(ctx['store'], ctx['project']['id'])}\n\n"
             "Accepted requirement atoms:\n" + "\n".join(_atom_lines(ctx["atoms"], ctx["rids"], ctx["conflicts"])))
+    if ctx.get("summaries"):
+        user += "\n\nSummaries of the sources (for the descriptive sections):\n" + ctx["summaries"]
     if ctx.get("note"):
         user += NOTE + ctx["note"]
-    custom = [(k, t) for k, t, _i in ctx["spec"] if k not in skills.FRD_KINDS]
-    reply = ctx["complete"](_system(ctx, contract), user, full_schema(q.rule_ids, [k for k, _t in custom]),
+    custom = [(k, t) for k, t, _i in ctx["spec"] if k not in skills.FRD_KINDS and k not in ctx["formats"]]
+    reply = ctx["complete"](_system(ctx, contract), user,
+                            full_schema(q.rule_ids, [k for k, _t in custom], list(ctx["formats"])),
                             ctx["prefs"], ctx["api_key"], ctx["ollama_url"])
     ctx["report"](85, "Checking quality…")
     texts = {str(i.get("id", "")).strip(): i["text"] for i in reply.get("items") or []
@@ -393,7 +520,12 @@ def _build_full(ctx):
         k = raw if raw in dict(custom) else by_title.get(raw.casefold())
         if k and str(e.get("text") or "").strip():
             extra[k] = e["text"]
-    return _assemble(ctx["spec"], lang, {
+    tables = {}
+    for tb in reply.get("tables") or []:
+        k = str(tb.get("key", "")).strip()
+        if k in ctx["formats"]:
+            tables[k] = tb.get("rows") or []
+    return _assemble(ctx["spec"], lang, {"formats": ctx["formats"], "tables": tables,
         "purpose": reply.get("purpose") or "", "context": reply.get("context") or "",
         "assumptions": reply.get("assumptions") or [], "groups": groups,
         "nfr": [block(r) for r in by_rid if r.startswith("NFR-")],
@@ -458,7 +590,15 @@ def _build_changed(ctx, previous):
         sec = sections.get(key)
         return next((b["items"] for b in sec["blocks"] if b["kind"] == "list"), []) if sec else []
     extra = {k: text_of(k) for k, _t, _i in ctx["spec"] if k not in skills.FRD_KINDS}
-    return _assemble(ctx["spec"], lang, {
+
+    def rows_of(key):
+        sec = sections.get(key)
+        b = next((b for b in sec["blocks"] if b["kind"] == "table" and not b.get("heatmap")), None) if sec else None
+        if not b:
+            return []
+        return [r[1:] for r in b["rows"]] if ctx["formats"][key].get("id_prefix") else b["rows"]
+    tables = {k: rows_of(k) for k in ctx["formats"]}
+    return _assemble(ctx["spec"], lang, {"formats": ctx["formats"], "tables": tables,
         "purpose": text_of("purpose"), "context": text_of("context"), "assumptions": list_of("context"),
         "groups": list(groups.items()), "nfr": [block(r) for r in by_rid if r.startswith("NFR-")],
         "out_of_scope": list_of("out_of_scope"), "questions": [block(r) for r in by_rid if r.startswith("Q-")],
