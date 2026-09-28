@@ -192,7 +192,7 @@
         {/if}
         <p class="hint-line"><Icon name="info" size={12} /> {t("bl.hint")}{#if hasFindings}{" "}<b class="warn-t">{t("bl.findings_hint")}</b>{/if}</p>
 
-        <section class="tree" role="tree" aria-label={t("nav.decomposition")}>
+        <div class="tree" role="tree" aria-label={t("nav.decomposition")}>
           {#each epics as epic (epic.id)}
             <div class="node epic" class:off={!epic.included} class:folded={collapsed.has(epic.id)} role="treeitem" aria-selected="false"
                  aria-expanded={!collapsed.has(epic.id)}>
@@ -218,7 +218,7 @@
             </div>
           {/each}
           <button class="btn btn-sm btn-ghost add" onclick={() => add("epic", null)}><Icon name="plus" size={14} /> {t("bl.add_epic")}</button>
-        </section>
+        </div>
 
         {#if nfrs.length}
           <div>

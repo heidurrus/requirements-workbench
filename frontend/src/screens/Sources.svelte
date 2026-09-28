@@ -268,7 +268,7 @@
       </div>
     </section>
 
-    <section class="drop-card" class:dragging class:has-file={file}
+    <section class="drop-card" class:dragging class:has-file={file} role="group" aria-label={t("sources.upload.title")}
              ondragover={e => { e.preventDefault(); dragging = true; }}
              ondragleave={() => (dragging = false)}
              ondrop={e => { e.preventDefault(); dragging = false; pickFiles(e.dataTransfer.files); }}>

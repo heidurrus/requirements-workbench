@@ -5,7 +5,7 @@
   import Icon from "../components/Icon.svelte";
   import { saveUrl } from "../lib/save.js";
   import { LANGS } from "../lib/i18n.js";
-  import { app, t, setLang, setTheme, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
+  import { app, t, go, setLang, setTheme, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
 
   let s = $state(null);              // server settings payload
   let keyDraft = $state("");
@@ -77,6 +77,10 @@
 
 <div class="screen-inner narrow">
   <header class="screen-head">
+    {#if app.returnTo}
+      <button class="btn btn-ghost back-to" onclick={() => { const r = app.returnTo; app.returnTo = null; go(r.hash); }}>
+        <Icon name="back" size={14} /> {t("set.back_to", { screen: t("nav." + ({ backlog: "decomposition", transcript: "transcript" }[app.returnTo.name] || app.returnTo.name)) })}</button>
+    {/if}
     <div>
       <h1 class="screen-title">{t("set.title")}</h1>
       <p class="screen-sub">{t("set.sub")}</p>
@@ -265,6 +269,7 @@
 </div>
 
 <style>
+  .screen-head > .back-to { flex: none; margin-left: -8px; }
   .group-t { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin: var(--sp-8) 0 var(--sp-4) var(--sp-5); }
   .group-t:first-of-type { margin-top: var(--sp-4); }
   .form-row { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-6); min-height: 48px; }

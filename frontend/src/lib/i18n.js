@@ -790,6 +790,11 @@ const ru = {
   "set.export_project": "Сохранить проект",
   "project.import": "Открыть файл проекта…",
   "project.imported": "Проект «{name}» открыт",
+  "set.back_to": "Вернуться: {screen}",
+  "sk.cmp_title": ["Сейчас у источника {n} атом", "Сейчас у источника {n} атома", "Сейчас у источника {n} атомов"],
+  "sk.cmp_same": ["совпадает {n}", "совпадают {n}", "совпадают {n}"],
+  "sk.cmp_new": ["{n} новый", "{n} новых", "{n} новых"],
+  "sk.cmp_missing": ["{n} пропадёт", "{n} пропадут", "{n} пропадут"],
 };
 
 const en = {
@@ -1581,6 +1586,11 @@ const en = {
   "set.export_project": "Save project",
   "project.import": "Open a project file…",
   "project.imported": "Project “{name}” opened",
+  "set.back_to": "Back to {screen}",
+  "sk.cmp_title": ["The source has {n} atom now", "The source has {n} atoms now"],
+  "sk.cmp_same": ["{n} the same", "{n} the same"],
+  "sk.cmp_new": ["{n} new", "{n} new"],
+  "sk.cmp_missing": ["{n} would disappear", "{n} would disappear"],
 };
 
 export const DICTS = { ru, en };

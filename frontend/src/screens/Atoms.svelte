@@ -806,7 +806,7 @@
   .atom.rejected .stm { color: var(--text-2); text-decoration: line-through; text-decoration-color: var(--text-3); }
   .atom.rejected .quote { opacity: .6; }
   .body .hint { margin-top: 2px; }
-  .quote { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; text-align: left;
+  .quote { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; text-align: left;
     font-size: var(--fs-13); line-height: 18px; color: var(--text-2); }
   .quote::before { content: "«"; } .quote::after { content: "»"; }
   button.quote:hover { color: var(--accent); }
@@ -876,6 +876,7 @@
   .mini:hover { background: var(--surface-2); color: var(--text-2); }
   .mini.set { background: var(--accent-bg); color: var(--accent); }
   .atom:not(:hover):not(.sel) .mini:not(.set) { opacity: 0; }
+  .atom:not(:hover):not(.sel) .facets:not(:has(.set, .tag)) { display: none; }
   @media (hover: none) { .atom .mini { opacity: 1 !important; } }
   .hist { margin: var(--sp-4) 0 0; padding: var(--sp-4) var(--sp-5) var(--sp-4) 28px; background: var(--surface-2); border-radius: var(--r-sm);
     font-size: var(--fs-12); line-height: 18px; }

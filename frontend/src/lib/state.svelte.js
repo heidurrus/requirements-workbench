@@ -45,7 +45,8 @@ export const app = $state({
   jobs: {},
   // source id → { jobId, progress, message } for atom extraction
   extracting: {},
-  atomsVersion: 0,          // bumped when atoms change elsewhere, so open screens reload
+  atomsVersion: 0,
+  returnTo: null,           // {hash, name}: where Settings was opened from          // bumped when atoms change elsewhere, so open screens reload
 });
 
 export const t = (key, vars) => translate(app.lang, key, vars);
@@ -54,8 +55,12 @@ export function go(path) {
   if (location.hash !== "#" + path) location.hash = path;
   else app.route = parseRoute();
 }
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", e => {
   const prev = app.route.name;
+  // Remember where Settings was opened from, so it can send the BA back (PM-26).
+  if (parseRoute().name === "settings" && prev !== "settings") {
+    app.returnTo = { hash: new URL(e.oldURL).hash.slice(1) || "/sources", name: prev };
+  }
   app.route = parseRoute();
   if (app.route.name !== prev) app.toasts = [];      // toasts belong to the screen that raised them
   loadStatus();

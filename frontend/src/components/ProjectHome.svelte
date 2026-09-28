@@ -105,7 +105,7 @@
       <div class="step" class:done={st.done}>
         <span class="mark">{#if st.done}<Icon name="check" size={12} />{/if}</span>
         <div class="grow">
-          <b>{t("home.s." + st.key)}{#if st.optional} <span class="t3 opt">{t("home.optional")}</span>{/if}</b>
+          <b>{t("home.s." + st.key)}{#if st.optional}{" · "}<span class="t3 opt">{t("home.optional")}</span>{/if}</b>
           <p class="t3">{t("home.d." + st.key)}</p>
           {#if st.key === "name" && !st.done}
             <form class="inline" onsubmit={e => { e.preventDefault(); saveName(); }}>
