@@ -51,3 +51,14 @@ def app_module():
 def client(app_module):
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
+
+
+def pytest_runtest_logreport(report):
+    """On GitHub Actions, turn each failure into an annotation (readable without the raw log)."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or not report.failed:
+        return
+    path, line, _ = report.location
+    text = str(report.longrepr).strip().splitlines()
+    message = " | ".join(text[-6:])[:900].replace("%", "%25").replace("\r", "").replace("\n", " ")
+    sys.__stdout__.write(f"\n::error file={path},line={(line or 0) + 1},title={report.nodeid}::{message}\n")
+    sys.__stdout__.flush()
