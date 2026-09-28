@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import socket
@@ -62,6 +63,7 @@ class Model:
     asset: Asset
     min_ram_gb: int
     context: int
+    gpu_gb: float = 0    # GPU memory for weights + working memory at full speed
 
 
 def _hf(repo, revision, file):
@@ -74,11 +76,11 @@ MODELS = [
           Asset(_hf("google/gemma-4-12B-it-qat-q4_0-gguf", "29d097773436b69ff9feafd636ab4cf873786537",
                     "gemma-4-12b-it-qat-q4_0.gguf"),
                 "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b", 6975879296),
-          min_ram_gb=16, context=32768),
+          min_ram_gb=16, context=32768, gpu_gb=8),
     Model("qwen3.5-4b", "Qwen3.5 4B", "Qwen3.5-4B-Q4_K_M.gguf",
           Asset(_hf("unsloth/Qwen3.5-4B-GGUF", "e87f176479d0855a907a41277aca2f8ee7a09523", "Qwen3.5-4B-Q4_K_M.gguf"),
                 "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4", 2740937888),
-          min_ram_gb=8, context=32768),
+          min_ram_gb=8, context=32768, gpu_gb=3.5),
 ]
 MODELS_BY_ID = {m.id: m for m in MODELS}
 
@@ -126,12 +128,111 @@ def total_ram_bytes():
         return None
 
 
-def recommended_model_id(ram=None):
-    """The largest model the machine's memory comfortably holds."""
-    ram = total_ram_bytes() if ram is None else ram
-    gb = (ram or 0) / 1024 ** 3
+# ── GPU ──────────────────────────────────────────────────────────────────────
+# What decides speed is GPU memory: a model that fits runs fast; one that half
+# fits runs partly on the CPU; with no usable GPU it all runs on the CPU (slow).
+# On Apple Silicon, RAM *is* GPU memory (macOS lets the GPU use about 3/4 of it).
+
+_gpu_cache = {}
+
+
+def _parse_devices(text):
+    """`llama-server --list-devices` lines like "  Vulkan0: NVIDIA GeForce RTX 3060 (12288 MiB, 11200 MiB free)"."""
+    found = []
+    for name, desc, total in re.findall(r"^\s*(\w+):\s*(.+?)\s*\((\d+) MiB,", text, flags=re.M):
+        if int(total) > 0 and not name.upper().startswith(("BLAS", "CPU")):
+            found.append({"name": desc, "memory": int(total) * 1024 ** 2, "backend": name})
+    return found
+
+
+def _engine_gpu(binary):
+    try:
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        out = subprocess.run([binary, "--list-devices"], capture_output=True, text=True, timeout=30,
+                             creationflags=flags, cwd=os.path.dirname(binary))
+        devices = _parse_devices(out.stdout + out.stderr)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return max(devices, key=lambda d: d["memory"]) if devices else {}
+
+
+def _registry_gpu(winreg=None):
+    """Windows before the engine is downloaded: dedicated video memory per adapter from the registry
+    (64-bit value, unlike WMI's AdapterRAM which stops at 4 GB)."""
+    if winreg is None:
+        import winreg
+    base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+    best = {}
+    for i in range(16):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{base}\\{i:04d}")
+        except OSError:
+            continue
+        try:
+            memory = 0
+            for value in ("HardwareInformation.qwMemorySize", "HardwareInformation.MemorySize"):
+                try:
+                    raw, _type = winreg.QueryValueEx(key, value)
+                except OSError:
+                    continue
+                memory = int.from_bytes(raw, "little") if isinstance(raw, (bytes, bytearray)) else int(raw)
+                if memory:
+                    break
+            try:
+                name = winreg.QueryValueEx(key, "DriverDesc")[0]
+            except OSError:
+                name = "GPU"
+            if memory > best.get("memory", 0):
+                best = {"name": name, "memory": memory, "backend": "registry"}
+        finally:
+            winreg.CloseKey(key)
+    return best
+
+
+def gpu_info(refresh=False):
+    """The main GPU as {name, memory, backend}; {} when there is none; None when unknown."""
+    if "gpu" in _gpu_cache and not refresh:
+        return _gpu_cache["gpu"]
+    binary = server_binary()
+    gpu = _engine_gpu(binary) if binary else None
+    if gpu is None:
+        if sys.platform == "win32":
+            try:
+                gpu = _registry_gpu()
+            except Exception:
+                gpu = None
+        elif platform_key() == ("darwin", "arm64"):
+            ram = total_ram_bytes()
+            gpu = {"name": "Apple Silicon", "memory": int(ram * 0.75), "backend": "unified"} if ram else None
+    # Tiny "dedicated" memory (integrated graphics) is no help for a model.
+    if gpu and gpu.get("memory", 0) < 2 * 1024 ** 3:
+        gpu = {}
+    _gpu_cache["gpu"] = gpu
+    return gpu
+
+
+def speed(model, gpu):
+    """"fast" (fits the GPU), "partial" (half on the CPU), "slow" (CPU only), or None if unknown."""
+    if gpu is None:
+        return None
+    memory = gpu.get("memory", 0) / 1024 ** 3
+    if memory >= model.gpu_gb:
+        return "fast"
+    return "partial" if memory >= model.gpu_gb / 2 else "slow"
+
+
+def _fits_ram(model, ram):
     # A "16 GB" machine reports slightly less; allow for that.
-    return next((m.id for m in MODELS if gb >= m.min_ram_gb * 0.9), MODELS[-1].id)
+    return ram is None or ram >= model.min_ram_gb * 0.9 * 1024 ** 3
+
+
+def recommended_model_id(ram=None, gpu=None):
+    """The largest model that fits memory and runs at full speed; else the smallest one."""
+    ram = total_ram_bytes() if ram is None else ram
+    for m in MODELS:
+        if _fits_ram(m, ram) and speed(m, gpu) in ("fast", None):
+            return m.id
+    return MODELS[-1].id
 
 
 # ── files ────────────────────────────────────────────────────────────────────
@@ -315,6 +416,7 @@ class Installer:
                 os.remove(archive)
                 if not server_binary():
                     raise LocalModelError("The engine archive doesn't contain llama-server.")
+                gpu_info(refresh=True)           # the engine sees the GPU exactly as it will use it
                 offset = asset.size
             if not model_installed(model.id):
                 def progress(n):
@@ -339,31 +441,35 @@ def _pid_file():
     return os.path.join(root_dir(), "server.pid")
 
 
-def _is_our_server(pid):
-    """True if pid is a running llama-server (so a recycled pid is never killed)."""
+def _is_our_server(pid, port):
+    """True only if pid is still the llama-server we started on that port, so a recycled pid
+    (or any other program that merely mentions llama-server) is never killed."""
     try:
         if sys.platform == "win32":
             out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
                                  text=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW).stdout
-        else:
-            out = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5).stdout
-        return "llama-server" in out
+            return '"llama-server.exe"' in out.lower()
+        args = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True,
+                              timeout=5).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return False
+    # The executable (or, for a script, its first argument) is llama-server, started with our port.
+    exe = [os.path.basename(a) for a in args[:2]]
+    return "llama-server" in exe and any(args[i] == "--port" and args[i + 1] == str(port) for i in range(len(args) - 1))
 
 
 def cleanup_stale():
     """Stop a server left behind by a crash or force-quit, which would otherwise hold gigabytes of memory."""
     try:
         with open(_pid_file(), encoding="utf-8") as f:
-            pid = int(f.read().strip())
+            pid, port = (int(x) for x in f.read().split())
     except (OSError, ValueError):
         return False
     try:
         os.remove(_pid_file())
     except OSError:
         pass
-    if pid == os.getpid() or not _is_our_server(pid):
+    if pid == os.getpid() or not _is_our_server(pid, port):
         return False
     try:
         if sys.platform == "win32":
@@ -437,7 +543,7 @@ class Runtime:
                                       cwd=os.path.dirname(binary), creationflags=flags)
         log.close()
         with open(_pid_file(), "w", encoding="utf-8") as f:
-            f.write(str(self._proc.pid))
+            f.write(f"{self._proc.pid} {port}")
         self._url, self._key, self._model = f"http://127.0.0.1:{port}", key, model_id
         deadline = time.monotonic() + START_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
@@ -507,8 +613,10 @@ installer = Installer()
 
 def status():
     ram = total_ram_bytes()
-    recommended = recommended_model_id(ram)
+    gpu = gpu_info()
+    recommended = recommended_model_id(ram, gpu)
     return {
+        "gpu": gpu,
         "supported": engine_asset() is not None,
         "engine_installed": server_binary() is not None,
         "ram": ram,
@@ -518,7 +626,7 @@ def status():
         "download": installer.status(),
         "models": [{"id": m.id, "label": m.label, "size": m.asset.size, "min_ram_gb": m.min_ram_gb,
                     "installed": model_installed(m.id), "recommended": m.id == recommended,
-                    "fits": ram is None or ram >= m.min_ram_gb * 0.9 * 1024 ** 3} for m in MODELS],
+                    "fits": _fits_ram(m, ram), "speed": speed(m, gpu)} for m in MODELS],
     }
 
 

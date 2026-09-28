@@ -15,6 +15,14 @@
 - **"Local only" projects** now use the built-in model, with nothing to set up. If it isn't
   downloaded yet, the app tells you where to get it and never falls back to the cloud.
 - Ollama stays available as a third option for those who already use it.
+- **GPU-aware choice.** What decides speed is GPU memory, not just RAM. The app reads the
+  graphics card and its memory (on a Mac, the shared memory), recommends the model that
+  runs at full speed on it, and says plainly when a model would be slower or when there's no
+  suitable GPU.
+- If the app is force-quit or crashes, a model server left running is stopped on the next
+  launch. It only ever stops its own server, identified by the exact port.
+- Turning on **"Local only"** for a project when the model isn't downloaded yet offers the
+  download right there.
 - The rail shows the app version. A long summary scrolls on its own. Recording has a big
   record button, and the record and upload cards line up.
 

@@ -30,5 +30,11 @@ def fake_complete(system, user, schema, prefs, api_key, ollama_url):
 app_module.extract_atoms = functools.partial(atoms.extract_atoms, complete=fake_complete)
 app_module.settings.secret = lambda name: "fake-key"
 
+# Pretend to be another machine for screenshots: FAKE_GPU="none" or a size in GB.
+if os.getenv("FAKE_GPU"):
+    fake = {} if os.environ["FAKE_GPU"] == "none" else {"name": "NVIDIA GeForce RTX 2060", "backend": "Vulkan0",
+                                                        "memory": int(float(os.environ["FAKE_GPU"]) * 1024 ** 3)}
+    app_module.local_llm.gpu_info = lambda refresh=False: fake
+
 if __name__ == "__main__":
     app_module.app.run(host="127.0.0.1", port=int(sys.argv[1]) if len(sys.argv) > 1 else 5098, threaded=True)
