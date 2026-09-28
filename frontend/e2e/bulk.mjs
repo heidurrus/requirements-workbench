@@ -45,7 +45,8 @@ await sub.filter({ hasText: "6 на ревью" }).waitFor();
 await page.locator(".check-all input").check();
 await selected.filter({ hasText: "Выбрано: 6" }).waitFor();
 await page.locator(".bulkbar").getByText(/в конфликтах: \d/).waitFor();
-await page.locator(".bulkbar").getByRole("button", { name: "Принять" }).click();
+// The main button leaves atoms in a conflict for review; this one takes them too.
+await page.locator(".bulkbar").getByRole("button", { name: /конфликтные/ }).click();
 await sub.filter({ hasText: "0 на ревью · принято 6 из 6" }).waitFor();
 if (await page.locator(".bulkbar").count()) throw new Error("selection should clear after a bulk action");
 await page.getByRole("status").getByRole("button", { name: "Отменить" }).click();
@@ -57,7 +58,7 @@ const checks = page.locator(".atom .row-check");
 await checks.nth(0).click();
 await checks.nth(2).click({ modifiers: ["Shift"] });
 await selected.filter({ hasText: "Выбрано: 3" }).waitFor();
-await page.locator(".bulkbar select").selectOption("question");
+await page.locator(".bulkbar select.type-select").selectOption("question");
 await page.getByText("Изменено 3 атома").waitFor();
 await page.locator(".pill", { hasText: "вопросы" }).filter({ hasText: "3" }).waitFor();
 step("shift-click range → change type for 3");

@@ -44,6 +44,7 @@ if (!(await page.locator(".src-select option:checked").textContent()).startsWith
   throw new Error("the source filter should be set");
 await page.locator(".src-select").selectOption({ label: "Все источники" });
 await page.getByText("4 на ревью · принято 0 из 4").waitFor();
+await page.locator(".cf-head").getByText("Разобрать").click();          // conflicts start as one line
 await page.locator(".conflict", { hasText: "Разные требования к сроку" }).waitFor();
 await shot("atoms.png");
 step("atoms listed with counts and a conflict");

@@ -123,8 +123,22 @@ let toastSeq = 0;
 export function dismissToast(id) {
   app.toasts = app.toasts.filter(x => x.id !== id);
 }
-export function toast(message, { action, onAction, kind = "info", ms = 6000 } = {}) {
+// The most recent undo stays available to ⌘Z for as long as its toast would have (PM-10: ≥ 10 s).
+let lastUndo = null;
+export function undoLast() {
+  if (!lastUndo || Date.now() > lastUndo.until) return false;
+  const u = lastUndo;
+  lastUndo = null;
+  dismissToast(u.id);
+  u.run();
+  return true;
+}
+
+export function toast(message, { action, onAction, kind = "info", ms } = {}) {
+  ms = ms ?? (action ? 10000 : 6000);
+  if (action) ms = Math.max(ms, 10000);
   const id = ++toastSeq;
+  if (action && onAction && kind !== "danger") lastUndo = { id, run: onAction, until: Date.now() + ms };
   // Only one undo at a time: a newer action toast replaces an older one.
   const keep = action ? app.toasts.filter(x => !x.action) : app.toasts;
   app.toasts = [...keep, { id, message, action, onAction, kind }].slice(-2);

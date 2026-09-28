@@ -11,31 +11,39 @@
 
   const steps = [
     { key: "nav.sources", route: "sources", path: "/sources", icon: "sources" },
-    { key: "nav.transcript", route: "transcript", path: null, icon: "transcript" },
     { key: "nav.atoms", route: "atoms", path: "/atoms", icon: "atoms" },
     { key: "nav.document", route: "document", path: "/document", icon: "doc" },
     { key: "nav.decomposition", route: "backlog", path: "/backlog", icon: "tree" },
     { key: "nav.export", route: "export", path: "/export", icon: "export" },
   ];
 
-  function open(step) {
-    if (step.route === "transcript") go(app.lastSourceId ? `/source/${app.lastSourceId}` : "/transcript");
-    else go(step.path);
-  }
+  // A transcript is a detail of a source, not a stage (PM-09): Sources stays lit while one is open.
+  const current = $derived(app.route.name === "transcript" ? "sources" : app.route.name);
+  function open(step) { go(step.path); }
 
   // One badge per step: todo (accent), warn, done (green check) or a plain count.
+  // Staleness flows downstream (PM-03): a changed atom turns the document, the backlog and Jira amber.
   function badge(route) {
     const s = app.status;
     if (!s) return null;
-    if (route === "sources" && s.sources) return { text: String(s.sources) };
+    if (route === "sources" && s.sources)
+      return s.processing ? { kind: "todo", text: String(s.sources), title: t("nav.badge_processing", { n: s.processing }) }
+                          : { text: String(s.sources) };
     if (route === "atoms" && s.atoms.review) return { kind: "todo", text: String(s.atoms.review),
                                                       title: t("nav.badge_review", { n: s.atoms.review }) };
+    if (route === "atoms" && s.atoms.conflicts) return { kind: "warn", text: "!", title: t("nav.badge_conflicts", { n: s.atoms.conflicts }) };
     if (route === "document" && s.document.version)
       return s.document.stale ? { kind: "warn", text: "v" + s.document.version, title: t("nav.badge_stale") }
-                              : { text: "v" + s.document.version };
+                              : { text: "v" + s.document.version, title: s.document.status === "approved" ? t("doc.st.approved") : "" };
     if (route === "backlog" && s.backlog.items)
-      return s.backlog.stale ? { kind: "warn", text: String(s.backlog.included) } : { text: String(s.backlog.included) };
-    if (route === "export" && s.export.pushed) return { kind: "done", text: "✓", title: t("nav.badge_pushed", { n: s.export.pushed }) };
+      return s.backlog.stale ? { kind: "warn", text: String(s.backlog.included), title: t("nav.badge_bl_stale") }
+                             : { text: String(s.backlog.included) };
+    if (route === "export" && s.export.pushed) {
+      if (s.export.stale || s.export.orphans)
+        return { kind: "warn", text: s.export.pending ? "↑" + s.export.pending : "!",
+                 title: t("nav.badge_jira_stale", { n: s.export.pending || 0 }) };
+      return { kind: "done", text: "✓", title: t("nav.badge_pushed", { n: s.export.pushed }) };
+    }
     return null;
   }
 
@@ -60,7 +68,7 @@
     if (e.key === "\\") { e.preventDefault(); toggleSidebar(); return; }
     if (e.key === ",") { e.preventDefault(); go("/settings"); return; }
     const n = Number(e.key);
-    if (n >= 1 && n <= 6 && !e.shiftKey) { e.preventDefault(); open(steps[n - 1]); }
+    if (n >= 1 && n <= steps.length && !e.shiftKey) { e.preventDefault(); open(steps[n - 1]); }
   }
 
   async function createProject(e) {
@@ -125,7 +133,7 @@
   <div class="nav">
     {#each steps as s, i (s.route)}
       {@const b = badge(s.route)}
-      <button class="navitem" aria-current={app.route.name === s.route ? "page" : undefined} onclick={() => open(s)}
+      <button class="navitem" aria-current={current === s.route ? "page" : undefined} onclick={() => open(s)}
               title={collapsed ? `${t(s.key)} · ⌘${i + 1}` : `⌘${i + 1}`}>
         <span class="step-ico"><Icon name={s.icon} /></span>
         <span class="lbl">{t(s.key)}</span>

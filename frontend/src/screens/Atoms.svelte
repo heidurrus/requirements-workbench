@@ -1,6 +1,7 @@
 <script>
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import OpenItems from "../components/OpenItems.svelte";
   import { api } from "../lib/api.js";
   import { extractAtoms } from "../lib/atoms.js";
   import { fmtTime, speakerDisplay } from "../lib/format.js";
@@ -13,12 +14,26 @@
   let loaded = $state(false);
   let error = $state("");
 
-  function readFilter(key, fallback) {
-    try { return JSON.parse(localStorage.getItem("wb.atoms." + key)) ?? fallback; } catch (_) { return fallback; }
+  // Filters are remembered per project (PM-18): "accepted" in one project mustn't hide the next one's queue.
+  function readFilters(pid) {
+    try { return (JSON.parse(localStorage.getItem("wb.atoms.filters")) || {})[pid] || {}; } catch (_) { return {}; }
   }
-  let statusFilter = $state(readFilter("status", "all"));
-  let typeFilter = $state(readFilter("type", "all"));
-  $effect(() => { writePref("atoms.status", statusFilter); writePref("atoms.type", typeFilter); });
+  let statusFilter = $state("all");
+  let typeFilter = $state("all");
+  let groupBy = $state("none");
+  let search = $state("");
+  let conflictOnly = $state(false);
+  let tab = $state("atoms");
+  $effect(() => {
+    const f = readFilters(app.currentProjectId);
+    statusFilter = f.status || "all"; typeFilter = f.type || "all"; groupBy = f.group || "none";
+  });
+  $effect(() => {
+    let all = {};
+    try { all = JSON.parse(localStorage.getItem("wb.atoms.filters")) || {}; } catch (_) { /* private mode */ }
+    all[app.currentProjectId] = { status: statusFilter, type: typeFilter, group: groupBy };
+    writePref("atoms.filters", all);
+  });
 
   let selectedId = $state(null);
   let editingId = $state(null);
@@ -48,10 +63,28 @@
 
   const sourceFilter = $derived(app.route.source || null);
   const sourceFilterTitle = $derived(app.sources.find(s => s.id === sourceFilter)?.title || "");
-  const visible = $derived(atoms.filter(a =>
+  const needle = $derived(search.trim().toLowerCase());
+  const filtered = $derived(atoms.filter(a =>
     (statusFilter === "all" || a.status === statusFilter) &&
     (typeFilter === "all" || a.type === typeFilter) &&
-    (!sourceFilter || a.evidence.some(e => e.source_id === sourceFilter))));
+    (!conflictOnly || a.conflicts.length) &&
+    (!sourceFilter || a.evidence.some(e => e.source_id === sourceFilter)) &&
+    (!needle || a.statement.toLowerCase().includes(needle) || a.evidence.some(e => e.quote.toLowerCase().includes(needle)))));
+  // Grouping (PM-18): by source or speaker; the list order follows the groups so J/K walk them in order.
+  const groups = $derived.by(() => {
+    if (groupBy === "none") return [{ key: "", title: "", items: filtered }];
+    const out = new Map();
+    for (const a of filtered) {
+      const e = a.evidence[0] || {};
+      const key = groupBy === "source" ? (e.source_id || "—") : (e.speaker_name || e.speaker || "—");
+      const title = groupBy === "source" ? (e.source_title || t("at.no_source")) : (e.speaker ? speakerDisplay(e.speaker, e.speaker_name, t) : t("at.no_speaker"));
+      if (!out.has(key)) out.set(key, { key, title, items: [] });
+      out.get(key).items.push(a);
+    }
+    return [...out.values()];
+  });
+  const visible = $derived(groups.flatMap(g => g.items));
+  const inConflict = $derived(atoms.filter(a => a.conflicts.length).length);
   const manySources = $derived(new Set(atoms.flatMap(a => a.evidence.map(e => e.source_id))).size > 1);
   const readySources = $derived(app.sources.filter(s => s.status === "ready"));
   const statementOf = $derived(Object.fromEntries(atoms.map(a => [a.id, a.statement])));
@@ -129,17 +162,21 @@
     else for (const a of visible) checked.add(a.id);
   }
 
-  async function bulk(change) {
-    const targets = checkedVisible.filter(a => Object.entries(change).some(([k, v]) => a[k] !== v));
+  async function bulk(change, { skipConflicts = false } = {}) {
+    const pool = skipConflicts ? checkedVisible.filter(a => !a.conflicts.length) : checkedVisible;
+    const targets = pool.filter(a => Object.entries(change).some(([k, v]) => (a[k] ?? null) !== v));
     if (!targets.length) { checked.clear(); return; }
-    const before = targets.map(a => ({ id: a.id, status: a.status, type: a.type }));
+    const before = targets.map(a => ({ id: a.id, status: a.status, type: a.type, priority: a.priority || null,
+                                       reject_reason: a.reject_reason || null }));
     bulkBusy = true;
     try {
       const r = await bulkSend(targets.map(a => ({ id: a.id, ...change })));
       checked.clear();
       toast(t("at.bulk_done", { n: r.changed.length }), { action: t("at.undo"), ms: 10000, onAction: async () => {
         const undo = before.filter(b => r.changed.includes(b.id)).map(b => ({ id: b.id,
-          ...(change.status ? { status: b.status } : {}), ...(change.type ? { type: b.type } : {}) }));
+          ...(change.status ? { status: b.status } : {}), ...(change.type ? { type: b.type } : {}),
+          ...("priority" in change ? { priority: b.priority } : {}),
+          ...(change.status || "reject_reason" in change ? { reject_reason: b.reject_reason } : {}) }));
         await bulkSend(undo);
       } });
     } catch (err) {
@@ -210,6 +247,63 @@
     }
   }
 
+  async function setPriority(atom, priority) {
+    try { await patch(atom, { priority: priority || "" }); } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+  async function setReason(atom, reason) {
+    try { await patch(atom, { reject_reason: reason || "" }); } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
+  // ＋ Атом: the BA's own requirement (PM-16)
+  let adding = $state(null);
+  async function addAtom() {
+    try {
+      const r = await api(`/api/projects/${app.currentProjectId}/atoms`, { method: "POST", body: adding });
+      adding = null;
+      stats = r.stats;
+      await load();
+      select(r.id);
+      toast(t("at.added"));
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
+  // History of one atom (PM-23)
+  let historyFor = $state(null);
+  let history = $state([]);
+  async function showHistory(atom) {
+    if (historyFor === atom.id) { historyFor = null; return; }
+    historyFor = atom.id;
+    history = (await api(`/api/audit?entity=atom&entity_id=${atom.id}&limit=50`)).entries;
+  }
+  const histText = e => {
+    const a = e.after || {};
+    if (["accepted", "rejected", "pending"].includes(e.action)) return t("at.h." + e.action) + (a.bulk ? " · " + t("at.h.bulk") : "") + (a.reject_reason ? " · " + t("at.reason." + a.reject_reason) : "");
+    if (e.action === "edit") return t("at.h.edit") + (a.statement ? `: «${a.statement}»` : a.priority ? ": " + t("at.prio." + a.priority) : a.type ? ": " + t("at.type." + a.type) : "");
+    return t("at.h." + e.action) === "at.h." + e.action ? e.action : t("at.h." + e.action);
+  };
+
+  // Steer by review (bet 4.3): rules proposed from repeated decisions
+  let suggestions = $state([]);
+  let showRule = $state(null);
+  async function loadSuggestions() {
+    try { suggestions = (await api(`/api/projects/${app.currentProjectId}/suggestions?lang=${app.lang}`)).suggestions; }
+    catch (_) { suggestions = []; }
+  }
+  $effect(() => { app.currentProjectId; stats; loadSuggestions(); });
+  let dismissedRules = $state(new Set());
+  async function applyRule(sg) {
+    try {
+      const r = await api(`/api/projects/${app.currentProjectId}/suggestions/apply`, { method: "POST", body: { rule: sg.rule, lang: app.lang } });
+      dismissedRules = new Set([...dismissedRules, sg.id]);
+      toast(t("at.rule_added"), { action: t("nav.skills"), onAction: () => go(`/skills/${r.skill}`) });
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+  const shownSuggestions = $derived(suggestions.filter(s => !dismissedRules.has(s.id)));
+
+  // Re-extract with a one-off instruction (PM-32)
+  let refineFor = $state(null);
+  let refineNote = $state("");
+
   function onKey(e) {
     if (app.route.name !== "atoms" || e.target.closest("textarea, select, [contenteditable], input:not([type=checkbox])")) return;
     const onCheckbox = e.target.matches?.("input[type=checkbox]");     // shortcuts still work after ticking a box
@@ -229,6 +323,11 @@
     else if (e.key === "a" && atom) decide(atom, "accepted", { toggle: false });
     else if (e.key === "x" && atom) decide(atom, "rejected", { toggle: false });
     else if (e.key === "e" && atom) startEdit(atom);
+    else if (["1", "2", "3", "4", "0"].includes(e.key) && (checkedVisible.length || atom)) {
+      const p = { 1: "must", 2: "should", 3: "could", 4: "wont", 0: "" }[e.key];
+      if (checkedVisible.length) bulk({ priority: p || null });
+      else setPriority(atom, p);
+    }
     else if ((e.key === "Delete" || e.key === "Backspace") && (checkedVisible.length || atom))
       removeAtoms(checkedVisible.length ? checkedVisible : [atom]);
     else return;
@@ -246,9 +345,12 @@
   const statusPills = ["all", "pending", "accepted", "rejected"];
   const typePills = ["all", "functional", "nfr", "question"];
   const typeClass = { functional: "fr", nfr: "nfr", question: "q" };
+  const REASONS = ["not_requirement", "duplicate", "out_of_scope", "wrong", "other"];
+  const PRIOS = ["must", "should", "could", "wont"];
+  const openQuestions = $derived(atoms.filter(a => a.type === "question" && a.status !== "rejected" && a.q_state !== "answered").length);
 
-  let conflictsOpen = $state(readFilter("conflictsOpen", true));
-  $effect(() => { writePref("atoms.conflictsOpen", conflictsOpen); });
+  // Collapsed by default (PM-06): the list is the work; conflicts are one line until opened.
+  let conflictsOpen = $state(false);
   // The toast stack moves up while the bulk bar is visible.
   $effect(() => {
     document.body.classList.toggle("has-bulk", checkedVisible.length > 0);
@@ -267,12 +369,25 @@
         {#if stats && stats.total}{t("at.sub", stats)}{:else}{t("at.sub_empty")}{/if}
       </p>
     </div>
-    {#if stats && stats.accepted && stats.pending}
-      <div class="actions">
+    <div class="actions">
+      <button class="btn" onclick={() => { tab = "atoms"; adding = { type: "functional", statement: "", note: "" }; }}>
+        <Icon name="plus" size={14} /> {t("at.add")}</button>
+      {#if stats && stats.accepted && stats.pending}
         <button class="btn btn-primary" onclick={() => go("/document")}>{t("doc.build_cta")} <Icon name="arrow" size={14} /></button>
-      </div>
-    {/if}
+      {/if}
+    </div>
   </header>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected={tab === "atoms"} onclick={() => (tab = "atoms")}>{t("at.tab.atoms")}
+      {#if stats}<span class="n">{stats.total}</span>{/if}</button>
+    <button role="tab" aria-selected={tab === "open"} onclick={() => (tab = "open")}>{t("at.tab.open")}
+      {#if openQuestions}<span class="n">{openQuestions}</span>{/if}</button>
+  </div>
+
+  {#if tab === "open"}
+    <OpenItems {atoms} {conflicts} onChange={load} />
+  {:else}
 
   {#if error}<p class="note danger">{error}</p>{/if}
 
@@ -335,12 +450,54 @@
     </section>
   {/if}
 
-  {#if stats && stats.total && !stats.pending}
-    <div class="done-state row-done">
-      <Icon name="check" />
-      <span class="grow"><b>{t("at.done_title")}</b> · {t("at.done_meta", stats)}</span>
-      <button class="btn btn-primary" onclick={() => go("/document")}>{t("doc.build_cta")}</button>
+  {#each shownSuggestions as sg (sg.id)}
+    <div class="banner info rule">
+      <Icon name="bolt" />
+      <div class="grow">
+        <b>{sg.kind === "rewrite" ? t("at.sg.rewrite", { n: sg.count, old: sg.old, new: sg.new }) : t("at.sg.reject", { n: sg.count, reason: t("at.reason." + sg.reason) })}</b>
+        {#if showRule === sg.id}<pre class="rule-text">{sg.rule}</pre>{/if}
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick={() => (showRule = showRule === sg.id ? null : sg.id)}>{t("at.sg.show")}</button>
+      <button class="btn btn-sm" onclick={() => applyRule(sg)}>{t("at.sg.apply")}</button>
+      <button class="btn btn-sm btn-ghost icon-btn" aria-label={t("at.hide")} title={t("at.hide")}
+              onclick={() => (dismissedRules = new Set([...dismissedRules, sg.id]))}><Icon name="close" size={14} /></button>
     </div>
+  {/each}
+
+  {#if stats && stats.total && !stats.pending}
+    {#if stats.open_conflicts}
+      <div class="done-state warn row-done">
+        <Icon name="warn" />
+        <span class="grow"><b>{t("at.done_title")}</b> · {t("at.done_but_conflicts", { n: stats.open_conflicts })}</span>
+        <button class="btn btn-ghost" onclick={() => go("/document")}>{t("doc.build_cta")}</button>
+        <button class="btn btn-primary" onclick={() => (conflictsOpen = true)}>{t("at.resolve_conflicts")}</button>
+      </div>
+    {:else}
+      <div class="done-state row-done">
+        <Icon name="check" />
+        <span class="grow"><b>{t("at.done_title")}</b> · {t("at.done_meta", stats)}</span>
+        <button class="btn btn-primary" onclick={() => go("/document")}>{t("doc.build_cta")}</button>
+      </div>
+    {/if}
+  {/if}
+
+  {#if adding}
+    <section class="card add-card">
+      <div class="seg" role="group" aria-label={t("at.bulk_type")}>
+        {#each ["functional", "nfr", "question"] as ty (ty)}
+          <button aria-pressed={adding.type === ty} onclick={() => (adding.type = ty)}>{t("at.type." + ty)}</button>
+        {/each}
+      </div>
+      <!-- svelte-ignore a11y_autofocus -->
+      <textarea class="input" rows="2" bind:value={adding.statement} autofocus placeholder={t("at.add_ph")} aria-label={t("at.add_ph")}
+                onkeydown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); adding.statement.trim() && addAtom(); } if (e.key === "Escape") adding = null; }}></textarea>
+      <input class="input" bind:value={adding.note} placeholder={t("at.add_note")} aria-label={t("at.add_note")} />
+      <div class="actions">
+        <span class="hint">{t("at.add_hint")}</span><span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" onclick={() => (adding = null)}>{t("at.cancel")}</button>
+        <button class="btn btn-sm btn-primary" disabled={!adding.statement.trim()} onclick={addAtom}>{t("at.save")}</button>
+      </div>
+    </section>
   {/if}
 
   {#if atoms.length}
@@ -366,7 +523,21 @@
           </button>
         {/each}
       </div>
+      {#if inConflict}
+        <button class="chip danger-chip" aria-pressed={conflictOnly} onclick={() => (conflictOnly = !conflictOnly)}>
+          <Icon name="warn" size={12} /> {t("at.f.conflicts")}<span class="n">{inConflict}</span></button>
+      {/if}
       <span class="spacer"></span>
+      <label class="search">
+        <Icon name="search" size={14} />
+        <input class="input" type="search" bind:value={search} placeholder={t("at.search")} aria-label={t("at.search")}
+               onkeydown={e => e.key === "Escape" && (search = "")} />
+      </label>
+      <select class="select group-select" bind:value={groupBy} aria-label={t("at.group")}>
+        <option value="none">{t("at.group.none")}</option>
+        <option value="source">{t("at.group.source")}</option>
+        <option value="speaker">{t("at.group.speaker")}</option>
+      </select>
       {#if sourcesWithAtoms.length > 1 || sourceFilter}
         <select class="select src-select" aria-label={t("at.sources")} value={sourceFilter || ""}
                 onchange={e => go(e.currentTarget.value ? `/atoms/source/${e.currentTarget.value}` : "/atoms")}>
@@ -389,7 +560,9 @@
       <p class="empty">{t("at.none_filtered")}</p>
     {:else}
       <ul class="atoms">
-        {#each visible as atom (atom.id)}
+        {#each groups as g (g.key)}
+        {#if g.title}<li class="group-h"><b>{g.title}</b><span class="t3 num">{g.items.length}</span></li>{/if}
+        {#each g.items as atom (atom.id)}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
           <li class="atom" id="atom-{atom.id}" class:sel={atom.id === selectedId} class:rejected={atom.status === "rejected"}
               class:accepted={atom.status === "accepted"} class:checked={checked.has(atom.id)} onclick={() => select(atom.id, false)}>
@@ -426,11 +599,39 @@
                 <p class="conf-line"><Icon name="warn" size={12} /> {t("at.conflict_with", { text: c.description })}
                   {#if statementOf[c.other]}<span class="t3"> — {statementOf[c.other]}</span>{/if}</p>
               {/each}
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <div class="facets" onclick={e => e.stopPropagation()}>
+                {#if atom.origin === "ba"}<span class="tag outline">{t("at.ba_origin")}</span>{/if}
+                {#if atom.type === "question" && atom.q_state}<span class="tag {atom.q_state === 'answered' ? 'ok' : 'warn'}">{t("oi.st." + atom.q_state)}</span>{/if}
+                <label class="facet" title={t("at.prio_hint")}>
+                  <span class="sr">{t("at.priority")}</span>
+                  <select class="mini" class:set={atom.priority} value={atom.priority || ""} onchange={e => setPriority(atom, e.currentTarget.value)}>
+                    <option value="">{t("at.priority")}…</option>
+                    {#each PRIOS as p (p)}<option value={p}>{t("at.prio." + p)}</option>{/each}
+                  </select>
+                </label>
+                {#if atom.status === "rejected"}
+                  <label class="facet">
+                    <span class="sr">{t("at.reason")}</span>
+                    <select class="mini" class:set={atom.reject_reason} value={atom.reject_reason || ""} onchange={e => setReason(atom, e.currentTarget.value)}>
+                      <option value="">{t("at.reason")}…</option>
+                      {#each REASONS as r (r)}<option value={r}>{t("at.reason." + r)}</option>{/each}
+                    </select>
+                  </label>
+                {/if}
+              </div>
+              {#if historyFor === atom.id}
+                <ol class="hist">
+                  {#each history as h, i (i)}<li><span class="t3 num">{new Date(h.at * 1000).toLocaleString(app.lang)}</span> {histText(h)}</li>{/each}
+                </ol>
+              {/if}
             </div>
             <div class="side">
               {#if atom.status === "accepted"}<span class="state ok"><Icon name="check" size={12} /> {t("at.status.accepted")}</span>
               {:else if atom.status === "rejected"}<span class="state"><Icon name="close" size={12} /> {t("at.status.rejected")}</span>{/if}
               <div class="acts">
+                <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.history")} title={t("at.history")}
+                        onclick={e => { e.stopPropagation(); showHistory(atom); }}><Icon name="clock" size={14} /></button>
                 <button class="btn btn-ghost btn-sm icon-btn" class:on-ok={atom.status === "accepted"} aria-label={t("at.accept")}
                         title="{t('at.accept')} · A" aria-pressed={atom.status === "accepted"}
                         onclick={e => { e.stopPropagation(); decide(atom, "accepted"); }}><Icon name="check" size={14} /></button>
@@ -444,6 +645,7 @@
               </div>
             </div>
           </li>
+        {/each}
         {/each}
       </ul>
     {/if}
@@ -462,11 +664,29 @@
       <b class="count num">{t("at.selected", { n: checkedVisible.length })}</b>
       {#if checkedInConflict}<span class="conf">{t("at.bulk_conflicts", { n: checkedInConflict })}</span>{/if}
       <span class="vsep"></span>
-      <button class="btn btn-sm accept" disabled={bulkBusy} onclick={() => bulk({ status: "accepted" })}>
-        <Icon name="check" size={14} /> {t("at.accept")} <span class="kbd">A</span></button>
+      {#if checkedInConflict && checkedInConflict < checkedVisible.length}
+        <button class="btn btn-sm accept" disabled={bulkBusy} onclick={() => bulk({ status: "accepted" }, { skipConflicts: true })}
+                title={t("at.bulk_skip_hint")}>
+          <Icon name="check" size={14} /> {t("at.accept")} {checkedVisible.length - checkedInConflict} <span class="kbd">A</span></button>
+        <button class="btn btn-sm" disabled={bulkBusy} onclick={() => bulk({ status: "accepted" })}>{t("at.bulk_with_conflicts", { n: checkedInConflict })}</button>
+      {:else}
+        <button class="btn btn-sm accept" disabled={bulkBusy} onclick={() => bulk({ status: "accepted" })}>
+          <Icon name="check" size={14} /> {t("at.accept")} <span class="kbd">A</span></button>
+      {/if}
       <button class="btn btn-sm" disabled={bulkBusy} onclick={() => bulk({ status: "rejected" })}>
         <Icon name="close" size={14} /> {t("at.reject")} <span class="kbd">X</span></button>
       <button class="btn btn-sm" disabled={bulkBusy} onclick={() => bulk({ status: "pending" })}>{t("at.bulk_pending")}</button>
+      <select class="select reason-select" disabled={bulkBusy} aria-label={t("at.bulk_reason")} value=""
+              onchange={e => { const v = e.currentTarget.value; e.currentTarget.value = ""; if (v) bulk({ status: "rejected", reject_reason: v }); }}>
+        <option value="" disabled>{t("at.bulk_reason")}</option>
+        {#each REASONS as r (r)}<option value={r}>{t("at.reason." + r)}</option>{/each}
+      </select>
+      <select class="select prio-select" disabled={bulkBusy} aria-label={t("at.priority")} value=""
+              onchange={e => { const v = e.currentTarget.value; e.currentTarget.value = ""; bulk({ priority: v === "none" ? null : v }); }}>
+        <option value="" disabled>{t("at.priority")}…</option>
+        {#each PRIOS as p (p)}<option value={p}>{t("at.prio." + p)}</option>{/each}
+        <option value="none">{t("at.prio.none")}</option>
+      </select>
       <select class="select type-select" disabled={bulkBusy} aria-label={t("at.bulk_type")} value=""
               onchange={e => { const v = e.currentTarget.value; e.currentTarget.value = ""; if (v) bulk({ type: v }); }}>
         <option value="" disabled>{t("at.bulk_type")}</option>
@@ -478,6 +698,8 @@
       <button class="btn btn-sm icon-btn" aria-label={t("at.bulk_clear")} title="{t('at.bulk_clear')} · Esc"
               onclick={() => checked.clear()}><Icon name="close" size={14} /></button>
     </div>
+  {/if}
+
   {/if}
 
   <div class="stack sources-block">
@@ -498,10 +720,20 @@
               {#if app.extracting[s.id]}
                 <span class="status run"><span class="spinner"></span>{app.extracting[s.id].message}</span>
               {:else}
+                <button class="btn btn-sm btn-ghost" onclick={() => { refineFor = refineFor === s.id ? null : s.id; refineNote = ""; }}
+                        title={t("ai.refine_hint")}>{t("ai.refine")}</button>
                 <button class="btn btn-sm" class:btn-primary={!s.atom_count}
                         title={s.atom_count ? t("at.reextract_hint") : ""} onclick={() => extractAtoms(s.id)}>
                   {s.atom_count ? t("at.reextract") : t("at.extract")}
                 </button>
+              {/if}
+              {#if refineFor === s.id}
+                <div class="refine">
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <textarea class="input" rows="2" bind:value={refineNote} autofocus placeholder={t("ai.refine_ph.extract")} aria-label={t("ai.refine")}></textarea>
+                  <button class="btn btn-sm btn-primary" disabled={!refineNote.trim()}
+                          onclick={() => { extractAtoms(s.id, refineNote); refineFor = null; }}>{t("ai.refine_run")}</button>
+                </div>
               {/if}
             </li>
           {/each}
@@ -607,6 +839,38 @@
   @media (max-width: 720px) { .bulkbar { left: 50%; max-width: calc(100vw - 32px); } }
 
   .sources-block { margin-top: var(--sp-8); }
+  .tabs { display: flex; gap: var(--sp-7); border-bottom: 1px solid var(--line); margin: calc(-1 * var(--sp-2)) 0 var(--sp-6); }
+  .tabs button { border: 0; background: transparent; padding: 8px 0; font-weight: 500; color: var(--text-2); border-bottom: 2px solid transparent;
+    margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .tabs .n { color: var(--text-3); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
+  .rule { margin-bottom: var(--sp-5); align-items: center; }
+  .rule-text { white-space: pre-wrap; font: 12px/18px var(--mono); margin: var(--sp-3) 0 0; color: var(--text); }
+  .done-state.warn { background: var(--warn-bg); color: var(--warn); }
+  .add-card { padding: var(--sp-5) var(--sp-6); margin-bottom: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); }
+  .add-card textarea { height: auto; resize: vertical; font-size: var(--fs-14); }
+  .search { position: relative; display: flex; align-items: center; color: var(--text-3); }
+  .search :global(.icon) { position: absolute; left: 8px; pointer-events: none; }
+  .search .input { padding-left: 28px; width: 200px; background: var(--surface-2); border-color: transparent; }
+  .search .input:focus { background: var(--surface); }
+  .group-select { width: auto; }
+  .danger-chip[aria-pressed="false"] .n { color: var(--danger); font-weight: 600; }
+  .group-h { display: flex; align-items: baseline; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); background: var(--surface-2);
+    border-bottom: 1px solid var(--line); font-size: var(--fs-12); position: sticky; top: var(--toolbar); z-index: 1; }
+  .group-h b { font-weight: 600; }
+  .facets { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: 6px; align-items: center; }
+  .facet { display: inline-flex; }
+  .mini { height: 20px; border: 0; background: transparent; color: var(--text-3); font: 500 var(--fs-11) var(--font); padding: 0 2px;
+    border-radius: var(--r-xs); cursor: pointer; }
+  .mini:hover { background: var(--surface-2); color: var(--text-2); }
+  .mini.set { background: var(--accent-bg); color: var(--accent); }
+  .atom:not(:hover):not(.sel) .mini:not(.set) { opacity: 0; }
+  @media (hover: none) { .atom .mini { opacity: 1 !important; } }
+  .hist { margin: var(--sp-4) 0 0; padding: var(--sp-4) var(--sp-5) var(--sp-4) 28px; background: var(--surface-2); border-radius: var(--r-sm);
+    font-size: var(--fs-12); line-height: 18px; }
+  .refine { flex-basis: 100%; display: flex; gap: var(--sp-4); align-items: flex-start; }
+  .refine textarea { flex: 1; height: auto; }
   .sources { list-style: none; margin: 0; padding: 0; }
   .src { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-4); padding: var(--sp-4) 0; border-top: 1px solid var(--line); }
   .src:first-child { border-top: 0; }

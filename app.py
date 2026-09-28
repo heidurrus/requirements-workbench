@@ -2045,7 +2045,17 @@ def _run_try(job_id, stage, skill, project_id, source_id, prefs, api_key):
             found, dropped, _, skipped = atoms_mod.extract_candidates(
                 library, source_id, prefs, api_key, OLLAMA_URL, skillset,
                 progress=lambda d, t, m: report(int(100 * d / max(t, 1)), m))
-            jobs.finish(job_id, {"kind": "atoms", "atoms": found, "dropped": dropped, "skipped": skipped})
+            # PM-33: show the effect, not just the output: what this draft adds or loses vs. the atoms now in place.
+            norm = atoms_mod.normalize
+            current = [a for a in library.list_atoms(library.get_source(source_id)["project_id"], source_id=source_id)
+                       if a["status"] != "rejected"]
+            have = {norm(a["statement"]) for a in current}
+            got = {norm(a["statement"]) for a in found}
+            compare = {"new": [a["statement"] for a in found if norm(a["statement"]) not in have],
+                       "missing": [a["statement"] for a in current if norm(a["statement"]) not in got],
+                       "same": len(have & got), "current": len(current)}
+            jobs.finish(job_id, {"kind": "atoms", "atoms": found, "dropped": dropped, "skipped": skipped,
+                                 "compare": compare})
         elif stage in ("frd", "quality"):
             out = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode="full", progress=report,
                             skillset=skillset, save=False)
