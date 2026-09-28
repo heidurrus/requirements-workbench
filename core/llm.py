@@ -12,6 +12,8 @@ from contextlib import contextmanager
 
 import anthropic
 
+from core import local_llm
+
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MODELS_WITH_DEFAULT_FALLBACKS = {"claude-opus-5"}
 CLAUDE_MAX_TOKENS = 32000
@@ -57,7 +59,35 @@ def claude_errors(model):
 
 
 def model_name(prefs):
+    if prefs["llm_provider"] == "local":
+        return local_label(prefs)
     return prefs["ollama_model"] if prefs["llm_provider"] == "ollama" else prefs["claude_model"]
+
+
+def local_label(prefs):
+    m = local_llm.MODELS_BY_ID.get(_local_model(prefs))
+    return m.label if m else "local model"
+
+
+def _local_model(prefs):
+    try:
+        return local_llm.resolve_model(prefs.get("local_model"))
+    except local_llm.LocalModelError:
+        return prefs.get("local_model") or None
+
+
+def for_project(prefs, project):
+    """A "Local only" project never uses the cloud: the built-in model, or Ollama if that's the choice."""
+    if project and project["local_only"] and prefs["llm_provider"] == "claude":
+        return {**prefs, "llm_provider": "local"}
+    return prefs
+
+
+def local_model_id(prefs):
+    try:
+        return local_llm.resolve_model(prefs.get("local_model"))
+    except local_llm.LocalModelError as e:
+        raise LLMError(str(e))
 
 
 # ── structured JSON ──────────────────────────────────────────────────────────
@@ -107,8 +137,31 @@ def _ollama_json(system, user, schema, model, url, opener=urllib.request.urlopen
         raise LLMError("The local model returned malformed JSON; try again or use a larger model.")
 
 
+def _local_json(system, user, schema, model_id, opener=None):
+    body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0, "stream": False,
+            # Constrained decoding: the server can only produce JSON matching the schema.
+            "response_format": {"type": "json_schema", "json_schema": {"name": "result", "strict": True, "schema": schema}}}
+    kwargs = {"opener": opener} if opener else {}
+    try:
+        with local_llm.chat(model_id, body, **kwargs) as resp:
+            reply = json.loads(resp.read())
+    except local_llm.LocalModelError as e:
+        raise LLMError(str(e))
+    choice = (reply.get("choices") or [{}])[0]
+    if choice.get("finish_reason") == "length":
+        raise LLMError("The local model's answer was cut off; try a shorter source.")
+    content = re.sub(r"<think>.*?</think>", "", (choice.get("message") or {}).get("content") or "", flags=re.S)
+    try:
+        return json.loads(content)
+    except ValueError:
+        raise LLMError("The local model returned malformed JSON; try again.")
+
+
 def complete_json(system, user, schema, prefs, api_key, ollama_url, claude_client=None, opener=None):
     """One structured call with the provider chosen in Settings; returns the parsed JSON."""
+    if prefs["llm_provider"] == "local":
+        return _local_json(system, user, schema, local_model_id(prefs), opener=opener)
     if prefs["llm_provider"] == "ollama":
         kwargs = {"opener": opener} if opener else {}
         return _ollama_json(system, user, schema, prefs["ollama_model"], ollama_url, **kwargs)

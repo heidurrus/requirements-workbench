@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.5.0 (2026-09-28): Built-in local model
+
+- **A local AI model with one click, with nothing else to install.** Settings → AI → **Built-in**:
+  press **Download** and the app fetches the model and its engine itself, with progress. It
+  resumes if the connection drops and checks both files by checksum. From then on,
+  summaries and requirement extraction can run on your computer, offline, and nothing
+  leaves it.
+- The app picks the model that fits your computer: **Gemma 4 12B** (6.5 GB, 16 GB of memory
+  or more) or **Qwen3.5 4B** (2.6 GB, from 8 GB of memory).
+- The model starts by itself when needed, runs on the Apple GPU or on any Windows GPU (with
+  a CPU fallback), and stops after 15 minutes of idleness and when you quit, freeing the
+  memory. It listens only on this computer, behind a private key.
+- **"Local only" projects** now use the built-in model, with nothing to set up. If it isn't
+  downloaded yet, the app tells you where to get it and never falls back to the cloud.
+- Ollama stays available as a third option for those who already use it.
+- The rail shows the app version. A long summary scrolls on its own. Recording has a big
+  record button, and the record and upload cards line up.
+
 ## 2.4.0 (2026-09-25): Increment 2, requirement atoms
 
 - **Extract requirements from any source.** On a transcript, email or document, click

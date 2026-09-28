@@ -6,7 +6,7 @@ from core.llm import LLMError
 from core.store import Store, StoreError
 from tests.test_recorder import wait_for
 
-PREFS = {"llm_provider": "claude", "claude_model": "claude-opus-5", "ollama_model": "qwen3:8b"}
+PREFS = {"llm_provider": "claude", "claude_model": "claude-opus-5", "ollama_model": "qwen3:8b", "local_model": ""}
 
 CALL = {"diarized": True, "segments": [
     {"speaker": "SPEAKER_00", "start": 0.0, "end": 4.0, "text": "Добрый день, начнём."},
@@ -140,7 +140,7 @@ def test_local_only_project_uses_the_local_model(store):
     sid = make_source(store, project=p["id"])
     llm = fake_llm({"atoms": []})
     r = extract_atoms(store, sid, PREFS, "k", "u", complete=llm)
-    assert llm.calls[0]["prefs"]["llm_provider"] == "ollama" and r["model"] == "qwen3:8b"
+    assert llm.calls[0]["prefs"]["llm_provider"] == "local" and r["provider"] == "local"
 
 
 def test_failed_dedup_keeps_the_atoms(store):

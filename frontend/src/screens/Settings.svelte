@@ -1,5 +1,6 @@
 <script>
   import Block from "../components/Block.svelte";
+  import LocalModel from "../components/LocalModel.svelte";
   import { api } from "../lib/api.js";
   import { LANGS } from "../lib/i18n.js";
   import { app, t, setLang, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
@@ -96,14 +97,17 @@
     {/if}
 
     {#if s}
-      <Block id="set-ai" title={t("set.ai")} meta={s.llm_provider === "ollama" ? s.ollama_model : s.claude_model}>
+      <Block id="set-ai" title={t("set.ai")}
+             meta={s.llm_provider === "ollama" ? s.ollama_model : s.llm_provider === "local" ? t("set.provider.local") : s.claude_model}>
         <div class="stack-sm">
           <div class="field">
-            <label class="label" for="provider">{t("set.provider")}</label>
-            <select class="select" id="provider" value={s.llm_provider} onchange={e => save({ llm_provider: e.currentTarget.value })}>
-              <option value="claude">{t("set.provider.claude")}</option>
-              <option value="ollama">{t("set.provider.ollama")}</option>
-            </select>
+            <span class="label">{t("set.provider")}</span>
+            <div class="seg provider" role="group" aria-label={t("set.provider")}>
+              {#each ["claude", "local", "ollama"] as p (p)}
+                <button aria-pressed={s.llm_provider === p} onclick={() => save({ llm_provider: p })}>{t("set.provider." + p)}</button>
+              {/each}
+            </div>
+            <span class="hint">{t("set.provider_hint." + s.llm_provider)}</span>
           </div>
           {#if s.llm_provider === "claude"}
             <div class="field">
@@ -124,6 +128,13 @@
               </select>
             </div>
             <p class="note">{t("set.claude_note")}</p>
+            <div class="field sub">
+              <span class="label">{t("llm.for_local_only")}</span>
+              <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} />
+            </div>
+          {:else if s.llm_provider === "local"}
+            <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} />
+            <p class="note">{t("llm.quality_note")}</p>
           {:else}
             <div class="field">
               <label class="label" for="omodel">{t("set.ollama_model")}</label>
@@ -181,6 +192,10 @@
 </div>
 
 <style>
+  .provider { display: flex; width: 100%; }
+  .provider button { flex: 1; padding: 0 var(--s-2); }
+  .sub { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--rule); gap: var(--s-2); }
+
   .narrow { width: min(720px, 100%); }
   .ok { color: var(--ok); }
   .bad { color: var(--danger); }

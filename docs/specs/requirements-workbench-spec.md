@@ -178,8 +178,8 @@ Priority: Must
 **FR-PRJ-05 [CONF] Per-project "Local only" mode**
 As a BA, I want to mark a project as local only, so that an NDA client's text never reaches a cloud LLM.
 Source: D-02.
-- AC1 Given "Local only" is on When any LLM stage runs Then it uses the local (Ollama) model, and the stage's cloud model from Settings is shown as overridden.
-- AC2 (negative) Given "Local only" is on and Ollama is not running When a stage starts Then the job is blocked with "Ollama не запущена" (Ollama not running). It never falls back to the cloud.
+- AC1 Given "Local only" is on When any LLM stage runs Then it uses the built-in local model (or Ollama, if that is the chosen provider), never the cloud (D-19).
+- AC2 (negative) Given "Local only" is on and the built-in model isn't downloaded When a stage starts Then the job is blocked with a message that links to Settings → AI. It never falls back to the cloud.
 - AC3 The mode is shown on the project label in the rail, and switching it off needs a confirmation.
 - AC4 Jira export stays available (it is the BA's own Jira, not an LLM).
 Priority: Must
@@ -1024,6 +1024,7 @@ Full brief: `docs/requirements/requirements-workbench-brief.md`.
 | D-15 | Keep the baseline mic selector, CPU/GPU toggle, recording download, transcript copy/export | Q-23 | FR-SRC-01a/01b/05a, FR-TR-07 |
 | D-16 | Desktop app (native window) on **both macOS and Windows** with full feature parity; browser mode optional | Q-01 (macOS part) | FR-PLAT-01/02/03/06, NFR-COMPAT-01, gaps #25–26 |
 | D-17 | **All dependencies installed automatically**: embedded runtime in the installer, first-run Setup screen, startup check, optional parts on demand | — | FR-PLAT-04/05, NFR-COMPAT-03/04, NFR-SEC-06, §12.4 |
+| D-19 | **Built-in local model** replaces "install Ollama" as the default local option (PO, 2026-09-28): one-click download of a pinned llama.cpp `llama-server` build and a GGUF model chosen by RAM (Gemma 4 12B ≥ 16 GB, Qwen3.5 4B ≥ 8 GB), both SHA-256 verified, resumable. The app runs it as a child process on 127.0.0.1 with a random API key, stops it after 15 min idle and at exit, and cleans up after a crash. "Local only" projects use it; Ollama remains an option. Shipped in 2.5.0 (`core/local_llm.py`) | — | FR-PRJ-05, FR-SET-02, D-02, D-17 |
 
 ## Appendix A. Traceability matrix
 | Screen / element | Requirement IDs |

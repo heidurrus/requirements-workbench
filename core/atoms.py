@@ -9,7 +9,7 @@ existing ones to fold duplicates in and flag contradictions (BR-03, D-06).
 import re
 import unicodedata
 
-from core.llm import LLMError, complete_json
+from core.llm import LLMError, complete_json, for_project, model_name
 from core.transcripts import format_time
 
 CHUNK_CHARS = 12000
@@ -160,9 +160,8 @@ def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, c
     segments, _ = store.transcript(source_id)
     if not segments:
         raise LLMError("This source has no text yet.")
-    if project["local_only"]:
-        prefs = {**prefs, "llm_provider": "ollama"}           # FR-PRJ-05: nothing leaves the machine
-    model = prefs["ollama_model"] if prefs["llm_provider"] == "ollama" else prefs["claude_model"]
+    prefs = for_project(prefs, project)                        # FR-PRJ-05: nothing leaves the machine
+    model = model_name(prefs)
     report = progress or (lambda done, total, message: None)
 
     chunks = chunk_segments(segments)

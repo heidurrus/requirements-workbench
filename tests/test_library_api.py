@@ -83,13 +83,25 @@ def test_local_only_project_never_uses_the_cloud(client, app_module, lib, monkey
     sid = import_vtt(client)["source_id"]
     seen = {}
     monkeypatch.setattr(app_module.settings, "load_settings",
-                        lambda: {"llm_provider": "claude", "claude_model": "claude-opus-5", "ollama_model": "qwen3:8b"})
+                        lambda: {"llm_provider": "claude", "claude_model": "claude-opus-5", "ollama_model": "qwen3:8b",
+                                 "local_model": ""})
     monkeypatch.setattr(app_module, "summarize", lambda text, prefs, key, url, on_delta, title=None:
                         seen.update(provider=prefs["llm_provider"]) or "ok")
+    monkeypatch.setattr(app_module.local_llm, "ready", lambda: False)
+    r = client.post("/summarize", json={"source_id": sid})
+    assert r.status_code == 400 and r.get_json()["needs_setup"] and "Local only" in r.get_json()["error"]
+
+    monkeypatch.setattr(app_module.local_llm, "ready", lambda: True)
     job = client.post("/summarize", json={"source_id": sid}).get_json()["job_id"]   # no Anthropic key needed
     assert wait_for(lambda: client.get(f"/job/{job}").get_json()["status"] == "done")
-    assert seen["provider"] == "ollama"
-    assert client.get(f"/job/{job}").get_json()["result"]["provider"] == "ollama"
+    assert seen["provider"] == "local"
+    assert client.get(f"/job/{job}").get_json()["result"]["provider"] == "local"
+
+
+def test_local_only_project_keeps_ollama_if_chosen(app_module):
+    prefs = {"llm_provider": "ollama", "claude_model": "claude-opus-5", "ollama_model": "qwen3:8b", "local_model": ""}
+    assert app_module.for_project(prefs, {"local_only": True})["llm_provider"] == "ollama"
+    assert app_module.for_project({**prefs, "llm_provider": "claude"}, {"local_only": False})["llm_provider"] == "claude"
 
 
 def test_rename_delete_restore_source(client, lib):

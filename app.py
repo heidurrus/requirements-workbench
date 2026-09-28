@@ -22,6 +22,8 @@ from core.ffmpeg import ensure_ffmpeg_on_path
 from core import macos_audio, settings
 from core.summarize import SummaryError, summarize
 from core.atoms import extract_atoms
+from core import local_llm
+from core.llm import for_project, model_name
 from core.jobs import JobStore, SerialQueue
 from core.paths import models_dir, recordings_dir, use_app_model_cache
 from core.macos_permissions import microphone_access
@@ -45,6 +47,7 @@ OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 app = Flask(__name__, static_folder="static")
 install_local_only_guard(app)
+local_llm.cleanup_stale()          # a model server left over from a crash would hold gigabytes of memory
 
 CUDA_AVAILABLE = torch.cuda.is_available()
 GPU_NAME = torch.cuda.get_device_name(0) if CUDA_AVAILABLE else None
@@ -555,6 +558,22 @@ def health():
     })
 
 
+def _ai_prefs(project):
+    """Settings for an AI call in this project, or an error response telling the user what to set up."""
+    # "Local only" project: nothing may go to a cloud model (spec FR-PRJ-05, D-02).
+    prefs = for_project(settings.load_settings(), project)
+    api_key = settings.secret("ANTHROPIC_API_KEY")
+    problem = None
+    if prefs["llm_provider"] == "claude" and not api_key:
+        problem = "Add your Anthropic API key in Settings, or download the local model."
+    elif prefs["llm_provider"] == "local" and not local_llm.ready():
+        problem = ("This project is “Local only”: download the local model in Settings → AI first."
+                   if project and project["local_only"] else "Download the local model in Settings → AI first.")
+    if problem:
+        return prefs, api_key, (jsonify({"error": problem, "needs_setup": True}), 400)
+    return prefs, api_key, None
+
+
 def _settings_payload():
     prefs = settings.load_settings()
     return {
@@ -563,6 +582,7 @@ def _settings_payload():
         "llm_provider": prefs["llm_provider"],
         "claude_model": prefs["claude_model"],
         "ollama_model": prefs["ollama_model"],
+        "local_model": prefs["local_model"],
         "claude_models": [{"id": m, "label": label} for m, label in settings.CLAUDE_MODELS],
     }
 
@@ -577,7 +597,7 @@ def save_settings():
     """Update only the fields present: hf_token, anthropic_api_key, llm_provider, claude_model, ollama_model."""
     global hf_token, _diarization_pipeline
     data = request.get_json(silent=True) or {}
-    prefs = {k: data[k] for k in ("llm_provider", "claude_model", "ollama_model") if k in data}
+    prefs = {k: data[k] for k in ("llm_provider", "claude_model", "ollama_model", "local_model") if k in data}
     try:
         if prefs:
             settings.save_settings(prefs)
@@ -596,6 +616,36 @@ def save_settings():
     return jsonify({"ok": True, **_settings_payload()})
 
 
+@app.route("/api/local-llm")
+def api_local_llm():
+    return jsonify(local_llm.status())
+
+
+@app.route("/api/local-llm/download", methods=["POST"])
+def api_local_llm_download():
+    model_id = (request.get_json(silent=True) or {}).get("model") or local_llm.recommended_model_id()
+    try:
+        local_llm.installer.start(model_id)
+    except local_llm.LocalModelError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(local_llm.status())
+
+
+@app.route("/api/local-llm/cancel", methods=["POST"])
+def api_local_llm_cancel():
+    local_llm.installer.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/local-llm/models/<model_id>", methods=["DELETE"])
+def api_local_llm_delete(model_id):
+    try:
+        local_llm.delete_model(model_id)
+    except local_llm.LocalModelError as e:
+        return jsonify({"error": str(e)}), 404
+    return jsonify(local_llm.status())
+
+
 @app.route("/ollama/status")
 def ollama_status():
     return jsonify({"reachable": ollama_reachable()})
@@ -610,7 +660,7 @@ def _run_summary(job_id, text, title, prefs, api_key, source_id=None):
     except Exception as e:  # unexpected: keep the message, don't crash the worker
         jobs.fail(job_id, f"Summary failed: {e}")
     else:
-        model = prefs["ollama_model"] if prefs["llm_provider"] == "ollama" else prefs["claude_model"]
+        model = model_name(prefs)
         if source_id:
             library.add_summary(source_id, prefs["llm_provider"], model, result)
         jobs.finish(job_id, {"summary": result, "provider": prefs["llm_provider"], "model": model,
@@ -637,14 +687,9 @@ def summarize_route():
         text = (data.get("text") or "").strip()
     if not text:
         return jsonify({"error": "There is no transcript text to summarise."}), 400
-    prefs = settings.load_settings()
-    if project and project["local_only"]:
-        # "Local only" project: nothing may go to a cloud model (spec FR-PRJ-05, D-02).
-        prefs = {**prefs, "llm_provider": "ollama"}
-    api_key = settings.secret("ANTHROPIC_API_KEY")
-    if prefs["llm_provider"] == "claude" and not api_key:
-        return jsonify({"error": "Add your Anthropic API key in Settings, or choose a local model.",
-                        "needs_setup": True}), 400
+    prefs, api_key, problem = _ai_prefs(project)
+    if problem:
+        return problem
     job_id = jobs.create()
     jobs.set_progress(job_id, 0, "Writing summary…")
     threading.Thread(target=_run_summary, args=(job_id, text, title, prefs, api_key, source_id),
@@ -912,13 +957,9 @@ def api_extract_atoms(source_id):
     running = _extracting.get(source_id)
     if running and (jobs.get(running) or {}).get("status") == "processing":
         return jsonify({"job_id": running, "source_id": source_id})
-    prefs = settings.load_settings()
-    if library.get_project(source["project_id"])["local_only"]:
-        prefs = {**prefs, "llm_provider": "ollama"}
-    api_key = settings.secret("ANTHROPIC_API_KEY")
-    if prefs["llm_provider"] == "claude" and not api_key:
-        return jsonify({"error": "Add your Anthropic API key in Settings, or choose a local model.",
-                        "needs_setup": True}), 400
+    prefs, api_key, problem = _ai_prefs(library.get_project(source["project_id"]))
+    if problem:
+        return problem
     job_id = jobs.create()
     _extracting[source_id] = job_id
     jobs.set_progress(job_id, 0, "Reading the source…")
