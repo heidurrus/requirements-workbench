@@ -151,11 +151,12 @@ def test_frd_skill_controls_sections_and_extra_ai_sections(store):
     sections = [{"key": "questions", "title": "Сначала вопросы"}] + [x for x in s.meta["sections"] if x["key"] != "questions"]
     sections.append({"key": "glossary", "title": "Глоссарий", "instructions": "Термины из требований с определениями."})
     skills.save(s.name, settings={"sections": sections}, instructions="Пиши коротко. Язык: {language}.")
-    reply = dict(full_reply(), extra=[{"key": "glossary", "text": "Карточка — экран клиента."}])
+    reply = dict(full_reply(), extra=[{"key": "Глоссарий", "text": "Карточка — экран клиента."}])   # title as key
     fake = llm(reply)
     frd.build(store, pid, PREFS, "k", "", complete=fake, skillset=skills.resolve({"frd": s.name}))
     system = fake.calls[0]["system"]
     assert system.startswith("Пиши коротко. Язык: Russian.") and "glossary (“Глоссарий”)" in system
+    assert fake.calls[0]["schema"]["properties"]["extra"]["items"]["properties"]["key"]["enum"] == ["glossary"]
     v = store.version(store.document(pid)["id"])
     assert [x["title"] for x in v["content"]["sections"]][0] == "Сначала вопросы"
     assert v["content"]["sections"][-1]["blocks"][0]["text"] == "Карточка — экран клиента."

@@ -16,6 +16,8 @@
   let editAtom = $state(null);           // {atom_id, text}
   let freeDraft = $state(null);          // {section, id?, text}
   let fixes = $state({});                // `${atom_id}:${rule}` → {loading, statement}
+  let exportSkills = $state([]);
+  $effect(() => { api("/api/skills").then(b => (exportSkills = b.skills.filter(s => s.stage === "export" && !s.error))).catch(() => {}); });
 
   async function load() {
     const pid = app.currentProjectId;
@@ -195,10 +197,10 @@
                   title={body.stale?.stale ? "" : t("doc.up_to_date")} onclick={() => runBuild("changed")}>{t("doc.rebuild")}</button>
           <button class="btn btn-ghost" disabled={!!build} onclick={() => runBuild("full")} title={t("doc.full_hint")}>{t("doc.full")}</button>
           <div class="export">
-            <div class="seg" role="group" aria-label={t("doc.template")}>
-              <button aria-pressed={doc.template === "neutral"} onclick={() => patchDoc({ template: "neutral" })}>{t("doc.tpl.neutral")}</button>
-              <button aria-pressed={doc.template === "gost"} onclick={() => patchDoc({ template: "gost" })}>{t("doc.tpl.gost")}</button>
-            </div>
+            <select class="select tpl" aria-label={t("doc.template")} value={doc.template}
+                    onchange={e => patchDoc({ template: e.currentTarget.value })}>
+              {#each exportSkills as s (s.name)}<option value={s.name}>{s.title}</option>{/each}
+            </select>
             <button class="btn btn-primary" onclick={exportDocx}><Icon name="download" /> {t("doc.export")}</button>
           </div>
         {/if}
@@ -427,8 +429,7 @@
   .title-btn:hover .pen { opacity: 1; }
   .title-input { font-size: var(--t-xl); font-weight: 600; height: 40px; max-width: 640px; }
   .export { display: flex; gap: var(--s-2); align-items: center; }
-  .export .seg { height: var(--control-h); }
-  .export .seg button { padding: 0 var(--s-3); }
+  .export .tpl { width: auto; max-width: 220px; }
 
   .building { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); }
   .grow { flex: 1; }
@@ -465,7 +466,7 @@
   .sec h2 { font-size: var(--t-lg); font-weight: 600; margin-bottom: var(--s-3); }
   .sub { margin-top: var(--s-4); }
   .sub h3 { font-size: var(--t-md); font-weight: 600; margin-bottom: var(--s-2); }
-  .prose { line-height: 1.7; max-width: 72ch; margin-bottom: var(--s-3); }
+  .prose { line-height: 1.7; max-width: 72ch; margin-bottom: var(--s-3); white-space: pre-line; }
   .list-title { font-weight: 500; margin: var(--s-2) 0 var(--s-1); }
   .prose-list { margin: 0 0 var(--s-3); padding-left: var(--s-5); line-height: 1.65; }
 

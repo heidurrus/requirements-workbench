@@ -40,6 +40,7 @@ def fake_complete(system, user, schema, prefs, api_key, ollama_url):
 
 
 app_module.extract_atoms = functools.partial(atoms.extract_atoms, complete=fake_complete)
+atoms.extract_candidates = functools.partial(atoms.extract_candidates, complete=fake_complete)
 app_module.frd.build = functools.partial(app_module.frd.build, complete=fake_complete)
 app_module.frd.suggest_fix = functools.partial(app_module.frd.suggest_fix, complete=fake_complete)
 app_module.settings.secret = lambda name: "fake-key"

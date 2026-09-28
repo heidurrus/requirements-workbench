@@ -174,8 +174,8 @@ def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, c
     model = model_name(prefs)
     skillset = skillset or skills.resolve()
     report = progress or (lambda done, total, message: None)
-    candidates, dropped, steps = extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset,
-                                                    progress, complete)
+    candidates, dropped, steps = extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=skillset,
+                                                    progress=progress, complete=complete)
     report(steps - 1, steps, "Checking for duplicates and conflicts…")
     cleared = store.delete_pending_atoms_for_source(source_id)
     new_ids = store.add_atoms(project["id"], candidates, model=model) if candidates else []

@@ -354,7 +354,9 @@ class _Writer:
             if b["kind"] == "req":
                 self.req(b)
             elif b["kind"] == "text":
-                self.para(b["text"])
+                for line in (x.strip() for x in b["text"].split("\n")):
+                    if line:
+                        self.para(line)
             elif b["kind"] == "list":
                 if b.get("title"):
                     self.para().add_run(b["title"]).bold = True

@@ -15,6 +15,7 @@ export function parseRoute(hash = location.hash) {
   if (parts[0] === "source" && parts[1]) return { name: "transcript", id: parts[1], summarize: parts[2] === "summarize",
                                                   seg: parts[2] === "seg" ? Number(parts[3]) : null };
   if (parts[0] === "document") return { name: "document" };
+  if (parts[0] === "skills") return { name: "skills", skill: parts[1] || null };
   if (parts[0] === "atoms") return { name: "atoms", source: parts[1] === "source" ? parts[2] : null };
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "transcript") return { name: "transcript", id: null };

@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.7.0 (2026-09-28): Increment 3b, skills
+
+- **A new Скиллы screen.** Every AI step has an editable, shareable skill:
+  - summary
+  - requirement extraction
+  - duplicates and conflicts
+  - document assembly
+  - quality check
+  - fixes
+  - the Word template
+
+  Plus **house rules** (Общие инструкции) that apply to every step: terminology, glossary,
+  tone ("always write 'заявитель', never 'клиент'").
+- **Control the AI's output.** Write the instructions in your own words. The app adds a small,
+  visible "format contract" (answer shape, verbatim quotes, never invent facts), so no edit can
+  break the pipeline.
+  - The document assembly skill decides the FRD's sections, their titles and order, and extra
+    AI-written sections with their own instructions (e.g. a glossary).
+  - The quality skill has editable vague-word lists and **your own checks** (e.g. "every
+    functional requirement names a role").
+- **Built-in skills** are read-only. **Сделать копию** gives you your own, with:
+  - edit history and restore
+  - **Попробовать**: run the unsaved draft on a real source or on the current project and
+    see the result, without saving anything
+  - delete with undo
+- **Share skills.** Export a skill as a .zip and import a .zip or a single SKILL.md. The
+  format is a folder with SKILL.md, like Anthropic's Agent Skills. Your skills are also plain
+  folders you can open.
+- **Global and per-project.** Choose the default skill for each step, and switch any project
+  to a different one (e.g. GOST for one client, a lean FRD for another).
+- **Word templates with your own layout.** Copy "Word — ГОСТ" or "Word — обычный", press
+  **Открыть в Word** (or download it and upload it back), and design the document yourself:
+  title page, logo, approval sheet, headers and footers, fixed text. Placeholders mark where
+  content goes:
+  - inline, anywhere including tables and headers: `{{title}}`, `{{version}}`, `{{date}}`
+  - on their own line: `{{toc}}`, `{{body}}`, and single sections such as `{{section:functional}}`
+
+  The Document screen's export lets you pick any Word skill.
+- A new built-in **Сборка ТЗ по мотивам ГОСТ 34**: GOST-style section names and official
+  wording.
+
 ## 2.6.0 (2026-09-28): Increment 3a, the FRD document
 
 - **Build the FRD from accepted atoms.** A new **Документ** screen (step 4) turns the accepted

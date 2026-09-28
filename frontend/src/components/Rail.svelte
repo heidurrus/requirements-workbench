@@ -84,6 +84,9 @@
     {/each}
   </div>
   <div class="gap"></div>
+  <button class="navitem" class:on={app.route.name === "skills"} onclick={() => go("/skills")}>
+    <span class="n"></span><span class="lbl">{t("nav.skills")}</span>
+  </button>
   <button class="navitem" class:on={app.route.name === "settings"} onclick={() => go("/settings")}>
     <span class="n"></span><span class="lbl">{t("nav.settings")}</span>
   </button>

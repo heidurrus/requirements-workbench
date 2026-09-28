@@ -66,8 +66,9 @@ def _issue_schema(rule_ids):
         "required": ["id", "rule", "message"], "additionalProperties": False}}
 
 
-def full_schema(rule_ids):
+def full_schema(rule_ids, extra_keys=()):
     strings = {"type": "array", "items": {"type": "string"}}
+    key = {"type": "string", "enum": list(extra_keys)} if extra_keys else {"type": "string"}
     return {
         "type": "object",
         "properties": {
@@ -80,7 +81,7 @@ def full_schema(rule_ids):
                 "required": ["id", "text"], "additionalProperties": False}},
             "out_of_scope": strings,
             "extra": {"type": "array", "items": {
-                "type": "object", "properties": {"key": {"type": "string"}, "text": {"type": "string"}},
+                "type": "object", "properties": {"key": key, "text": {"type": "string"}},
                 "required": ["key", "text"], "additionalProperties": False}},
             "issues": _issue_schema(rule_ids),
         },
@@ -337,8 +338,9 @@ def _build_full(ctx):
     contract = FULL_CONTRACT.replace("{extra}", _extra_contract(ctx["spec"])).replace("{rules}", q.prompt(_lang_name(lang)))
     user = (f"Project: {ctx['project']['name']}\n\nSources:\n{_sources_line(ctx['store'], ctx['project']['id'])}\n\n"
             "Accepted requirement atoms:\n" + "\n".join(_atom_lines(ctx["atoms"], ctx["rids"], ctx["conflicts"])))
-    reply = ctx["complete"](_system(ctx, contract), user, full_schema(q.rule_ids), ctx["prefs"], ctx["api_key"],
-                            ctx["ollama_url"])
+    custom = [(k, t) for k, t, _i in ctx["spec"] if k not in skills.FRD_KINDS]
+    reply = ctx["complete"](_system(ctx, contract), user, full_schema(q.rule_ids, [k for k, _t in custom]),
+                            ctx["prefs"], ctx["api_key"], ctx["ollama_url"])
     ctx["report"](85, "Checking quality…")
     texts = {str(i.get("id", "")).strip(): i["text"] for i in reply.get("items") or []
              if str(i.get("id", "")).strip() in by_rid and str(i.get("text", "")).strip()}
@@ -361,7 +363,14 @@ def _build_full(ctx):
     missing = [r for r in frs if r not in placed]
     if missing:                                   # the model skipped some: never drop a requirement
         groups.append((LABELS[lang]["other"], [block(r) for r in missing]))
-    extra = {str(e.get("key", "")).strip(): e.get("text") or "" for e in reply.get("extra") or []}
+    # Match by key; models sometimes answer with the section's title instead.
+    by_title = {t.strip().casefold(): k for k, t in custom}
+    extra = {}
+    for e in reply.get("extra") or []:
+        raw = str(e.get("key", "")).strip()
+        k = raw if raw in dict(custom) else by_title.get(raw.casefold())
+        if k and str(e.get("text") or "").strip():
+            extra[k] = e["text"]
     return _assemble(ctx["spec"], lang, {
         "purpose": reply.get("purpose") or "", "context": reply.get("context") or "",
         "assumptions": reply.get("assumptions") or [], "groups": groups,
