@@ -45,13 +45,24 @@
     job = { kind, progress: 0, message: "" };
     try {
       const j = await pollJob(jobId, x => (job = { kind, progress: x.progress || 0, message: x.progress_msg || "" }), { interval: 800 });
-      toast(kind === "invest" ? t("bl.invest_done", { n: j.result.with_findings }) : t("bl.built", { n: j.result.stories }));
+      if (kind === "invest") toast(t("bl.invest_done", { n: j.result.with_findings }));
+      else {
+        const bits = [t("bl.built", { n: j.result.stories })];
+        const linked = items.filter(i => i.jira_key).length;
+        if (j.result.matched && linked) bits.push(t("bl.kept_links", { n: linked }));
+        if (j.result.orphans?.length) bits.push(t("bl.orphans", { n: j.result.orphans.length }));
+        toast(bits.join(" · "), j.result.orphans?.length ? { action: t("nav.export"), onAction: () => go("/export") } : {});
+      }
     } catch (err) { fail(err); }
     finally { job = null; load(); }
   }
-  async function run(kind) {
+  let refineOpen = $state(false);
+  let refineNote = $state("");
+  async function run(kind, note = null) {
+    refineOpen = false;
     try {
-      const { job_id } = await api(`/api/projects/${app.currentProjectId}/backlog/${kind}`, { method: "POST" });
+      const { job_id } = await api(`/api/projects/${app.currentProjectId}/backlog/${kind}`, { method: "POST",
+                                                                                          body: note ? { note } : {} });
       follow(job_id, kind);
     } catch (err) { fail(err); }
   }
@@ -97,6 +108,10 @@
     try { await api(`/api/backlog/${item.id}`, { method: "PATCH", body: changes }); load(); }
     catch (err) { fail(err); }
   }
+  async function setPriority(item, priority) {
+    try { await api(`/api/backlog/${item.id}`, { method: "PATCH", body: { priority: priority || null } }); load(); }
+    catch (err) { fail(err); }
+  }
   async function applyFix(item, fix) {
     try { await api(`/api/backlog/${item.id}`, { method: "PATCH", body: { body: fix } }); load(); toast(t("bl.fix_applied")); }
     catch (err) { fail(err); }
@@ -124,6 +139,7 @@
     {#if body && body.latest}
       <div class="actions">
         {#if items.length}
+          <button class="btn btn-ghost" onclick={() => (refineOpen = !refineOpen)} title={t("ai.refine_hint")}>{t("ai.refine")}</button>
           <button class="btn" class:btn-ghost={!body.stale} disabled={!!job} onclick={() => run("build")}>
             <Icon name="refresh" size={14} /> {t("bl.rebuild")}</button>
           <button class="btn" disabled={!!job} onclick={() => run("invest")}><Icon name="check" size={14} /> {t("bl.invest")}</button>
@@ -143,6 +159,17 @@
         <div class="banner info running"><span class="spinner"></span>
           <span class="num">{job.message}</span>
           <div class="grow"><div class="bar"><i style="width: {job.progress}%"></i></div></div></div>
+      {/if}
+
+      {#if refineOpen}
+        <div class="card refine">
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea class="input" rows="2" bind:value={refineNote} autofocus placeholder={t("ai.refine_ph.backlog")} aria-label={t("ai.refine")}></textarea>
+          <div class="actions"><span class="hint">{t("bl.refine_hint")}</span><span class="spacer"></span>
+            <button class="btn btn-sm btn-ghost" onclick={() => (refineOpen = false)}>{t("at.cancel")}</button>
+            <button class="btn btn-sm btn-primary" disabled={!refineNote.trim() || !!job} onclick={() => run("build", refineNote)}>{t("ai.refine_run")}</button>
+          </div>
+        </div>
       {/if}
 
       {#if !body.latest}
@@ -165,7 +192,7 @@
         {/if}
         <p class="hint-line"><Icon name="info" size={12} /> {t("bl.hint")}{#if hasFindings}{" "}<b class="warn-t">{t("bl.findings_hint")}</b>{/if}</p>
 
-        <section class="tree" role="tree" aria-label={t("nav.decomposition")}>
+        <div class="tree" role="tree" aria-label={t("nav.decomposition")}>
           {#each epics as epic (epic.id)}
             <div class="node epic" class:off={!epic.included} class:folded={collapsed.has(epic.id)} role="treeitem" aria-selected="false"
                  aria-expanded={!collapsed.has(epic.id)}>
@@ -191,7 +218,7 @@
             </div>
           {/each}
           <button class="btn btn-sm btn-ghost add" onclick={() => add("epic", null)}><Icon name="plus" size={14} /> {t("bl.add_epic")}</button>
-        </section>
+        </div>
 
         {#if nfrs.length}
           <div>
@@ -262,6 +289,14 @@
           <span class="t">{item.title}</span>
           {#if item.pinned}<span class="tag outline">{t("bl.edited")}</span>{:else if item.generated}<span class="tag outline">{t("bl.generated")}</span>{/if}
           {#if item.kind === "story" && item.invest?.length}<span class="tag warn">INVEST · {item.invest.map(f => f.letter).join("")}</span>{/if}
+          {#if item.jira_key}<a class="jira-chip" href={item.jira_url} target="_blank" rel="noreferrer" title={t("bl.in_jira")}>{item.jira_key}</a>{/if}
+          {#if item.kind !== "subtask"}
+            <select class="mini" class:set={item.priority} value={item.priority || ""} aria-label={t("at.priority")} title={t("at.prio_hint")}
+                    onchange={e => setPriority(item, e.currentTarget.value)}>
+              <option value="">{t("at.priority")}…</option>
+              {#each ["must", "should", "could", "wont"] as p (p)}<option value={p}>{t("at.prio." + p)}</option>{/each}
+            </select>
+          {/if}
         </p>
         {#if !collapsed.has(item.id) || !foldable}
           {#if item.kind === "epic" && item.goal}<p class="goal">{t("bl.goal_label")}: {item.goal}</p>{/if}
@@ -309,6 +344,17 @@
 
 <style>
   .grow { flex: 1; min-width: 0; }
+  .spacer { flex: 1; }
+  .refine { padding: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); }
+  .refine textarea { height: auto; }
+  .jira-chip { font: 600 11px/18px var(--mono); padding: 0 6px; border-radius: var(--r-xs); background: var(--accent-bg); color: var(--accent); }
+  .jira-chip:hover { text-decoration: none; filter: brightness(0.97); }
+  .mini { height: 20px; border: 0; background: transparent; color: var(--text-3); font: 500 var(--fs-11) var(--font); padding: 0 2px;
+    border-radius: var(--r-xs); cursor: pointer; }
+  .mini:hover { background: var(--surface-2); }
+  .mini.set { background: var(--accent-bg); color: var(--accent); }
+  .row-line:not(:hover) .mini:not(.set) { opacity: 0; }
+  @media (hover: none) { .mini { opacity: 1 !important; } }
   .running { align-items: center; }
   .warn-t { color: var(--warn); font-weight: 500; }
   .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

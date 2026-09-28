@@ -353,3 +353,13 @@ def test_project_language_is_validated(store):
     with pytest.raises(Exception):
         store.update_project(pid, language="de")
     assert store.update_project(pid, language="ru")["language"] == "ru"
+
+
+def test_atoms_rejected_as_out_of_scope_are_listed_in_that_section(store):
+    pid, a1, a2, *_ = seed(store)
+    extra = store.add_ba_atom(pid, "functional", "Мобильное приложение для клиентов")
+    store.update_atom(extra["id"], status="rejected", reject_reason="out_of_scope")
+    r = frd.build(store, pid, PREFS, "k", "", complete=llm(full_reply()))
+    content = store.version(r["document_id"])["content"]
+    sec = next(x for x in content["sections"] if x["key"] == "out_of_scope")
+    assert any("Мобильное приложение для клиентов" in b.get("items", []) for b in sec["blocks"])

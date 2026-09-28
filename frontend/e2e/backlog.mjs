@@ -35,7 +35,7 @@ await page.getByRole("button", { name: "3 атома" }).waitFor({ timeout: 1500
 await page.goto(base + "/#/atoms");
 await sub.filter({ hasText: "на ревью" }).waitFor();
 await page.locator(".check-all input").check();
-await page.locator(".bulkbar").getByRole("button", { name: "Принять" }).click();
+await page.locator(".bulkbar").getByRole("button", { name: /конфликтные/ }).click();   // all, conflicts included
 await page.getByText("Все атомы разобраны").waitFor();
 await page.goto(base + "/#/document");
 await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();

@@ -78,7 +78,23 @@ def _ref(rid, reqs):
     return {"id": rid, "section": r["section"], "atom_id": r["atom_id"]}
 
 
-def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None):
+RANK = {"must": 0, "should": 1, "could": 2, "wont": 3}
+
+
+def _priority(store, refs, reqs):
+    """A story is as important as the most important requirement it implements (MoSCoW)."""
+    found = []
+    for r in refs:
+        try:
+            p = store.get_atom(reqs[r]["atom_id"]).get("priority")
+        except Exception:
+            p = None
+        if p:
+            found.append(p)
+    return min(found, key=RANK.get) if found else None
+
+
+def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None, note=None):
     """Rebuild the backlog from the latest FRD version (pinned items are kept)."""
     report = progress or (lambda pct, msg: None)
     project = store.get_project(project_id)
@@ -100,6 +116,8 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
     context = next((b["text"] for b in sections.get("context", {}).get("blocks", []) if b["kind"] == "text"), "")
     user = (f"Project: {project['name']}\nPurpose: {purpose}\nContext: {context}\n\nRequirements:\n" +
             "\n".join(f"{rid} (section {r['section']}): {r['text']}" for rid, r in reqs.items() if not rid.startswith("Q-")))
+    if (note or "").strip():
+        user += "\n\nThe analyst's instruction for this run (follow it): " + note.strip()
     report(5, "Writing stories…")
     system = skills.compose(skillset, "decompose", DECOMPOSE_CONTRACT, language=_lang_name(lang))
     reply = complete(system, user, DECOMPOSE_SCHEMA, prefs, api_key, ollama_url)
@@ -118,6 +136,7 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
             for r in refs:
                 story_by_fr.setdefault(r, sid)
             stories.append({"id": sid, "kind": "story", "title": title, "body": str(s.get("story") or "").strip(),
+                            "priority": _priority(store, refs, reqs),
                             "refs": [_ref(r, reqs) for r in refs],
                             "acceptance": [{k: str(a.get(k) or "").strip() for k in ("given", "when", "then")}
                                            for a in s.get("acceptance") or []],
@@ -133,6 +152,7 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
             sid = str(uuid.uuid4())
             story_by_fr[r] = sid
             extra.append({"id": sid, "kind": "story", "title": reqs[r]["text"][:120], "body": reqs[r]["text"],
+                          "priority": _priority(store, [r], reqs),
                           "refs": [_ref(r, reqs)], "acceptance": [],
                           "invest": [{"letter": "T", "reason": t["uncovered"].format(id=r), "fix": ""}]})
         tree.append({"kind": "epic", "title": t["other"], "goal": "", "children": extra})
@@ -144,10 +164,10 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
                      "invest": [{"letter": "V", "reason": t["nfr_value"],
                                  "fix": t["nfr_move"].format(ids=", ".join(links.get(n, []))) if targets else "",
                                  "move_to": sorted(set(targets))}]})
-    store.replace_backlog(project_id, tree, version["number"])
+    kept = store.replace_backlog(project_id, tree, version["number"])
     report(100, "Done")
     items = store.backlog(project_id)
-    return {"frd_version": version["number"], "epics": sum(i["kind"] == "epic" for i in items),
+    return {"frd_version": version["number"], "matched": kept["matched"], "orphans": kept["orphans"], "epics": sum(i["kind"] == "epic" for i in items),
             "stories": sum(i["kind"] == "story" for i in items), "subtasks": sum(i["kind"] == "subtask" for i in items),
             "model": model_name(prefs), "uncovered": missing}
 

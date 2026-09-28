@@ -60,7 +60,7 @@ await page.getByText("После сборки изменилось 1 требо�
 await page.getByText("разделы 3.1 устарели").waitFor();
 step("editing an atom marks its section stale");
 
-await page.locator(".row-note").getByRole("button", { name: "Пересобрать" }).click();
+await page.locator(".row-note").getByRole("button", { name: "Обновить изменённое" }).click();
 await page.locator(".screen-sub", { hasText: "версия 2" }).waitFor({ timeout: 15000 });
 const finding = page.locator(".finding", { hasText: "FR-1" });
 await finding.getByText("размыто").waitFor();
@@ -95,6 +95,7 @@ step("DOCX export (GOST)");
 await page.locator(".rail").getByRole("button", { name: "Настройки" }).click();
 await page.locator(".out-lang").getByRole("button", { name: "English" }).click();
 await page.goto(base + "/#/document");
+await page.waitForTimeout(1500); await shot("lang.png");
 await page.getByText("Документ собран на русском, а язык проекта — на английском").waitFor();
 step("output language setting and the rebuild hint");
 

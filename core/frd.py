@@ -274,8 +274,11 @@ def req_blocks(content):
 
 # ── building ─────────────────────────────────────────────────────────────────
 
+NOTE = "\n\nThe analyst's instruction for this run (follow it unless it breaks the format): "
+
+
 def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progress=None, complete=complete_json,
-          skillset=None, save=True):
+          skillset=None, save=True, note=None):
     """Build a new version. mode "changed": rewrite only new/changed atoms; "full": rewrite everything.
     save=False returns the content without storing a version (used to try a skill)."""
     report = progress or (lambda pct, msg: None)
@@ -295,7 +298,7 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
     ctx = {"store": store, "project": project, "atoms": atoms, "rids": rids, "by_rid": by_rid, "conflicts": conflicts,
            "lang": lang, "prefs": prefs, "api_key": api_key, "ollama_url": ollama_url, "report": report,
            "complete": complete, "skillset": skillset, "quality": Quality(skillset.get("quality")),
-           "spec": section_spec(skillset["frd"], lang)}
+           "spec": section_spec(skillset["frd"], lang), "note": (note or "").strip()}
     previous = store.version(doc["id"])
     if previous is not None and previous["content"].get("language") != lang:
         mode = "full"                                   # a new output language means rewriting everything
@@ -304,6 +307,7 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
         mode = "full"
     else:
         content = _build_changed(ctx, previous)
+    _add_scoped_out(content, store, project_id, ctx["spec"], lang)
     content["language"] = lang
     content["skills"] = {"frd": skillset["frd"].name, "quality": skillset["quality"].name}
     content["rule_titles"] = ctx["quality"].titles
@@ -315,6 +319,20 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
     report(100, "Done")
     return {"document_id": doc["id"], "version": number, "atoms": len(atoms), "mode": mode,
             "conflicts": sum(1 for a in atoms if a["id"] in conflicts)}
+
+
+def _add_scoped_out(content, store, project_id, spec, lang):
+    """Atoms the BA rejected as "out of scope" are listed in that section (PM-22). They go in their own
+    block, recomputed on every build, so returning an atom to review takes it out again."""
+    sec = next((x for x in content["sections"] if x["key"] == "out_of_scope"), None)
+    if sec is None:
+        return                                          # the FRD skill has no such section
+    sec["blocks"] = [b for b in sec["blocks"] if b.get("id") != "out_of_scope_ba"]
+    ai = {x.casefold() for b in sec["blocks"] if b["kind"] == "list" for x in b["items"]}
+    scoped = [a["statement"] for a in store.list_atoms(project_id, status="rejected")
+              if a.get("reject_reason") == "out_of_scope" and a["statement"].casefold() not in ai]
+    if scoped:
+        sec["blocks"].append({"id": "out_of_scope_ba", "kind": "list", "items": scoped})
 
 
 def _sources_line(store, project_id):
@@ -340,6 +358,8 @@ def _build_full(ctx):
     contract = FULL_CONTRACT.replace("{extra}", _extra_contract(ctx["spec"])).replace("{rules}", q.prompt(_lang_name(lang)))
     user = (f"Project: {ctx['project']['name']}\n\nSources:\n{_sources_line(ctx['store'], ctx['project']['id'])}\n\n"
             "Accepted requirement atoms:\n" + "\n".join(_atom_lines(ctx["atoms"], ctx["rids"], ctx["conflicts"])))
+    if ctx.get("note"):
+        user += NOTE + ctx["note"]
     custom = [(k, t) for k, t, _i in ctx["spec"] if k not in skills.FRD_KINDS]
     reply = ctx["complete"](_system(ctx, contract), user, full_schema(q.rule_ids, [k for k, _t in custom]),
                             ctx["prefs"], ctx["api_key"], ctx["ollama_url"])
@@ -404,6 +424,8 @@ def _build_changed(ctx, previous):
         contract = CHANGED_CONTRACT.replace("{rules}", q.prompt(_lang_name(lang)))
         user = ("Existing functional sub-sections:\n" + ("\n".join(f"- {t}" for t in group_titles) or "(none)") +
                 "\n\nTo write:\n" + "\n".join(_atom_lines(to_write, rids, ctx["conflicts"])))
+        if ctx.get("note"):
+            user += NOTE + ctx["note"]
         reply = ctx["complete"](_system(ctx, contract), user, changed_schema(q.rule_ids), ctx["prefs"],
                                 ctx["api_key"], ctx["ollama_url"])
     ctx["report"](85, "Checking quality…")

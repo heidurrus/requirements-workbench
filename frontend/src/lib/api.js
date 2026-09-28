@@ -24,12 +24,17 @@ export async function api(path, { method = "GET", body, form, headers } = {}) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Set by the app: turns backend progress text into the interface language.
+let translateProgress = m => m;
+export function setProgressTranslator(fn) { translateProgress = fn; }
+
 // Poll a job until it finishes. onUpdate(job) gets every intermediate state
 // (progress, streamed partial text). Resolves with the finished job.
 export async function pollJob(jobId, onUpdate, { interval = 700, signal } = {}) {
   while (true) {
     if (signal && signal.aborted) throw new DOMException("aborted", "AbortError");
     const job = await api(`/job/${jobId}`);
+    if (job.progress_msg) job.progress_msg = translateProgress(job.progress_msg);
     if (onUpdate) onUpdate(job);
     if (job.status === "done") return job;
     if (job.status === "error") throw new ApiError(job.error || "failed", 500, job);

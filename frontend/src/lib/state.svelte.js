@@ -18,7 +18,8 @@ export function parseRoute(hash = location.hash) {
   if (parts[0] === "backlog") return { name: "backlog" };
   if (parts[0] === "export") return { name: "export" };
   if (parts[0] === "skills") return { name: "skills", skill: parts[1] || null };
-  if (parts[0] === "atoms") return { name: "atoms", source: parts[1] === "source" ? parts[2] : null };
+  if (parts[0] === "atoms") return { name: "atoms", source: parts[1] === "source" ? parts[2] : null,
+                                    atom: parts[1] === "atom" ? parts[2] : null };
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "transcript") return { name: "transcript", id: null };
   return { name: "sources" };
@@ -44,7 +45,8 @@ export const app = $state({
   jobs: {},
   // source id → { jobId, progress, message } for atom extraction
   extracting: {},
-  atomsVersion: 0,          // bumped when atoms change elsewhere, so open screens reload
+  atomsVersion: 0,
+  returnTo: null,           // {hash, name}: where Settings was opened from          // bumped when atoms change elsewhere, so open screens reload
 });
 
 export const t = (key, vars) => translate(app.lang, key, vars);
@@ -53,8 +55,12 @@ export function go(path) {
   if (location.hash !== "#" + path) location.hash = path;
   else app.route = parseRoute();
 }
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", e => {
   const prev = app.route.name;
+  // Remember where Settings was opened from, so it can send the BA back (PM-26).
+  if (parseRoute().name === "settings" && prev !== "settings") {
+    app.returnTo = { hash: new URL(e.oldURL).hash.slice(1) || "/sources", name: prev };
+  }
   app.route = parseRoute();
   if (app.route.name !== prev) app.toasts = [];      // toasts belong to the screen that raised them
   loadStatus();
@@ -123,8 +129,22 @@ let toastSeq = 0;
 export function dismissToast(id) {
   app.toasts = app.toasts.filter(x => x.id !== id);
 }
-export function toast(message, { action, onAction, kind = "info", ms = 6000 } = {}) {
+// The most recent undo stays available to ⌘Z for as long as its toast would have (PM-10: ≥ 10 s).
+let lastUndo = null;
+export function undoLast() {
+  if (!lastUndo || Date.now() > lastUndo.until) return false;
+  const u = lastUndo;
+  lastUndo = null;
+  dismissToast(u.id);
+  u.run();
+  return true;
+}
+
+export function toast(message, { action, onAction, kind = "info", ms } = {}) {
+  ms = ms ?? (action ? 10000 : 6000);
+  if (action) ms = Math.max(ms, 10000);
   const id = ++toastSeq;
+  if (action && onAction && kind !== "danger") lastUndo = { id, run: onAction, until: Date.now() + ms };
   // Only one undo at a time: a newer action toast replaces an older one.
   const keep = action ? app.toasts.filter(x => !x.action) : app.toasts;
   app.toasts = [...keep, { id, message, action, onAction, kind }].slice(-2);

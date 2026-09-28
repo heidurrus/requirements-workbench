@@ -77,8 +77,17 @@ def _sources(version):
     return {b["id"]: b.get("sources") or [] for _n, _k, b in req_blocks(version["content"])} if version else {}
 
 
-def description(item, doc_title, version, lang="ru"):
-    """Markdown description with the FRD reference and at least one verbatim quote (FR-JIRA-05)."""
+def quote_policy(project):
+    """What of the client's words goes into Jira (PM-04): full quotes, a link-like reference, or nothing.
+    "auto": full, except for Local only projects, where only the reference goes."""
+    p = (project or {}).get("jira_quotes") or "auto"
+    if p == "auto":
+        return "link" if (project or {}).get("local_only") else "full"
+    return p
+
+
+def description(item, doc_title, version, lang="ru", quotes="full"):
+    """Markdown description with the FRD reference and (policy allowing) a verbatim quote (FR-JIRA-05)."""
     t = TEXT.get(lang, TEXT["ru"])
     parts = []
     if item["kind"] == "epic" and item.get("goal"):
@@ -99,7 +108,7 @@ def description(item, doc_title, version, lang="ru"):
         srcs = _sources(version)
         lines = [f"**{t['source']}:** {doc_title} v{version['number']} · " +
                  ", ".join(f"{t['section']} {r['section']} · {r['id']}" for r in refs)]
-        for r in refs[:3]:
+        for r in (refs[:3] if quotes != "none" else []):
             for s in (srcs.get(r["id"]) or [])[:1]:
                 when = []
                 if s.get("source_date"):
@@ -109,18 +118,46 @@ def description(item, doc_title, version, lang="ru"):
                     when.append(f"{m:02d}:{sec:02d}")
                 who = s.get("speaker_name") or s.get("speaker") or ""
                 meta = " · ".join(x for x in [who, " ".join(when), s.get("source_title") or ""] if x)
-                lines.append(f"> «{s['quote']}»" + (f" — {meta}" if meta else ""))
+                if quotes == "full":
+                    lines.append(f"> «{s['quote']}»" + (f" — {meta}" if meta else ""))
+                elif meta:
+                    lines.append(f"- {meta}")
         parts.append("\n".join(lines))
     parts.append(f"_{t['made']} · {label(item)}_")
     return "\n\n".join(parts)
 
 
-def payload(item, target, doc_title, version, lang, parent_key=None):
+def payload(item, target, doc_title, version, lang, parent_key=None, quotes="full"):
     """The fields the workbench owns, exactly as they will be sent."""
     kind_type = (target.get("types") or {}).get(item["kind"])
+    labels = [APP_LABEL, label(item)] + ([f"moscow-{item['priority']}"] if item.get("priority") else [])
     return {"issueTypeName": kind_type, "summary": item["title"][:250],
-            "description": description(item, doc_title, version, lang),
-            "labels": [APP_LABEL, label(item)], "parent": parent_key}
+            "description": description(item, doc_title, version, lang, quotes),
+            "labels": labels, "parent": parent_key}
+
+
+def local_status(store, project_id):
+    """Without calling Jira: how many included items would be created or updated (PM-03)."""
+    target = store.jira_target(project_id)
+    items = store.backlog(project_id)
+    pushed = [i for i in items if i.get("jira_key")]
+    if not target or not pushed:
+        return {"pushed": len(pushed), "pending": None}
+    doc = store.document(project_id)
+    version = store.version(doc["id"])
+    project = store.get_project(project_id)
+    lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
+    by_id = {i["id"]: i for i in items}
+    pending = 0
+    for item in items:
+        if not item["included"]:
+            continue
+        parent = by_id.get(item.get("parent_id"))
+        p = payload(item, target, doc["title"], version, lang, parent.get("jira_key") if parent else None,
+                    quote_policy(project))
+        if not item.get("jira_key") or fingerprint(p) != item.get("jira_hash"):
+            pending += 1
+    return {"pushed": len(pushed), "pending": pending}
 
 
 def fingerprint(p):
@@ -156,7 +193,9 @@ def plan(store, project_id, session):
     types = target.get("types") or {}
     doc = store.document(project_id)
     version = store.version(doc["id"])
-    lang = output_language(store.get_project(project_id)) or (version or {}).get("content", {}).get("language", "ru")
+    project = store.get_project(project_id)
+    quotes = quote_policy(project)
+    lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
     items = store.backlog(project_id)
     by_id = {i["id"]: i for i in items}
 
@@ -193,7 +232,7 @@ def plan(store, project_id, session):
             row["action"], row["reason"] = "blocked", "no_parent"
         else:
             parent_key = parent.get("jira_key") if parent else None
-            p = payload(item, target, doc["title"], version, lang, parent_key)
+            p = payload(item, target, doc["title"], version, lang, parent_key, quotes)
             fp = fingerprint(p)
             if not row["key"]:
                 row["action"] = "create"
@@ -209,7 +248,15 @@ def plan(store, project_id, session):
             row["fingerprint"] = fp
         rows.append(row)
     counts = {a: sum(1 for r in rows if r["action"] == a) for a in ("create", "update", "unchanged", "skip", "blocked")}
-    return {"target": target, "rows": rows, "counts": counts}
+    return {"target": target, "rows": rows, "counts": counts, "orphans": store.jira_orphans(project_id), "quotes": quotes,
+            "stale": _stale(store, project_id, version)}
+
+
+def _stale(store, project_id, version):
+    """Is what the preview pushes behind the latest decisions? (PM-03)"""
+    from core import backlog, frd
+    doc_stale = frd.staleness(store, project_id, version) if version else None
+    return {"document": bool(doc_stale and doc_stale["stale"]), "backlog": backlog.stale(store, project_id)["stale"]}
 
 
 # ── push ─────────────────────────────────────────────────────────────────────
@@ -237,7 +284,9 @@ def push(store, project_id, session, item_ids, progress=None):
         raise JiraError("Nothing to push: tick at least one row to create or update.")
     doc = store.document(project_id)
     version = store.version(doc["id"])
-    lang = output_language(store.get_project(project_id)) or (version or {}).get("content", {}).get("language", "ru")
+    project = store.get_project(project_id)
+    quotes = quote_policy(project)
+    lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
     keys = {i["id"]: i.get("jira_key") for i in store.backlog(project_id)}
     for r in preview["rows"]:
         if r.get("key"):
@@ -250,7 +299,7 @@ def push(store, project_id, session, item_ids, progress=None):
         if item["kind"] == "subtask" and not parent_key:
             failed.append({"item_id": item["id"], "title": item["title"], "error": "the parent story isn't in Jira yet"})
             continue
-        p = payload(item, target, doc["title"], version, lang, parent_key)
+        p = payload(item, target, doc["title"], version, lang, parent_key, quotes)
         try:
             key = keys.get(item["id"])
             if key:

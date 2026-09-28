@@ -2,8 +2,10 @@
   import Block from "../components/Block.svelte";
   import LocalModel from "../components/LocalModel.svelte";
   import { api } from "../lib/api.js";
+  import Icon from "../components/Icon.svelte";
+  import { saveUrl } from "../lib/save.js";
   import { LANGS } from "../lib/i18n.js";
-  import { app, t, setLang, setTheme, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
+  import { app, t, go, setLang, setTheme, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
 
   let s = $state(null);              // server settings payload
   let keyDraft = $state("");
@@ -53,6 +55,16 @@
     await loadProjects();
   }
 
+  const effectiveQuotes = $derived.by(() => {
+    const p = currentProject();
+    const q = p?.jira_quotes || "auto";
+    return q === "auto" ? (p?.local_only ? "link" : "full") : q;
+  });
+  function exportProject() {
+    const p = currentProject();
+    saveUrl(`/api/projects/${p.id}/export.zip`, `${p.name}.rwproject.zip`.replace(/[\\/:*?"<>|]/g, ""));
+  }
+
   const env = $derived(app.health ? [
     [t("env.ffmpeg"), app.health.ffmpeg ? t("env.found") : t("env.missing"), app.health.ffmpeg],
     [t("env.gpu"), app.health.gpu.gpu_name || (app.health.gpu.mps ? "Apple Silicon (MPS)" : t("env.cpu_only")),
@@ -65,6 +77,10 @@
 
 <div class="screen-inner narrow">
   <header class="screen-head">
+    {#if app.returnTo}
+      <button class="btn btn-ghost back-to" onclick={() => { const r = app.returnTo; app.returnTo = null; go(r.hash); }}>
+        <Icon name="back" size={14} /> {t("set.back_to", { screen: t("nav." + ({ backlog: "decomposition", transcript: "transcript" }[app.returnTo.name] || app.returnTo.name)) })}</button>
+    {/if}
     <div>
       <h1 class="screen-title">{t("set.title")}</h1>
       <p class="screen-sub">{t("set.sub")}</p>
@@ -103,6 +119,25 @@
             {/each}
           </div>
         </div>
+      </div>
+      <label class="form-row">
+        <span class="l"><b>{t("set.auto_extract")}</b><span>{t("set.auto_extract_hint")}</span></span>
+        <span class="c"><input type="checkbox" class="switch" checked={currentProject().auto_extract !== false}
+               onchange={e => updateProject({ auto_extract: e.currentTarget.checked })} /></span>
+      </label>
+      <div class="form-row">
+        <span class="l"><b>{t("set.jira_quotes")}</b><span>{t("set.jira_quotes_hint." + effectiveQuotes)}</span></span>
+        <div class="c">
+          <div class="seg jira-quotes" role="group" aria-label={t("set.jira_quotes")}>
+            {#each ["auto", "full", "link", "none"] as q (q)}
+              <button aria-pressed={(currentProject().jira_quotes || "auto") === q} onclick={() => updateProject({ jira_quotes: q })}>{t("set.jq." + q)}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <span class="l"><b>{t("set.project_file")}</b><span>{t("set.project_file_hint")}</span></span>
+        <div class="c"><button class="btn" onclick={exportProject}><Icon name="download" size={14} /> {t("set.export_project")}</button></div>
       </div>
       <div class="form-row">
         <span class="l"><b>{t("set.archive")}</b><span>{t("set.archive_hint")}</span></span>
@@ -234,6 +269,7 @@
 </div>
 
 <style>
+  .screen-head > .back-to { flex: none; margin-left: -8px; }
   .group-t { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin: var(--sp-8) 0 var(--sp-4) var(--sp-5); }
   .group-t:first-of-type { margin-top: var(--sp-4); }
   .form-row { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-6); min-height: 48px; }

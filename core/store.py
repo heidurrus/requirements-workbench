@@ -21,11 +21,17 @@ from contextlib import contextmanager
 
 from core.paths import app_data_dir
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 BACKLOG_KINDS = {"epic", "story", "subtask", "nfr"}
 ATOM_TYPES = {"functional", "nfr", "question"}
 ATOM_STATUSES = {"pending", "accepted", "rejected", "merged"}
 CONFLICT_ACTIONS = {"keep_a", "keep_b", "merge", "question"}
+REJECT_REASONS = {"not_requirement", "duplicate", "out_of_scope", "wrong", "other"}
+PRIORITIES = {"must", "should", "could", "wont"}
+QUESTION_STATES = {"open", "asked", "answered"}
+JIRA_QUOTES = {"auto", "full", "link", "none"}
+DOC_STATUSES = {"draft", "review", "approved"}
+ACTION_STATUSES = {"open", "done"}
 SOURCE_KINDS = {"recording", "audio", "transcript", "document", "email"}
 SOURCE_STATUSES = {"recorded", "processing", "ready", "failed"}
 
@@ -100,6 +106,12 @@ CREATE TABLE IF NOT EXISTS backlog_items (
   position REAL NOT NULL, frd_version INTEGER, jira_key TEXT, deleted_at REAL,
   created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS backlog_by_project ON backlog_items(project_id, deleted_at, position);
+CREATE TABLE IF NOT EXISTS action_items (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), source_id TEXT REFERENCES sources(id),
+  text TEXT NOT NULL, owner TEXT, due TEXT, status TEXT NOT NULL DEFAULT 'open', quote TEXT, segment_idx INTEGER,
+  start REAL, deleted_at REAL,
+  created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS actions_by_project ON action_items(project_id, deleted_at, created_at);
 CREATE TABLE IF NOT EXISTS jira_targets (
   project_id TEXT PRIMARY KEY REFERENCES projects(id), cloud_id TEXT NOT NULL, site_url TEXT NOT NULL,
   project_key TEXT NOT NULL, project_name TEXT, types_json TEXT NOT NULL DEFAULT '{}',
@@ -113,7 +125,8 @@ CREATE TABLE IF NOT EXISTS quality_dismissals (
   PRIMARY KEY (document_id, atom_id, rule));
 """
 
-PROJECT_FIELDS = ("id", "name", "local_only", "archived", "language", "created_at", "created_by", "updated_at", "updated_by")
+PROJECT_FIELDS = ("id", "name", "local_only", "archived", "language", "jira_quotes", "auto_extract",
+                  "created_at", "created_by", "updated_at", "updated_by")
 OUTPUT_LANGUAGES = ("auto", "ru", "en")
 SOURCE_FIELDS = ("id", "project_id", "kind", "title", "original_filename", "status", "error", "duration",
                  "speakers", "asr_model", "diarized", "import_format", "audio_file", "meta_json", "deleted_at",
@@ -157,9 +170,21 @@ class Store:
         if "language" not in pcols:                       # v7: the language the AI writes in, per project
             c.execute("ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT 'auto'")
         bcols = {r["name"] for r in c.execute("PRAGMA table_info(backlog_items)")}
-        for col in ("jira_hash TEXT", "jira_pushed_at REAL", "jira_remote_updated TEXT", "jira_url TEXT"):  # v6 → v7
+        for col in ("jira_hash TEXT", "jira_pushed_at REAL", "jira_remote_updated TEXT", "jira_url TEXT",  # v6 → v7
+                    "priority TEXT"):                                                                       # v8
             if col.split()[0] not in bcols:
                 c.execute(f"ALTER TABLE backlog_items ADD COLUMN {col}")
+        # v8 (PM review): quote policy and auto-extract per project; reject reasons, MoSCoW, question
+        # lifecycle and BA-written atoms; document sign-off; corrected transcript segments.
+        for table, cols in (("projects", ("jira_quotes TEXT NOT NULL DEFAULT 'auto'", "auto_extract INTEGER NOT NULL DEFAULT 1")),
+                            ("atoms", ("reject_reason TEXT", "priority TEXT", "q_state TEXT", "answer TEXT",
+                                       "answer_source TEXT", "origin TEXT")),
+                            ("doc_versions", ("status TEXT NOT NULL DEFAULT 'draft'", "status_at REAL", "status_by TEXT")),
+                            ("segments", ("original_text TEXT",))):
+            have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            for col in cols:
+                if col.split()[0] not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
 
     # ── plumbing ─────────────────────────────────────────────────────────────
     @contextmanager
@@ -201,7 +226,7 @@ class Store:
         if "meta_json" in d:
             raw = d.pop("meta_json")
             d["meta"] = json.loads(raw) if raw else None
-        for flag in ("local_only", "archived", "diarized"):
+        for flag in ("local_only", "archived", "diarized", "auto_extract"):
             if flag in d and d[flag] is not None:
                 d[flag] = bool(d[flag])
         return d
@@ -245,19 +270,21 @@ class Store:
         return project
 
     def update_project(self, project_id, **changes):
-        allowed = {"name", "local_only", "archived", "language"}
+        allowed = {"name", "local_only", "archived", "language", "jira_quotes", "auto_extract"}
         unknown = set(changes) - allowed
         if unknown:
             raise StoreError(f"cannot change {sorted(unknown)}")
         if "language" in changes and changes["language"] not in OUTPUT_LANGUAGES:
             raise StoreError(f"language must be one of {OUTPUT_LANGUAGES}")
+        if "jira_quotes" in changes and changes["jira_quotes"] not in JIRA_QUOTES:
+            raise StoreError(f"jira_quotes must be one of {sorted(JIRA_QUOTES)}")
         with self._write() as c:
             before = self._row(c.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone(), PROJECT_FIELDS)
             if before is None:
                 raise StoreError("project not found")
             if "name" in changes:
                 changes["name"] = self._check_name(c, changes["name"], exclude_id=project_id)
-            for flag in ("local_only", "archived"):
+            for flag in ("local_only", "archived", "auto_extract"):
                 if flag in changes:
                     changes[flag] = int(bool(changes[flag]))
             if changes:
@@ -270,7 +297,7 @@ class Store:
                 self._audit(c, "project", project_id, "update", before, after)
         return after
 
-    def ensure_default_project(self, name="My project"):
+    def ensure_default_project(self, name="Мой проект"):
         projects = self.list_projects()
         return projects[0] if projects else self.create_project(name)
 
@@ -412,6 +439,44 @@ class Store:
             changes["meta_json"] = json.dumps({"email": result["email"]}, ensure_ascii=False)
         return self.update_source(source_id, **changes)
 
+    def edit_segment(self, source_id, idx, text):
+        """Correct a recognition error (PM-25). The first original is kept; the source text is rebuilt;
+        atoms quoting this line whose quote no longer appears in it are returned so the BA can check them."""
+        from core.atoms import normalize             # local import: atoms imports this module
+        text = (text or "").strip()
+        if not text:
+            raise StoreError("the text must not be empty")
+        with self._write() as c:
+            row = c.execute("SELECT * FROM segments WHERE source_id = ? AND idx = ?", (source_id, idx)).fetchone()
+            if row is None:
+                raise StoreError("segment not found")
+            if row["text"] == text:
+                return {"broken": []}
+            original = row["original_text"] if row["original_text"] is not None else row["text"]
+            c.execute("UPDATE segments SET text = ?, original_text = ? WHERE source_id = ? AND idx = ?",
+                      (text, None if text == original else original, source_id, idx))
+            full = " ".join(r["text"] for r in c.execute("SELECT text FROM segments WHERE source_id = ? ORDER BY idx",
+                                                         (source_id,)))
+            now, by = self._stamp()
+            c.execute("UPDATE sources SET text = ?, updated_at = ?, updated_by = ? WHERE id = ?", (full, now, by, source_id))
+            self._audit(c, "source", source_id, "edit_segment", {"idx": idx, "text": row["text"]}, {"idx": idx, "text": text})
+            broken = [r["atom_id"] for r in c.execute("SELECT atom_id, quote FROM evidence WHERE source_id = ? AND segment_idx = ?",
+                                                      (source_id, idx)) if normalize(r["quote"]) not in normalize(text)]
+        return {"broken": sorted(set(broken))}
+
+    def atom_marks(self, source_id):
+        """Which lines of a source became atoms (FR-TR-03): segment idx → [{atom_id, status, type}]."""
+        with self._conn() as c:
+            rows = c.execute("""SELECT e.segment_idx, a.id, a.status, a.type, a.statement FROM evidence e JOIN atoms a ON a.id = e.atom_id
+                                WHERE e.source_id = ? AND a.deleted_at IS NULL AND a.status != 'merged'""", (source_id,)).fetchall()
+        out = {}
+        for r in rows:
+            if r["segment_idx"] is None:
+                continue
+            out.setdefault(r["segment_idx"], []).append({"atom_id": r["id"], "status": r["status"], "type": r["type"],
+                                                         "statement": r["statement"]})
+        return out
+
     def fail_source(self, source_id, error):
         return self.update_source(source_id, status="failed", error=str(error)[:1000])
 
@@ -420,8 +485,9 @@ class Store:
         with self._conn() as c:
             names = {r["label"]: r["name"] for r in c.execute(
                 "SELECT label, name FROM speakers WHERE source_id = ?", (source_id,))}
-            segs = [dict(idx=r["idx"], speaker=r["speaker"], start=r["start"], end=r["end"], text=r["text"])
-                    for r in c.execute('SELECT idx, speaker, start, "end", text FROM segments '
+            segs = [dict(idx=r["idx"], speaker=r["speaker"], start=r["start"], end=r["end"], text=r["text"],
+                         corrected=r["original_text"] is not None)
+                    for r in c.execute('SELECT idx, speaker, start, "end", text, original_text FROM segments '
                                        'WHERE source_id = ? ORDER BY idx', (source_id,))]
         for s in segs:
             s["speaker_name"] = names.get(s["speaker"], s["speaker"])
@@ -492,6 +558,94 @@ class Store:
             rows = c.execute(q, args).fetchall()
         return [dict(r, before=json.loads(r["before_json"]) if r["before_json"] else None,
                      after=json.loads(r["after_json"]) if r["after_json"] else None) for r in rows]
+
+    def activity(self, project_id, limit=100, since=None):
+        """A project's history across sources, atoms, conflicts, the document, the backlog and actions (PM-23)."""
+        q = """SELECT l.*, COALESCE(a.statement, s.title, b.title, d.title, x.text, '') AS label FROM audit_log l
+               LEFT JOIN atoms a ON l.entity = 'atom' AND a.id = l.entity_id
+               LEFT JOIN sources s ON l.entity = 'source' AND s.id = l.entity_id
+               LEFT JOIN backlog_items b ON l.entity = 'backlog' AND b.id = l.entity_id
+               LEFT JOIN documents d ON l.entity = 'document' AND d.id = l.entity_id
+               LEFT JOIN action_items x ON l.entity = 'action' AND x.id = l.entity_id
+               LEFT JOIN conflicts cf ON l.entity = 'conflict' AND cf.id = l.entity_id
+               WHERE (a.project_id = ? OR s.project_id = ? OR b.project_id = ? OR d.project_id = ? OR x.project_id = ?
+                      OR cf.project_id = ? OR (l.entity = 'project' AND l.entity_id = ?))"""
+        args = [project_id] * 7
+        if since:
+            q += " AND l.at > ?"
+            args.append(since)
+        q += " ORDER BY l.at DESC LIMIT ?"
+        args.append(limit)
+        with self._conn() as c:
+            rows = c.execute(q, args).fetchall()
+        return [{"entity": r["entity"], "entity_id": r["entity_id"], "action": r["action"], "at": r["at"], "by": r["by"],
+                 "label": r["label"], "before": json.loads(r["before_json"]) if r["before_json"] else None,
+                 "after": json.loads(r["after_json"]) if r["after_json"] else None} for r in rows]
+
+    # ── project export / import (PM-31) ───────────────────────────────────────
+    _EXPORT_TABLES = (  # table, how rows belong to the project
+        ("projects", "id = ?"), ("sources", "project_id = ?"),
+        ("segments", "source_id IN (SELECT id FROM sources WHERE project_id = ?)"),
+        ("speakers", "source_id IN (SELECT id FROM sources WHERE project_id = ?)"),
+        ("summaries", "source_id IN (SELECT id FROM sources WHERE project_id = ?)"),
+        ("atoms", "project_id = ?"), ("evidence", "atom_id IN (SELECT id FROM atoms WHERE project_id = ?)"),
+        ("conflicts", "project_id = ?"), ("documents", "project_id = ?"),
+        ("doc_versions", "document_id IN (SELECT id FROM documents WHERE project_id = ?)"),
+        ("requirement_ids", "project_id = ?"),
+        ("free_blocks", "document_id IN (SELECT id FROM documents WHERE project_id = ?)"),
+        ("quality_dismissals", "document_id IN (SELECT id FROM documents WHERE project_id = ?)"),
+        ("project_skills", "project_id = ?"), ("backlog_items", "project_id = ?"), ("action_items", "project_id = ?"),
+    )
+
+    def export_project(self, project_id):
+        """Every row of the project (and its audit trail) as plain data; audio files are added by the caller."""
+        self.get_project(project_id)
+        out = {"format": "requirements-workbench-project", "schema": SCHEMA_VERSION, "tables": {}}
+        with self._conn() as c:
+            for table, where in self._EXPORT_TABLES:
+                out["tables"][table] = [dict(r) for r in c.execute(f"SELECT * FROM {table} WHERE {where}", (project_id,))]
+        out["audit"] = [dict(r) for r in self._audit_rows_for(project_id)]
+        return out
+
+    def _audit_rows_for(self, project_id):
+        ids = {project_id}
+        with self._conn() as c:
+            for table in ("sources", "atoms", "conflicts", "documents", "backlog_items", "action_items"):
+                ids |= {r[0] for r in c.execute(f"SELECT id FROM {table} WHERE project_id = ?", (project_id,))}
+            marks = ",".join("?" * len(ids))
+            return c.execute(f"SELECT * FROM audit_log WHERE entity_id IN ({marks}) ORDER BY at", list(ids)).fetchall()
+
+    def import_project(self, data):
+        """Load an exported project. Refused if a project with the same id already exists here."""
+        if not isinstance(data, dict) or data.get("format") != "requirements-workbench-project":
+            raise StoreError("this is not a Requirements Workbench project file")
+        tables = data.get("tables") or {}
+        [project] = tables.get("projects") or [None]
+        if not project:
+            raise StoreError("the file has no project")
+        with self._write() as c:
+            if c.execute("SELECT 1 FROM projects WHERE id = ?", (project["id"],)).fetchone():
+                raise StoreError("this project is already in your library")
+            name = project["name"]
+            n = 2
+            while c.execute("SELECT 1 FROM projects WHERE lower(name) = lower(?)", (name,)).fetchone():
+                name = f"{project['name']} ({n})"
+                n += 1
+            project = {**project, "name": name, "archived": 0}
+            tables = {**tables, "projects": [project]}
+            for table, _where in self._EXPORT_TABLES:
+                cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+                for row in tables.get(table) or []:
+                    row = {k: v for k, v in row.items() if k in cols}
+                    if row:
+                        c.execute(f"INSERT OR IGNORE INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                                  list(row.values()))
+            for r in data.get("audit") or []:
+                c.execute("INSERT OR IGNORE INTO audit_log (id, entity, entity_id, action, before_json, after_json, at, by) "
+                          "VALUES (?,?,?,?,?,?,?,?)", (r["id"], r["entity"], r["entity_id"], r["action"], r.get("before_json"),
+                                                       r.get("after_json"), r["at"], r["by"]))
+            self._audit(c, "project", project["id"], "import", after={"name": name})
+        return self.get_project(project["id"])
 
     def audit_event(self, entity, entity_id, action, before=None, after=None):
         with self._write() as c:
@@ -574,11 +728,20 @@ class Store:
         return a
 
     def update_atom(self, atom_id, **changes):
-        allowed = {"statement", "type", "status"}
+        allowed = {"statement", "type", "status", "reject_reason", "priority", "q_state"}
         if not changes:
             raise StoreError("nothing to change")
         if set(changes) - allowed:
             raise StoreError(f"cannot change {sorted(set(changes) - allowed)}")
+        if changes.get("reject_reason") not in (None, "") and changes["reject_reason"] not in REJECT_REASONS:
+            raise StoreError(f"reject_reason must be one of {sorted(REJECT_REASONS)}")
+        if changes.get("priority") not in (None, "") and changes["priority"] not in PRIORITIES:
+            raise StoreError(f"priority must be one of {sorted(PRIORITIES)}")
+        if changes.get("q_state") not in (None, "") and changes["q_state"] not in QUESTION_STATES:
+            raise StoreError(f"q_state must be one of {sorted(QUESTION_STATES)}")
+        for k in ("reject_reason", "priority", "q_state"):
+            if k in changes and changes[k] == "":
+                changes[k] = None
         if "type" in changes and changes["type"] not in ATOM_TYPES:
             raise StoreError(f"unknown atom type {changes['type']}")
         if "status" in changes and changes["status"] not in ATOM_STATUSES - {"merged"}:
@@ -593,12 +756,15 @@ class Store:
                 raise StoreError("this atom was merged into another one")
             if before.get("deleted_at"):
                 raise StoreError("this atom was deleted")
+            if changes.get("status") and changes["status"] != "rejected" and before["reject_reason"] \
+                    and "reject_reason" not in changes:
+                changes["reject_reason"] = None       # a reason only means something on a rejected atom
             now, by = self._stamp()
             sets = ", ".join(f"{k} = ?" for k in changes)
             c.execute(f"UPDATE atoms SET {sets}, updated_at = ?, updated_by = ? WHERE id = ?",
                       (*changes.values(), now, by, atom_id))
             after = self._atom_row(c, atom_id)
-            action = changes.get("status") if set(changes) == {"status"} else "edit"
+            action = changes.get("status") if changes.get("status") and set(changes) <= {"status", "reject_reason"} else "edit"
             self._audit(c, "atom", atom_id, action, {k: before[k] for k in changes}, {k: after[k] for k in changes})
         return self.get_atom(atom_id)
 
@@ -610,10 +776,14 @@ class Store:
         if len(items) > 5000:
             raise StoreError("too many atoms at once")
         for it in items:
-            if not isinstance(it, dict) or not it.get("id") or not ({"status", "type"} & set(it)):
-                raise StoreError("each item needs an id and a status or type")
-            if set(it) - {"id", "status", "type"}:
-                raise StoreError("only status and type can be changed in bulk")
+            if not isinstance(it, dict) or not it.get("id") or not ({"status", "type", "priority", "reject_reason"} & set(it)):
+                raise StoreError("each item needs an id and a status, type or priority")
+            if set(it) - {"id", "status", "type", "priority", "reject_reason"}:
+                raise StoreError("only status, type, priority and the reject reason can be changed in bulk")
+            if it.get("priority") not in (None, "") and it["priority"] not in PRIORITIES:
+                raise StoreError(f"priority must be one of {sorted(PRIORITIES)}")
+            if it.get("reject_reason") not in (None, "") and it["reject_reason"] not in REJECT_REASONS:
+                raise StoreError(f"reject_reason must be one of {sorted(REJECT_REASONS)}")
             if "status" in it and it["status"] not in ATOM_STATUSES - {"merged"}:
                 raise StoreError("status must be pending, accepted or rejected")
             if "type" in it and it["type"] not in ATOM_TYPES:
@@ -625,7 +795,10 @@ class Store:
                 row = c.execute("SELECT * FROM atoms WHERE id = ?", (it["id"],)).fetchone()
                 if row is None or row["project_id"] != project_id or row["status"] == "merged" or row["deleted_at"]:
                     continue
-                changes = {k: it[k] for k in ("status", "type") if k in it and it[k] != row[k]}
+                changes = {k: (it[k] or None) for k in ("status", "type", "priority", "reject_reason")
+                           if k in it and (it[k] or None) != row[k]}
+                if changes.get("status") and changes["status"] != "rejected" and row["reject_reason"]:
+                    changes["reject_reason"] = None
                 if not changes:
                     continue
                 sets = ", ".join(f"{k} = ?" for k in changes)
@@ -635,10 +808,6 @@ class Store:
                 self._audit(c, "atom", it["id"], action, {k: row[k] for k in changes},
                             {**changes, "bulk": True})
                 changed.append(it["id"])
-                # Accepting a question raised by a conflict closes that conflict (as for one atom).
-                if changes.get("status") == "accepted" and (changes.get("type") or row["type"]) == "question":
-                    c.execute("UPDATE conflicts SET status = 'resolved', resolved_at = ?, resolved_by = ? "
-                              "WHERE question_atom = ? AND status = 'awaiting_answer'", (now, by, it["id"]))
         return changed
 
     def merge_atoms(self, duplicate_id, into_id, audit_reason="duplicate"):
@@ -782,13 +951,104 @@ class Store:
                         {"status": status, "resolution": action, "question_atom": question_atom})
         return {"status": status, "question_atom": question_atom}
 
-    def answer_question(self, question_atom_id):
-        """Accepting a question raised by a conflict closes that conflict."""
+    def answer_question(self, question_atom_id, answer, source=None, resolution=None, statement=None):
+        """Record the client's answer to a question (PM-21). For a question raised by a conflict,
+        `resolution` (keep_a / keep_b / merge + statement) settles the conflict explicitly; without it
+        the conflict stays open. Accepting a question no longer closes anything by itself."""
+        answer = (answer or "").strip()
+        if not answer:
+            raise StoreError("the answer must not be empty")
+        with self._write() as c:
+            before = self._atom_row(c, question_atom_id)
+            if before["type"] != "question":
+                raise StoreError("only questions can be answered")
+            now, by = self._stamp()
+            c.execute("UPDATE atoms SET q_state = 'answered', answer = ?, answer_source = ?, updated_at = ?, updated_by = ? "
+                      "WHERE id = ?", (answer, (source or "").strip() or None, now, by, question_atom_id))
+            self._audit(c, "atom", question_atom_id, "answer", {"q_state": before["q_state"], "answer": before["answer"]},
+                        {"q_state": "answered", "answer": answer, "source": source})
+            conf = c.execute("SELECT id FROM conflicts WHERE question_atom = ? AND status = 'awaiting_answer'",
+                             (question_atom_id,)).fetchone()
+        if conf and resolution:
+            if resolution not in {"keep_a", "keep_b", "merge"}:
+                raise StoreError("resolution must be keep_a, keep_b or merge")
+            self.resolve_conflict(conf["id"], resolution, statement)
+            with self._write() as c:            # keep the link to the question that settled it
+                c.execute("UPDATE conflicts SET question_atom = ? WHERE id = ?", (question_atom_id, conf["id"]))
+        return self.get_atom(question_atom_id)
+
+    def add_ba_atom(self, project_id, type, statement, note=None, source_id=None, segment_idx=None):
+        """A requirement the BA writes down themselves (PM-16). Evidence is the BA's own note, or a
+        segment of a source when they point at one."""
+        if type not in ATOM_TYPES:
+            raise StoreError(f"unknown atom type {type}")
+        statement = (statement or "").strip()
+        if not statement:
+            raise StoreError("the statement must not be empty")
+        self.get_project(project_id)
         with self._write() as c:
             now, by = self._stamp()
-            n = c.execute("UPDATE conflicts SET status = 'resolved', resolved_at = ?, resolved_by = ? "
-                          "WHERE question_atom = ? AND status = 'awaiting_answer'", (now, by, question_atom_id)).rowcount
-        return n
+            aid = str(uuid.uuid4())
+            c.execute("INSERT INTO atoms (id, project_id, type, statement, original_statement, status, model, origin, "
+                      "created_at, created_by, updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (aid, project_id, type, statement, statement, "accepted", None, "ba", now, by, now, by))
+            if source_id:
+                seg = c.execute("SELECT * FROM segments WHERE source_id = ? AND idx = ?", (source_id, segment_idx)).fetchone()
+                if seg is None:
+                    raise StoreError("segment not found")
+                c.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?,?,?)",
+                          (str(uuid.uuid4()), aid, source_id, segment_idx, seg["start"], seg["speaker"], seg["text"], now))
+            self._audit(c, "atom", aid, "create", after={"type": type, "statement": statement, "origin": "ba",
+                                                         "note": (note or "").strip() or None})
+        return self.get_atom(aid)
+
+    # ── action items (PM-19): kept, never part of the FRD ─────────────────────
+    _ACTION_FIELDS = ("id", "project_id", "source_id", "text", "owner", "due", "status", "quote", "segment_idx", "start",
+                      "created_at", "updated_at")
+
+    def add_actions(self, project_id, source_id, items):
+        with self._write() as c:
+            now, by = self._stamp()
+            for it in items:
+                text = (it.get("text") or "").strip()
+                if not text:
+                    continue
+                c.execute("INSERT INTO action_items (id, project_id, source_id, text, owner, due, status, quote, segment_idx, "
+                          "start, created_at, created_by, updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (str(uuid.uuid4()), project_id, source_id, text, (it.get("owner") or "").strip() or None,
+                           (it.get("due") or "").strip() or None, "open", it.get("quote"), it.get("segment_idx"),
+                           it.get("start"), now, by, now, by))
+
+    def clear_actions_for_source(self, source_id):
+        with self._write() as c:
+            c.execute("DELETE FROM action_items WHERE source_id = ? AND status = 'open'", (source_id,))
+
+    def list_actions(self, project_id):
+        with self._conn() as c:
+            rows = c.execute("""SELECT a.*, s.title AS source_title FROM action_items a LEFT JOIN sources s ON s.id = a.source_id
+                                WHERE a.project_id = ? AND a.deleted_at IS NULL ORDER BY a.status, a.created_at""",
+                             (project_id,)).fetchall()
+        return [{**{k: r[k] for k in self._ACTION_FIELDS}, "source_title": r["source_title"]} for r in rows]
+
+    def update_action(self, action_id, **changes):
+        allowed = {"text", "owner", "due", "status"}
+        if not changes or set(changes) - allowed:
+            raise StoreError(f"cannot change {sorted(set(changes) - allowed) or 'nothing'}")
+        if "status" in changes and changes["status"] not in ACTION_STATUSES:
+            raise StoreError("status must be open or done")
+        with self._write() as c:
+            now, by = self._stamp()
+            sets = ", ".join(f"{k} = ?" for k in changes)
+            if not c.execute(f"UPDATE action_items SET {sets}, updated_at = ?, updated_by = ? WHERE id = ?",
+                             (*changes.values(), now, by, action_id)).rowcount:
+                raise StoreError("action item not found")
+            self._audit(c, "action", action_id, "edit", after=changes)
+
+    def delete_action(self, action_id):
+        with self._write() as c:
+            now, by = self._stamp()
+            c.execute("UPDATE action_items SET deleted_at = ?, updated_at = ?, updated_by = ? WHERE id = ?", (now, now, by, action_id))
+            self._audit(c, "action", action_id, "delete")
 
     # ── FRD documents (spec increment 3, FR-DOC-*) ────────────────────────────
     LEGACY_TEMPLATES = {"neutral": "export-standard", "gost": "export-gost"}   # 2.6.0 values → export skills
@@ -865,16 +1125,39 @@ class Store:
                           (document_id,)).fetchone()[0]
             now, by = self._stamp()
             vid = str(uuid.uuid4())
-            c.execute("INSERT INTO doc_versions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            c.execute("INSERT INTO doc_versions (id, document_id, number, content_json, snapshot_json, atom_count, provider, "
+                      "model, mode, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                       (vid, document_id, n, json.dumps(content, ensure_ascii=False),
                        json.dumps(snapshot, ensure_ascii=False), atom_count, provider, model, mode, now, by))
             self._audit(c, "document", document_id, "build", after={"version": n, "atoms": atom_count, "mode": mode})
         return n
 
+    def set_version_status(self, document_id, number, status):
+        """Sign-off (PM-34): draft → review → approved. Approving makes this version the baseline."""
+        if status not in DOC_STATUSES:
+            raise StoreError(f"status must be one of {sorted(DOC_STATUSES)}")
+        with self._write() as c:
+            row = c.execute("SELECT status FROM doc_versions WHERE document_id = ? AND number = ?",
+                            (document_id, int(number))).fetchone()
+            if row is None:
+                raise StoreError("version not found")
+            now, by = self._stamp()
+            c.execute("UPDATE doc_versions SET status = ?, status_at = ?, status_by = ? WHERE document_id = ? AND number = ?",
+                      (status, now, by, document_id, int(number)))
+            self._audit(c, "document", document_id, "status", {"version": int(number), "status": row["status"]},
+                        {"version": int(number), "status": status})
+
+    def baseline(self, document_id):
+        """The latest approved version number, or None."""
+        with self._conn() as c:
+            r = c.execute("SELECT MAX(number) FROM doc_versions WHERE document_id = ? AND status = 'approved'",
+                          (document_id,)).fetchone()
+        return r[0]
+
     def versions(self, document_id):
         with self._conn() as c:
             return [dict(r) for r in c.execute(
-                "SELECT number, atom_count, provider, model, mode, created_at, created_by FROM doc_versions "
+                "SELECT number, atom_count, provider, model, mode, status, status_at, created_at, created_by FROM doc_versions "
                 "WHERE document_id = ? ORDER BY number DESC", (document_id,))]
 
     def version(self, document_id, number=None):
@@ -1011,35 +1294,120 @@ class Store:
             raise StoreError(f"unknown backlog kind {item['kind']}")
         now, by = self._stamp()
         iid = item.get("id") or str(uuid.uuid4())
+        if item.get("priority") not in (None, "") and item["priority"] not in PRIORITIES:
+            raise StoreError(f"priority must be one of {sorted(PRIORITIES)}")
         c.execute("INSERT INTO backlog_items (id, project_id, parent_id, kind, title, body, goal, acceptance_json, "
                   "refs_json, invest_json, included, generated, pinned, position, frd_version, created_at, created_by, "
-                  "updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "updated_at, updated_by, priority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   (iid, project_id, parent_id, item["kind"], item["title"].strip(), item.get("body", "").strip(),
                    item.get("goal", "").strip(), json.dumps(item.get("acceptance") or [], ensure_ascii=False),
                    json.dumps(item.get("refs") or [], ensure_ascii=False),
                    json.dumps(item.get("invest") or [], ensure_ascii=False), int(item.get("included", True)),
                    int(item.get("generated", False)), int(item.get("pinned", False)), position, frd_version,
-                   now, by, now, by))
+                   now, by, now, by, item.get("priority") or None))
         return iid
 
+    @staticmethod
+    def _match_backlog(old, tree):
+        """Pair each new item with the old item it replaces, so a rebuild keeps ids and Jira links.
+
+        Stories and NFRs match by their first FRD reference, epics by title or by where most of
+        their stories came from, sub-tasks by (matched parent, title). Returns new-item-id → old item.
+        """
+        def first_ref(i):
+            refs = i.get("refs") or []
+            return refs[0]["id"] if refs else None
+
+        by_ref, used, match = {}, set(), {}
+        for o in old:
+            if o["kind"] in ("story", "nfr") and first_ref(o):
+                cur = by_ref.get((o["kind"], first_ref(o)))
+                if cur is None or (o.get("jira_key") and not cur.get("jira_key")):
+                    by_ref[(o["kind"], first_ref(o))] = o
+        for epic in tree:
+            for it in [epic] + (epic.get("children") or []):
+                if it["kind"] in ("story", "nfr"):
+                    o = by_ref.get((it["kind"], first_ref(it)))
+                    if o and o["id"] not in used:
+                        match[id(it)] = o
+                        used.add(o["id"])
+        epics_by_title = {}
+        for o in old:
+            if o["kind"] == "epic":
+                epics_by_title.setdefault(o["title"].strip().lower(), o)
+        for epic in tree:
+            if epic["kind"] != "epic":
+                continue
+            o = epics_by_title.get(epic["title"].strip().lower())
+            if not o or o["id"] in used:
+                parents = [match[id(c)]["parent_id"] for c in epic.get("children") or [] if id(c) in match]
+                parents = [x for x in parents if x and x not in used]
+                o = next((e for e in old if e["kind"] == "epic" and parents and e["id"] == max(set(parents), key=parents.count)), None)
+            if o and o["id"] not in used:
+                match[id(epic)] = o
+                used.add(o["id"])
+        subs = {(o["parent_id"], o["title"].strip().lower()): o for o in old if o["kind"] == "subtask"}
+        for epic in tree:
+            for story in epic.get("children") or []:
+                parent = match.get(id(story))
+                for sub in story.get("children") or []:
+                    o = parent and subs.get((parent["id"], sub["title"].strip().lower()))
+                    if o and o["id"] not in used:
+                        match[id(sub)] = o
+                        used.add(o["id"])
+        return match
+
     def replace_backlog(self, project_id, tree, frd_version):
-        """Regenerate: drop items the BA hasn't edited (pinned ones stay, FR-DEC-05), insert the new tree.
+        """Regenerate from a new tree (FR-DEC-05). Pinned (BA-edited) items stay as they are; a new
+        item that replaces an old one keeps its id, its Jira link and the BA's "in export" choice,
+        so the next push updates the issue instead of creating a duplicate. Old items that were in
+        Jira and have no successor are reported as orphans.
         tree = [{kind, title, …, children: [...]}]."""
         self.get_project(project_id)
+        old = self.backlog(project_id)
+        match = self._match_backlog(old, tree)
         with self._write() as c:
             now, by = self._stamp()
-            pinned = {r["id"] for r in c.execute(
-                "SELECT id FROM backlog_items WHERE project_id = ? AND deleted_at IS NULL AND pinned = 1", (project_id,))}
-            # Keep a pinned item's pinned ancestors too, so it stays attached somewhere sensible.
+            pinned = {o["id"] for o in old if o["pinned"]}
             c.execute("UPDATE backlog_items SET deleted_at = ?, updated_at = ?, updated_by = ? "
                       "WHERE project_id = ? AND deleted_at IS NULL AND pinned = 0", (now, now, by, project_id))
             start = (c.execute("SELECT COALESCE(MAX(position), 0) FROM backlog_items WHERE project_id = ? "
                                "AND deleted_at IS NULL", (project_id,)).fetchone()[0] or 0) + 1
             counter = [start]
+            kept, idmap = [], {}
+
+            def revive(o, item, parent):
+                c.execute("UPDATE backlog_items SET deleted_at = NULL, parent_id = ?, kind = ?, title = ?, body = ?, "
+                          "goal = ?, acceptance_json = ?, refs_json = ?, invest_json = ?, generated = ?, position = ?, "
+                          "frd_version = ?, priority = COALESCE(?, priority), updated_at = ?, updated_by = ? WHERE id = ?",
+                          (parent, item["kind"], item["title"].strip(), item.get("body", "").strip(),
+                           item.get("goal", "").strip(), json.dumps(item.get("acceptance") or [], ensure_ascii=False),
+                           json.dumps(item.get("refs") or [], ensure_ascii=False),
+                           json.dumps(item.get("invest") or [], ensure_ascii=False), int(item.get("generated", False)),
+                           counter[0], frd_version, item.get("priority") or None, now, by, o["id"]))
+                return o["id"]
 
             def add(items, parent):
                 for item in items:
-                    iid = self._insert_backlog(c, project_id, item, parent, counter[0], frd_version)
+                    o = match.get(id(item))
+                    if item.get("invest"):          # NFR "move into" links point at new story ids
+                        item = {**item, "invest": [{**f, "move_to": [idmap.get(x, x) for x in f.get("move_to") or []]}
+                                                   if f.get("move_to") else f for f in item["invest"]]}
+                    if o and o["pinned"]:
+                        # The BA's edited version stands in for the regenerated one.
+                        if parent and o["parent_id"] != parent:
+                            c.execute("UPDATE backlog_items SET parent_id = ? WHERE id = ?", (parent, o["id"]))
+                        if item.get("id"):
+                            idmap[item["id"]] = o["id"]
+                        add(item.get("children") or [], o["id"])
+                        continue
+                    if o:
+                        iid = revive(o, item, parent)
+                        kept.append(o["id"])
+                    else:
+                        iid = self._insert_backlog(c, project_id, item, parent, counter[0], frd_version)
+                    if item.get("id"):
+                        idmap[item["id"]] = iid
                     counter[0] += 1
                     add(item.get("children") or [], iid)
             add(tree, None)
@@ -1047,8 +1415,37 @@ class Store:
             c.execute("UPDATE backlog_items SET parent_id = NULL WHERE project_id = ? AND deleted_at IS NULL AND "
                       "parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM backlog_items WHERE deleted_at IS NULL)",
                       (project_id,))
-            self._audit(c, "project", project_id, "backlog_build", after={"frd_version": frd_version,
-                                                                          "kept_pinned": len(pinned)})
+            alive = set(kept) | pinned
+            orphans = [{"key": o["jira_key"], "title": o["title"]} for o in old
+                       if o.get("jira_key") and o["id"] not in alive]
+            self._audit(c, "project", project_id, "backlog_build",
+                        after={"frd_version": frd_version, "kept_pinned": len(pinned), "matched": len(kept),
+                               "orphaned_jira": [x["key"] for x in orphans]})
+        return {"matched": len(kept), "orphans": orphans}
+
+    def jira_orphans(self, project_id):
+        """Issues this project created in Jira whose backlog item no longer exists (PM-24)."""
+        with self._conn() as c:
+            live = {r[0] for r in c.execute("SELECT jira_key FROM backlog_items WHERE project_id = ? AND "
+                                            "deleted_at IS NULL AND jira_key IS NOT NULL", (project_id,))}
+            rows = c.execute("SELECT id, kind, title, jira_key, jira_url, deleted_at FROM backlog_items WHERE project_id = ? "
+                             "AND deleted_at IS NOT NULL AND jira_key IS NOT NULL ORDER BY deleted_at DESC",
+                             (project_id,)).fetchall()
+        out, seen = [], set()
+        for r in rows:
+            if r["jira_key"] in live or r["jira_key"] in seen:
+                continue
+            seen.add(r["jira_key"])
+            out.append({"item_id": r["id"], "kind": r["kind"], "title": r["title"], "key": r["jira_key"],
+                        "url": r["jira_url"], "removed_at": r["deleted_at"]})
+        return out
+
+    def forget_jira_orphan(self, project_id, key):
+        """The BA dealt with it in Jira: stop listing it."""
+        with self._write() as c:
+            c.execute("UPDATE backlog_items SET jira_key = NULL WHERE project_id = ? AND deleted_at IS NOT NULL "
+                      "AND jira_key = ?", (project_id, key))
+            self._audit(c, "project", project_id, "jira_orphan_forget", after={"key": key})
 
     def add_backlog_item(self, project_id, item, parent_id=None, after_id=None):
         """A BA-created item (pinned: regeneration never removes it)."""
@@ -1069,13 +1466,18 @@ class Store:
 
     def update_backlog_item(self, item_id, pin=True, **changes):
         """Edit an item. BA edits pin it (FR-DEC-05); toggling 'included' alone does not."""
-        allowed = {"title", "body", "goal", "acceptance", "refs", "invest", "included", "kind", "parent_id", "position"}
+        allowed = {"title", "body", "goal", "acceptance", "refs", "invest", "included", "kind", "parent_id", "position",
+                   "priority"}
         if not changes or set(changes) - allowed:
             raise StoreError(f"cannot change {sorted(set(changes) - allowed) or 'nothing'}")
         if "title" in changes and not str(changes["title"] or "").strip():
             raise StoreError("the title must not be empty")
         if "kind" in changes and changes["kind"] not in BACKLOG_KINDS:
             raise StoreError("unknown kind")
+        if "priority" in changes:
+            changes["priority"] = changes["priority"] or None
+            if changes["priority"] and changes["priority"] not in PRIORITIES:
+                raise StoreError(f"priority must be one of {sorted(PRIORITIES)}")
         if "acceptance" in changes:
             ac = changes["acceptance"]
             if not isinstance(ac, list) or any(not isinstance(x, dict) for x in ac):
@@ -1091,7 +1493,7 @@ class Store:
                 cols[k] = int(bool(v))
             else:
                 cols[k] = v.strip() if isinstance(v, str) else v
-        if pin and set(changes) - {"included", "invest", "position"}:
+        if pin and set(changes) - {"included", "invest", "position", "priority"}:
             cols["pinned"] = 1
         with self._write() as c:
             now, by = self._stamp()

@@ -20,7 +20,7 @@ MAX_EXISTING_FOR_DEDUP = 400
 # the app adds these contracts, which keep the pipeline working whatever the skill says.
 EXTRACT_CONTRACT = """- Every atom cites evidence: the number from the [S…] label of the line it came from, and a quote copied character for character from that line (a short contiguous fragment, not a paraphrase, no ellipses). Atoms without such a quote are discarded.
 - type is one of: functional, nfr, question — or action_item / other for things that are not requirements.
-- action_item: a task for people rather than a property of the system ("send the email", "schedule a call", "prepare the estimate", "Иван пришлёт письмо"). other: anything else that is not a requirement (small talk, project process, opinions without a need). Label them honestly instead of forcing them into functional: they are set aside, not saved as requirements.
+- action_item: a task for people rather than a property of the system ("send the email", "schedule a call", "prepare the estimate", "Иван пришлёт письмо"). other: anything else that is not a requirement (small talk, project process, opinions without a need). Label them honestly instead of forcing them into functional: they are kept on a separate to-do list, never saved as requirements. For an action_item, also give owner (who will do it) and due (when), if they were said; otherwise leave them empty.
 - If nothing in the text is a requirement, return an empty list."""
 
 DEDUP_CONTRACT = """Items marked N are new; items marked E already exist. At least one side of every pair must be a new (N) item. For a duplicate, give the new item and the item it duplicates (prefer an E item, else an earlier N item)."""
@@ -35,6 +35,8 @@ EXTRACT_SCHEMA = {
                 "properties": {
                     "type": {"type": "string", "enum": ["functional", "nfr", "question", "action_item", "other"]},
                     "statement": {"type": "string"},
+                    "owner": {"type": "string"},
+                    "due": {"type": "string"},
                     "evidence": {
                         "type": "array",
                         "items": {
@@ -134,7 +136,7 @@ def _source_header(source):
 
 
 def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=None, progress=None,
-                       complete=complete_json):
+                       complete=complete_json, note=None):
     """Atoms found in one source, verified against the text, without saving anything
     (used by extraction and by "try this skill")."""
     source = store.get_source(source_id)
@@ -151,11 +153,19 @@ def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=No
     for i, chunk in enumerate(chunks):
         report(i, steps, f"Reading part {i + 1} of {len(chunks)}…" if len(chunks) > 1 else "Reading the source…")
         user = _source_header(source) + "\n\n" + "\n".join(segment_line(s) for s in chunk)
+        if (note or "").strip():
+            user += "\n\nThe analyst's instruction for this run (follow it unless it breaks the format): " + note.strip()
         reply = complete(system, user, EXTRACT_SCHEMA, prefs, api_key, ollama_url)
         for atom in reply.get("atoms") or []:
             statement = (atom.get("statement") or "").strip()
             if atom.get("type") in ("action_item", "other") and statement:
-                skipped.append({"type": atom["type"], "statement": statement})   # not requirements: set aside
+                item = {"type": atom["type"], "statement": statement}          # not requirements: set aside
+                if atom["type"] == "action_item":                              # …but kept as a to-do (PM-19)
+                    ev = verify_evidence(atom.get("evidence"), chunk, source_id)
+                    if ev:
+                        item.update(quote=ev[0]["quote"], segment_idx=ev[0]["segment_idx"], start=ev[0]["start"])
+                    item.update(owner=(atom.get("owner") or "").strip(), due=(atom.get("due") or "").strip())
+                skipped.append(item)
                 continue
             if atom.get("type") not in ("functional", "nfr", "question") or not statement:
                 dropped += 1
@@ -168,7 +178,8 @@ def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=No
     return candidates, dropped, steps, skipped
 
 
-def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None):
+def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None,
+                  note=None):
     """Extract atoms from one source into the store; returns counts for the UI.
 
     Re-extraction drops the source's atoms still pending review and keeps the
@@ -180,9 +191,13 @@ def extract_atoms(store, source_id, prefs, api_key, ollama_url, progress=None, c
     skillset = skillset or skills.resolve()
     report = progress or (lambda done, total, message: None)
     candidates, dropped, steps, skipped = extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=skillset,
-                                                    progress=progress, complete=complete)
+                                                    progress=progress, complete=complete, note=note)
     report(steps - 1, steps, "Checking for duplicates and conflicts…")
     cleared = store.delete_pending_atoms_for_source(source_id)
+    store.clear_actions_for_source(source_id)
+    store.add_actions(project["id"], source_id, [{"text": x["statement"], **{k: x.get(k) for k in
+                                                  ("owner", "due", "quote", "segment_idx", "start")}}
+                                                 for x in skipped if x["type"] == "action_item"])
     new_ids = store.add_atoms(project["id"], candidates, model=model) if candidates else []
     merged, conflicts = _dedup(store, project["id"], new_ids, prefs, api_key, ollama_url, complete, skillset)
     report(steps, steps, "Done")

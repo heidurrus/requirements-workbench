@@ -5,15 +5,50 @@
   import { DesktopRecorder, BrowserRecorder, listMicrophones } from "../lib/recorder.js";
   import { fmtDate, fmtDuration, isTranscriptFile } from "../lib/format.js";
   import { app, t, go, loadSources, saveOptions, toast, rememberSource } from "../lib/state.svelte.js";
+  import { followExtraction, notify } from "../lib/atoms.js";
+  import ProjectHome from "../components/ProjectHome.svelte";
 
   // ── upload ────────────────────────────────────────────────────────────────
   let file = $state(null);
+  let more = $state([]);                 // extra files of a multi-file drop (PM-14)
   let dragging = $state(false);
   let uploading = $state(false);
   let uploadError = $state("");
   const fileIsTranscript = $derived(file ? isTranscriptFile(file.name) : false);
 
-  function pickFile(f) { if (f) { file = f; uploadError = ""; } }
+  function pickFiles(list) {
+    const files = [...(list || [])];
+    if (!files.length) return;
+    file = files[0];
+    more = files.slice(1);
+    uploadError = "";
+  }
+
+  // Several files: import them one after another into the queue; nothing opens by itself.
+  async function submitMany() {
+    const all = [file, ...more];
+    uploading = true;
+    uploadError = "";
+    let ok = 0;
+    const failed = [];
+    for (const f of all) {
+      try {
+        const form = new FormData();
+        form.append("audio", f);
+        form.append("project_id", app.currentProjectId);
+        Object.entries(optionsPayload()).forEach(([k, v]) => form.append(k, v));
+        const res = await api("/transcribe", { method: "POST", form });
+        ok++;
+        if (!isTranscriptFile(f.name)) track(res.source_id, res.job_id);
+      } catch (err) { failed.push(`${f.name}: ${err.message}`); }
+    }
+    file = null;
+    more = [];
+    uploading = false;
+    await loadSources();
+    toast(t("sources.imported_n", { n: ok }) + (failed.length ? " · " + t("sources.failed_n", { n: failed.length }) : ""));
+    if (failed.length) uploadError = failed.join("; ");
+  }
 
   function optionsPayload() {
     const o = app.options;
@@ -47,16 +82,30 @@
   }
 
   // Follow a transcription job; the list row shows its progress.
+  // ETA from the rate so far (PM-30): shown once the job has made some progress.
+  function eta(started, progress) {
+    if (!progress || progress < 5) return "";
+    const left = (Date.now() - started) / progress * (100 - progress) / 1000;
+    return left < 60 ? t("sources.eta_s") : t("sources.eta_min", { n: Math.round(left / 60) });
+  }
   async function track(sourceId, jobId) {
+    const started = Date.now();
     app.jobs[sourceId] = { jobId, progress: 0, message: "" };
     try {
-      await pollJob(jobId, job => {
-        app.jobs[sourceId] = { jobId, progress: job.progress || 0, message: job.progress_msg || "" };
+      const job = await pollJob(jobId, j => {
+        app.jobs[sourceId] = { jobId, progress: j.progress || 0, message: j.progress_msg || "", eta: eta(started, j.progress) };
       });
       delete app.jobs[sourceId];
       await loadSources();
       const s = app.sources.find(x => x.id === sourceId);
-      toast(`${s ? s.title : ""} · ${t("status.ready")}`, { action: t("nav.transcript"), onAction: () => open(sourceId) });
+      const title = s ? s.title : "";
+      if (job.result?.extract_job) {        // the project goes straight on to requirements (PM-13)
+        toast(`${title} · ${t("sources.extracting")}`);
+        followExtraction(sourceId, job.result.extract_job, { notifyTitle: title }).catch(() => {});
+      } else {
+        toast(`${title} · ${t("status.ready")}`, { action: t("nav.transcript"), onAction: () => open(sourceId) });
+        notify(title, t("status.ready"));
+      }
     } catch (err) {
       delete app.jobs[sourceId];
       await loadSources();
@@ -86,6 +135,20 @@
   $effect(() => { listMicrophones(app.device.desktop).then(m => (mics = m)); });
 
   const channelName = c => t(c === "mic" ? "channel.mic" : "channel.sys");
+
+  // FR-SRC-02 / PM-05: remind about consent once per session, and log the confirmation.
+  let consentAsk = $state(false);
+  function consented() { try { return sessionStorage.getItem("wb.consent") === "1"; } catch (_) { return false; } }
+  function askThenRecord() {
+    if (consented()) startRecording();
+    else consentAsk = true;
+  }
+  async function confirmConsent() {
+    consentAsk = false;
+    try { sessionStorage.setItem("wb.consent", "1"); } catch (_) { /* private mode */ }
+    api("/api/consent", { method: "POST", body: { project_id: app.currentProjectId } }).catch(() => {});
+    startRecording();
+  }
 
   async function startRecording() {
     recError = "";
@@ -176,9 +239,11 @@
     </div>
   </header>
 
+  <ProjectHome />
+
   <div class="capture">
     <section class="card rec-card" class:live={recording}>
-      <button class="rec-btn" class:on={recording} onclick={recording ? stopRecording : startRecording}
+      <button class="rec-btn" class:on={recording} onclick={recording ? stopRecording : askThenRecord}
               aria-label={recording ? t("rec.stop") : t("rec.start")} title={recording ? t("rec.stop") : t("rec.start")}>
         <i></i>
       </button>
@@ -203,13 +268,13 @@
       </div>
     </section>
 
-    <section class="drop-card" class:dragging class:has-file={file}
+    <section class="drop-card" class:dragging class:has-file={file} role="group" aria-label={t("sources.upload.title")}
              ondragover={e => { e.preventDefault(); dragging = true; }}
              ondragleave={() => (dragging = false)}
-             ondrop={e => { e.preventDefault(); dragging = false; pickFile(e.dataTransfer.files[0]); }}>
+             ondrop={e => { e.preventDefault(); dragging = false; pickFiles(e.dataTransfer.files); }}>
       <label class="drop">
         <!-- no accept filter: the macOS desktop picker ignores extensions; the server validates -->
-        <input type="file" onchange={e => pickFile(e.currentTarget.files[0])} aria-label={t("sources.upload.title")} />
+        <input type="file" multiple onchange={e => pickFiles(e.currentTarget.files)} aria-label={t("sources.upload.title")} />
         <span class="ico"><Icon name="upload" /></span>
         <span class="drop-txt">
           <h2>{t("sources.upload.drop")} <span class="link">{t("sources.upload.browse")}</span></h2>
@@ -220,13 +285,23 @@
       {#if file}
         <div class="file-row">
           <Icon name={fileIsTranscript ? "transcript" : "wave"} size={14} />
-          <span class="file">{file.name}{#if fileIsTranscript}<span class="t3"> · {t("sources.upload.is_transcript")}</span>{/if}</span>
+          {#if more.length}
+            <span class="file" title={[file, ...more].map(f => f.name).join(", ")}>{t("sources.files_n", { n: more.length + 1 })}
+              <span class="t3"> · {[file, ...more].map(f => f.name).join(", ")}</span></span>
+          {:else}
+            <span class="file">{file.name}{#if fileIsTranscript}<span class="t3"> · {t("sources.upload.is_transcript")}</span>{/if}</span>
+          {/if}
           <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.cancel")} title={t("at.cancel")}
-                  onclick={() => (file = null)}><Icon name="close" size={14} /></button>
-          <button class="btn btn-primary" disabled={uploading} onclick={() => submitUpload()}>
-            {#if uploading}<span class="spinner"></span>{/if}
-            {fileIsTranscript ? t("sources.upload.summarize") : t("sources.upload.transcribe")}
-          </button>
+                  onclick={() => { file = null; more = []; }}><Icon name="close" size={14} /></button>
+          {#if more.length}
+            <button class="btn btn-primary" disabled={uploading} onclick={submitMany}>
+              {#if uploading}<span class="spinner"></span>{/if}{t("sources.import_all", { n: more.length + 1 })}</button>
+          {:else}
+            <button class="btn btn-primary" disabled={uploading} onclick={() => submitUpload()}>
+              {#if uploading}<span class="spinner"></span>{/if}
+              {fileIsTranscript ? t("sources.upload.summarize") : t("sources.upload.transcribe")}
+            </button>
+          {/if}
         </div>
       {/if}
       {#if uploadError}<p class="note danger below">{uploadError}</p>{/if}
@@ -288,13 +363,15 @@
                 {#if app.jobs[s.id]}
                   <div class="job">
                     <div class="bar"><i style="width: {app.jobs[s.id].progress}%"></i></div>
-                    <span class="t3 num">{app.jobs[s.id].message}</span>
+                    <span class="t3 num">{app.jobs[s.id].message}{#if app.jobs[s.id].eta} · {app.jobs[s.id].eta}{/if}</span>
                   </div>
                 {/if}
                 {#if s.status === "failed" && s.error}<p class="hint err">{s.error}</p>{/if}
               </div>
               <div class="item-side">
-                {#if s.status === "processing"}
+                {#if app.extracting[s.id]}
+                  <span class="status run"><span class="spinner"></span>{t("sources.extracting")}</span>
+                {:else if s.status === "processing"}
                   <span class="status run"><span class="spinner"></span>{t("status.processing")}</span>
                 {:else if s.status === "ready"}
                   <span class="status ok"><Icon name="check" size={14} />{t("status.ready")}</span>
@@ -321,6 +398,21 @@
     </div>
   </div>
 </div>
+
+{#if consentAsk}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scrim" onclick={e => e.target === e.currentTarget && (consentAsk = false)} onkeydown={e => e.key === "Escape" && (consentAsk = false)}>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="consent-h">
+      <h2 id="consent-h">{t("rec.consent_q")}</h2>
+      <p class="t2">{t("rec.consent_body")}</p>
+      <div class="acts">
+        <button class="btn" onclick={() => (consentAsk = false)}>{t("at.cancel")}</button>
+        <!-- svelte-ignore a11y_autofocus -->
+        <button class="btn btn-primary" autofocus onclick={confirmConsent}>{t("rec.consent_yes")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .capture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--sp-6); margin-bottom: var(--sp-6); }

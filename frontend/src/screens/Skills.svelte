@@ -442,6 +442,15 @@
                       {#if r.kind === "markdown"}
                         <div class="md">{@html renderMarkdown(r.text)}</div>
                       {:else if r.kind === "atoms"}
+                        {#if r.compare && r.compare.current}
+                          <div class="compare">
+                            <p><b>{t("sk.cmp_title", { n: r.compare.current })}</b> · {t("sk.cmp_same", { n: r.compare.same })}</p>
+                            {#if r.compare.new.length}<p class="cmp-h ok">+ {t("sk.cmp_new", { n: r.compare.new.length })}</p>
+                              <ul>{#each r.compare.new as x, i (i)}<li>{x}</li>{/each}</ul>{/if}
+                            {#if r.compare.missing.length}<p class="cmp-h danger">− {t("sk.cmp_missing", { n: r.compare.missing.length })}</p>
+                              <ul>{#each r.compare.missing as x, i (i)}<li>{x}</li>{/each}</ul>{/if}
+                          </div>
+                        {/if}
                         <p class="label">{t("sk.try_atoms", { n: r.atoms.length })}{#if r.dropped} · {t("sk.try_dropped", { n: r.dropped })}{/if}</p>
                         <ul class="try-atoms">
                           {#each r.atoms as a, i (i)}
@@ -597,6 +606,10 @@
   .try-atoms .tag { margin: 0 var(--sp-2) 0 0; }
   .quote { display: block; font-size: var(--fs-12); color: var(--text-2); margin-top: 2px; }
   .skipped li { color: var(--text-3); }
+  .compare { background: var(--surface); border-radius: var(--r-sm); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5); }
+  .compare ul { margin: var(--sp-2) 0 var(--sp-4); padding-left: 18px; }
+  .cmp-h { font-weight: 600; font-size: var(--fs-12); margin-top: var(--sp-4); }
+  .cmp-h.ok { color: var(--ok); } .cmp-h.danger { color: var(--danger); }
   .usage { display: flex; align-items: center; gap: var(--sp-6); flex-wrap: wrap; padding: var(--sp-5) var(--sp-7); border-top: 1px solid var(--line);
     background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
   .savebar { position: sticky; bottom: var(--sp-5); display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-5);
