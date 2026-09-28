@@ -541,6 +541,13 @@ const ru = {
   "jr.col_title": "Название",
   "jr.col_key": "Ключ",
   "jr.types_short": "Типы",
+  "sk.tab.instructions": "Инструкции",
+  "sk.tab.sections": "Разделы",
+  "sk.tab.rules": "Правила",
+  "sk.tab.template": "Шаблон",
+  "sk.tab.try": "Попробовать",
+  "sk.tab.contract": "Контракт",
+  "sk.tab.history": "История",
 };
 
 const en = {
@@ -1083,6 +1090,13 @@ const en = {
   "jr.col_title": "Title",
   "jr.col_key": "Key",
   "jr.types_short": "Types",
+  "sk.tab.instructions": "Instructions",
+  "sk.tab.sections": "Sections",
+  "sk.tab.rules": "Rules",
+  "sk.tab.template": "Template",
+  "sk.tab.try": "Try it",
+  "sk.tab.contract": "Contract",
+  "sk.tab.history": "History",
 };
 
 export const DICTS = { ru, en };

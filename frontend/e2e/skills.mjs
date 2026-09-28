@@ -46,6 +46,7 @@ await page.getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
 await page.locator(".title-input").fill("FRD для банка");
 await page.locator("#sk-instr").fill("Пиши сухо и коротко. Язык: {language}.");
+await page.getByRole("tab", { name: /Разделы/ }).click();
 await page.getByRole("button", { name: "Раздел, который напишет ИИ" }).click();
 const last = page.locator(".sec-row").last();
 await last.getByPlaceholder("Название (рус.)").fill("Глоссарий");
@@ -61,11 +62,12 @@ await page.getByText("Используется по умолчанию").waitFor
 await list.getByRole("button", { name: /FRD для банка/ }).getByText("используется").waitFor();
 step("set as the default");
 
-await page.locator("details.block", { hasText: "История" }).locator("summary").click();
+await page.getByRole("tab", { name: /История/ }).click();
 await page.getByRole("button", { name: "Показать" }).first().click();
 await page.locator(".h-text").getByText("You are a senior business analyst").waitFor();
 step("history shows the previous version");
 
+await page.getByRole("tab", { name: "Попробовать" }).click();
 await page.getByRole("button", { name: "Запустить" }).click();
 await page.locator(".result h4", { hasText: "Глоссарий" }).waitFor({ timeout: 15000 });
 await shot("skills.png");
@@ -84,6 +86,7 @@ await list.getByRole("button", { name: /Проверка качества/ }).cl
 await page.locator(".e-title h2", { hasText: "Проверка качества" }).waitFor();
 await page.getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
+await page.getByRole("tab", { name: "Правила" }).click();
 await page.getByRole("button", { name: "Добавить правило" }).click();
 await page.locator(".rule").last().getByPlaceholder("Название").fill("Нет роли");
 await page.locator(".rule").last().getByPlaceholder("Что проверять").fill("Требование не называет роль пользователя.");
