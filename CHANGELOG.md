@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.9.2 (2026-09-28): Jira without the Keychain
+
+- Connecting Jira no longer involves the macOS Keychain, which kept asking for access. You
+  sign in in the browser as before, and the app keeps the sign-in in a private file in its own
+  data folder (readable only by your user account, like the Anthropic key). **Отключить**
+  removes it.
+- Old Keychain entries named "RequirementsWorkbench.atlassian" are no longer used. You can
+  delete them in Keychain Access, or just leave them.
+
 ## 2.9.1 (2026-09-28): Output language, Jira sign-in fix
 
 - **Язык результатов per project** (Settings → Проект): Как в источниках / Русский / English.
