@@ -70,7 +70,7 @@ def test_rebuild_keeps_pinned_items(store):
     titles = [i["title"] for i in store.backlog(pid)]
     assert "Своя история" in titles
     assert any(i["body"] == "Отредактировано аналитиком" for i in store.backlog(pid))
-    assert sum(t == "Карточка при звонке" for t in titles) == 2       # the pinned one + the new one
+    assert sum(t == "Карточка при звонке" for t in titles) == 1, "the edited story stands in for the regenerated one"
     assert store.get_backlog_item(mine["id"])["pinned"]
 
 

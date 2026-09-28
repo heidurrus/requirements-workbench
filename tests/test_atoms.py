@@ -220,8 +220,8 @@ def test_bulk_update_in_one_go_with_audit(store):
 
 
 @pytest.mark.parametrize("items,match", [
-    ([], "nothing"), ([{"id": "x"}], "status or type"), ([{"id": "x", "status": "merged"}], "status"),
-    ([{"id": "x", "type": "epic"}], "type"), ([{"id": "x", "status": "accepted", "statement": "y"}], "only status and type"),
+    ([], "nothing"), ([{"id": "x"}], "status, type or priority"), ([{"id": "x", "status": "merged"}], "status"),
+    ([{"id": "x", "type": "epic"}], "type"), ([{"id": "x", "status": "accepted", "statement": "y"}], "only status, type"),
 ])
 def test_bulk_update_validates(store, items, match):
     pid, *_ = _two_atoms(store)
@@ -229,11 +229,11 @@ def test_bulk_update_validates(store, items, match):
         store.bulk_update_atoms(pid, items)
 
 
-def test_bulk_accepting_a_conflict_question_closes_the_conflict(store):
+def test_bulk_accepting_a_conflict_question_keeps_the_conflict_open(store):
     pid, a, b = _two_atoms(store)
     q = store.resolve_conflict(store.add_conflict(pid, a, b, "2 или 5?"), "question")["question_atom"]
     store.bulk_update_atoms(pid, [{"id": q, "status": "accepted"}])
-    assert store.list_conflicts(pid) == []
+    assert store.list_conflicts(pid)[0]["status"] == "awaiting_answer", "only a recorded answer settles it (PM-21)"
 
 
 @pytest.mark.parametrize("action,expect", [
@@ -268,8 +268,35 @@ def test_conflict_question_waits_for_the_answer(store):
     assert question["type"] == "question" and "2 или 5 секунд?" in question["statement"]
     assert len(question["evidence"]) == 2
     assert store.list_conflicts(pid)[0]["status"] == "awaiting_answer"
-    store.answer_question(q["question_atom"])
-    assert store.list_conflicts(pid) == []
+    store.update_atom(q["question_atom"], status="accepted")
+    assert store.list_conflicts(pid)[0]["status"] == "awaiting_answer", "accepting a question answers nothing"
+    store.answer_question(q["question_atom"], "Пять секунд", source="письмо от 12.03")
+    assert store.list_conflicts(pid)[0]["status"] == "awaiting_answer", "an answer alone doesn't pick a side"
+    answered = store.answer_question(q["question_atom"], "Пять секунд", source="письмо от 12.03", resolution="keep_b")
+    assert answered["q_state"] == "answered" and answered["answer"] == "Пять секунд"
+    assert store.list_conflicts(pid) == [] and store.get_atom(a)["status"] == "rejected"
+    assert store.list_conflicts(pid, include_resolved=True)[0]["question_atom"] == q["question_atom"]
+
+
+def test_ba_can_add_an_atom_and_action_items_are_kept(store):
+    pid, a, b = _two_atoms(store)
+    own = store.add_ba_atom(pid, "functional", "Экспорт в CSV", note="из чата с заказчиком")
+    assert own["status"] == "accepted" and own["origin"] == "ba" and own["evidence"] == []
+    store.add_actions(pid, None, [{"text": "Отправить макеты", "owner": "Иван"}, {"text": " "}])
+    [act] = store.list_actions(pid)
+    assert act["text"] == "Отправить макеты" and act["status"] == "open"
+    store.update_action(act["id"], status="done")
+    assert store.list_actions(pid)[0]["status"] == "done"
+
+
+def test_reject_reason_and_priority(store):
+    pid, a, b = _two_atoms(store)
+    with pytest.raises(StoreError):
+        store.update_atom(a, status="rejected", reject_reason="nope")
+    assert store.update_atom(a, status="rejected", reject_reason="out_of_scope")["reject_reason"] == "out_of_scope"
+    assert store.update_atom(a, status="accepted")["reject_reason"] is None, "a reason only lives on rejected atoms"
+    store.bulk_update_atoms(pid, [{"id": a, "priority": "must"}, {"id": b, "priority": "could"}])
+    assert (store.get_atom(a)["priority"], store.get_atom(b)["priority"]) == ("must", "could")
 
 
 def test_migrates_a_v2_library(tmp_path):
@@ -321,7 +348,12 @@ def test_api_extract_review_and_resolve(client, app_module, lib, monkeypatch):
     r = client.post(f"/api/conflicts/{conflict['id']}/resolve", json={"action": "question"}).get_json()
     assert r["status"] == "awaiting_answer"
     client.patch(f"/api/atoms/{r['question_atom']}", json={"status": "accepted"})
+    assert client.get(f"/api/projects/{pid}/conflicts").get_json()["conflicts"][0]["status"] == "awaiting_answer"
+    ans = client.post(f"/api/atoms/{r['question_atom']}/answer", json={"answer": "Да", "resolution": "keep_a"}).get_json()
+    assert ans["q_state"] == "answered" and ans["stats"]["open_conflicts"] == 0
     assert client.get(f"/api/projects/{pid}/conflicts").get_json()["conflicts"] == []
+    own = client.post(f"/api/projects/{pid}/atoms", json={"statement": "Своё требование"}).get_json()
+    assert own["origin"] == "ba" and own["status"] == "accepted"
     assert any(e["action"] == "extract_atoms" for e in lib.audit("source", sid))
 
 

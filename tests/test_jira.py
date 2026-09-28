@@ -389,3 +389,61 @@ def test_connect_opens_a_private_window_by_default(client, app_module, lib, monk
     assert r["opened_private"] == "Google Chrome" and opened == ["https://mcp.atlassian.com/v1/authorize?x=1"]
     r = client.post("/api/jira/connect", json={"private": False}).get_json()
     assert r["opened_private"] is None and len(opened) == 1
+
+
+# ── rebuild keeps Jira identity (PM-07) ──────────────────────────────────────
+
+def test_rebuilt_backlog_updates_the_same_issues_instead_of_duplicating(store):
+    pid = with_backlog(store)
+    fake = FakeJira()
+    target(store, pid, fake)
+    first = jira.push(store, pid, fake, [r["item_id"] for r in rows_by(jira.plan(store, pid, fake), "create")])
+    keys = {d["key"] for d in first["done"]}
+    sub = next(i for i in store.backlog(pid) if i["kind"] == "subtask")
+    store.set_backlog_included(pid, [sub["id"]], True)
+    reply = decomposition()
+    reply["epics"][0]["stories"][0]["story"] = "Как старший оператор, я хочу видеть карточку сразу"
+    r = backlog.build(store, pid, PREFS, "k", "", complete=llm(reply))
+    assert r["matched"] >= 4 and r["orphans"] == []
+    items = store.backlog(pid)
+    assert {i["jira_key"] for i in items if i.get("jira_key")} == keys, "Jira links survive the rebuild"
+    assert next(i for i in items if i["id"] == sub["id"])["included"], "the BA's tick survives too"
+    plan = jira.plan(store, pid, fake)
+    assert plan["counts"]["create"] == 1, "only the sub-task that was never pushed"
+    assert [r["kind"] for r in rows_by(plan, "update")] == ["story"]
+    jira.push(store, pid, fake, [r["item_id"] for r in rows_by(plan, "update")])
+    assert len(fake.issues) == len(keys), "no duplicates"
+
+
+def test_requirement_removed_on_rebuild_leaves_an_orphan_to_handle(store):
+    pid = with_backlog(store)
+    fake = FakeJira()
+    target(store, pid, fake)
+    jira.push(store, pid, fake, [r["item_id"] for r in rows_by(jira.plan(store, pid, fake), "create")])
+    reply = decomposition()
+    reply["epics"][0]["title"] = "Совсем другой эпик"
+    reply["epics"][0]["stories"] = [reply["epics"][0]["stories"][1]]          # FR-1 story gone (FR-77 is fake)
+    r = backlog.build(store, pid, PREFS, "k", "", complete=llm(reply))
+    orphan_keys = {o["key"] for o in r["orphans"]}
+    assert orphan_keys and orphan_keys == {o["key"] for o in store.jira_orphans(pid)}
+    plan = jira.plan(store, pid, fake)
+    assert {o["key"] for o in plan["orphans"]} == orphan_keys
+    store.forget_jira_orphan(pid, sorted(orphan_keys)[0])
+    assert len(store.jira_orphans(pid)) == len(orphan_keys) - 1
+
+
+def test_local_only_projects_keep_client_quotes_out_of_jira(store):
+    pid = with_backlog(store)
+    fake = FakeJira()
+    target(store, pid, fake)
+    store.update_project(pid, local_only=True)
+    story = next(i for i in store.backlog(pid) if i["kind"] == "story")
+    store.update_backlog_item(story["id"], priority="must")
+    jira.push(store, pid, fake, [r["item_id"] for r in rows_by(jira.plan(store, pid, fake), "create")])
+    issue = fake.issues[store.get_backlog_item(story["id"])["jira_key"]]
+    desc = issue["fields"]["description"]
+    assert "FR-1" in desc and "«карточка клиента»" not in desc, "reference only, no verbatim quote"
+    assert "moscow-must" in issue["fields"]["labels"]
+    store.update_project(pid, jira_quotes="full")
+    assert jira.plan(store, pid, fake)["quotes"] == "full"
+    assert jira.local_status(store, pid)["pending"] >= 1, "the policy change shows as work to push"

@@ -35,7 +35,7 @@ def test_projects_create_rename_archive(store):
 def test_default_project_created_once(store):
     a = store.ensure_default_project()
     b = store.ensure_default_project()
-    assert a["id"] == b["id"] and a["name"] == "My project"
+    assert a["id"] == b["id"] and a["name"] == "Мой проект"
 
 
 def test_current_project(store):

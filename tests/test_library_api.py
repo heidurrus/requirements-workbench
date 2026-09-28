@@ -29,7 +29,7 @@ def import_vtt(client, name="Встреча.vtt", project_id=None):
 def test_projects_create_switch_rename_archive(client, lib):
     body = client.get("/api/projects").get_json()
     default = body["current_project_id"]
-    assert [p["name"] for p in body["projects"]] == ["My project"]
+    assert [p["name"] for p in body["projects"]] == ["Мой проект"]
 
     crm = client.post("/api/projects", json={"name": "CRM для контакт-центра"}).get_json()
     assert client.post("/api/projects", json={"name": "crm для контакт-центра"}).status_code == 400
@@ -45,7 +45,7 @@ def test_projects_create_switch_rename_archive(client, lib):
 
 
 def test_imported_transcript_is_saved_in_the_right_project(client, lib):
-    client.get("/api/projects")                       # the app always starts with "My project"
+    client.get("/api/projects")                       # the app always starts with "Мой проект"
     other = client.post("/api/projects", json={"name": "Other"}).get_json()
     a = import_vtt(client)
     b = import_vtt(client, "Второй.vtt", project_id=other["id"])
@@ -189,8 +189,9 @@ def test_prose_import_becomes_a_document(client, lib):
 def test_project_status_counts_for_the_sidebar(client, lib):
     pid = client.get("/api/projects").get_json()["current_project_id"]
     empty = client.get(f"/api/projects/{pid}/status").get_json()
-    assert empty["sources"] == 0 and empty["atoms"] == {"review": 0, "total": 0, "conflicts": 0}
-    assert empty["document"] == {"version": None, "stale": False}
+    assert empty["sources"] == 0 and empty["atoms"] == {"review": 0, "total": 0, "accepted": 0, "conflicts": 0}
+    assert empty["document"]["version"] is None and not empty["document"]["stale"]
+    assert empty["open_items"] == {"questions": 0, "actions": 0}
     assert empty["backlog"]["items"] == 0 and empty["export"]["pushed"] == 0
     import_vtt(client, project_id=pid)
     assert client.get(f"/api/projects/{pid}/status").get_json()["sources"] == 1

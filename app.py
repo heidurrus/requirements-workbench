@@ -1,3 +1,4 @@
+import functools
 import io
 import json
 import os
@@ -23,7 +24,7 @@ from core.ffmpeg import ensure_ffmpeg_on_path
 from core import macos_audio, settings
 from core.summarize import SummaryError, summarize
 from core.atoms import extract_atoms
-from core import backlog, frd, jira, skills
+from core import backlog, exports, frd, jira, skills, suggest
 from core.atlassian_auth import MCP_URL, AtlassianAuth, AuthError, AuthRequired
 from core.mcp_client import McpError, McpSession
 from core import local_llm
@@ -247,7 +248,7 @@ def run_job(job_id, upload_path, audio_path, model_name, diarize, word_timestamp
                 library.fail_source(source_id, error)
             else:
                 library.save_transcript(source_id, result, asr_model=model_name)
-                result = {**result, "source_id": source_id}
+                result = {**result, "source_id": source_id, "extract_job": _after_transcription(source_id)}
         except Exception as e:  # never lose the job result because saving failed
             error = error or e
     # Report completion only after cleanup and saving, so "done" means it's all in place.
@@ -865,9 +866,10 @@ def api_sources(project_id):
 
 @app.route("/api/projects/<project_id>/status")
 def api_project_status(project_id):
-    """Cheap per-step counts for the sidebar badges."""
+    """Per-step state for the sidebar and the project home. Staleness flows downstream (PM-03):
+    a changed atom makes the document stale, which makes the backlog and the Jira step stale too."""
     try:
-        library.get_project(project_id)
+        project = library.get_project(project_id)
     except StoreError as e:
         return jsonify({"error": str(e)}), 404
     stats = library.atom_stats(project_id)
@@ -875,15 +877,181 @@ def api_project_status(project_id):
     latest = library.version(doc["id"]) if doc else None
     stale = frd.staleness(library, project_id, latest) if latest else None
     items = library.backlog(project_id)
-    pushed = [i for i in items if i.get("jira_key")]
+    bl_stale = backlog.stale(library, project_id)["stale"] if items else False
+    doc_stale = bool(stale and stale["stale"])
+    local = jira.local_status(library, project_id)
+    questions = [a for a in library.list_atoms(project_id, type="question") if a["status"] != "rejected"]
+    actions = [a for a in library.list_actions(project_id) if a["status"] == "open"]
+    sources = library.list_sources(project_id)
     return jsonify({
-        "sources": len(library.list_sources(project_id)),
-        "atoms": {"review": stats["pending"], "total": stats["total"], "conflicts": stats["open_conflicts"]},
-        "document": {"version": latest["number"] if latest else None, "stale": bool(stale and stale["stale"])},
+        "sources": len(sources),
+        "processing": sum(1 for s in sources if s["status"] == "processing"),
+        "atoms": {"review": stats["pending"], "total": stats["total"], "accepted": stats["accepted"],
+                  "conflicts": stats["open_conflicts"]},
+        "document": {"version": latest["number"] if latest else None, "stale": doc_stale,
+                     "status": latest.get("status") if latest else None, "changed": (stale or {}).get("changed", 0)
+                     + (stale or {}).get("added", 0) + (stale or {}).get("removed", 0)},
         "backlog": {"items": len(items), "included": sum(1 for i in items if i["included"]),
-                    **{k: v for k, v in backlog.stale(library, project_id).items() if k == "stale"}},
-        "export": {"pushed": len(pushed)},
+                    "stale": bl_stale or (doc_stale and bool(items))},
+        "export": {"pushed": local["pushed"], "pending": local["pending"],
+                   "stale": bool(local["pushed"]) and (bool(local["pending"]) or doc_stale or bl_stale),
+                   "orphans": len(library.jira_orphans(project_id))},
+        "open_items": {"questions": sum(1 for q in questions if q.get("q_state") != "answered"),
+                       "actions": len(actions)},
+        "project": {"name": project["name"], "local_only": project["local_only"]},
     })
+
+
+# ── open items, activity, project files (PM review) ─────────────────────────
+
+@app.route("/api/projects/<project_id>/actions")
+def api_actions(project_id):
+    return _store_call(lambda: {"actions": library.list_actions(project_id)})
+
+
+@app.route("/api/projects/<project_id>/actions", methods=["POST"])
+def api_add_action(project_id):
+    d = request.get_json(silent=True) or {}
+
+    def add():
+        library.get_project(project_id)
+        library.add_actions(project_id, d.get("source_id"), [{"text": d.get("text"), "owner": d.get("owner"), "due": d.get("due")}])
+        return {"actions": library.list_actions(project_id)}
+    return _store_call(add)
+
+
+@app.route("/api/actions/<action_id>", methods=["PATCH"])
+def api_update_action(action_id):
+    return _store_call(lambda: (library.update_action(action_id, **(request.get_json(silent=True) or {})), {"ok": True})[1])
+
+
+@app.route("/api/actions/<action_id>", methods=["DELETE"])
+def api_delete_action(action_id):
+    return _store_call(lambda: (library.delete_action(action_id), {"ok": True})[1])
+
+
+@app.route("/api/projects/<project_id>/followup")
+def api_followup(project_id):
+    """The follow-up email: open questions, conflicts waiting for the client, action items (PM-15)."""
+    try:
+        project = library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    lang = request.args.get("lang") or ({"ru": "ru", "en": "en"}.get(project.get("language")) or "ru")
+    return jsonify(exports.followup(library, project_id, lang))
+
+
+@app.route("/api/projects/<project_id>/followup/sent", methods=["POST"])
+def api_followup_sent(project_id):
+    """The BA sent the email: its questions are now "asked"."""
+    ids = (request.get_json(silent=True) or {}).get("question_ids") or []
+
+    def mark():
+        for qid in ids:
+            atom = library.get_atom(qid)
+            if atom["project_id"] == project_id and atom.get("q_state") != "answered":
+                library.update_atom(qid, q_state="asked")
+        library.audit_event("project", project_id, "followup_sent", after={"questions": len(ids)})
+        return {"marked": len(ids)}
+    return _store_call(mark)
+
+
+@app.route("/api/projects/<project_id>/activity")
+def api_activity(project_id):
+    since = request.args.get("since")
+    return _store_call(lambda: {"entries": library.activity(project_id, min(int(request.args.get("limit", 100)), 500),
+                                                            float(since) if since else None)})
+
+
+@app.route("/api/projects/<project_id>/suggestions")
+def api_suggestions(project_id):
+    """Rules proposed from repeated review decisions (bet 4.3)."""
+    lang = request.args.get("lang") or "ru"
+    return _store_call(lambda: {"suggestions": suggest.suggestions(library, project_id, lang)})
+
+
+@app.route("/api/projects/<project_id>/suggestions/apply", methods=["POST"])
+def api_apply_suggestion(project_id):
+    d = request.get_json(silent=True) or {}
+    if not (d.get("rule") or "").strip():
+        return jsonify({"error": "no rule"}), 400
+    try:
+        name = suggest.apply(library, project_id, d["rule"], d.get("lang") or "ru")
+    except (StoreError, skills.SkillError) as e:
+        return jsonify({"error": str(e)}), 400
+    library.audit_event("project", project_id, "rule_from_review", after={"skill": name, "rule": d["rule"][:500]})
+    return jsonify({"skill": name})
+
+
+@app.route("/api/projects/<project_id>/jira/orphans/<key>/forget", methods=["POST"])
+def api_forget_orphan(project_id, key):
+    return _store_call(lambda: (library.forget_jira_orphan(project_id, key), {"orphans": library.jira_orphans(project_id)})[1])
+
+
+@app.route("/api/projects/<project_id>/export.zip")
+def api_export_project(project_id):
+    """The whole project in one file, to hand over or back up (PM-31)."""
+    try:
+        data = library.export_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("project.json", json.dumps(data, ensure_ascii=False))
+        for src in data["tables"]["sources"]:
+            folder = library.source_dir(src)
+            for name in (os.listdir(folder) if os.path.isdir(folder) else []):
+                path = os.path.join(folder, name)
+                if os.path.isfile(path):
+                    z.write(path, f"sources/{src['id']}/{name}")
+    library.audit_event("project", project_id, "export_project")
+    name = "".join(ch for ch in data["tables"]["projects"][0]["name"] if ch not in '\\/:*?"<>|').strip() or "project"
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=f"{name}.rwproject.zip", mimetype="application/zip")
+
+
+@app.route("/api/projects/import", methods=["POST"])
+def api_import_project():
+    upload = request.files.get("file")
+    if not upload:
+        return jsonify({"error": "attach a .rwproject.zip file"}), 400
+    import zipfile
+    try:
+        z = zipfile.ZipFile(io.BytesIO(upload.read()))
+        data = json.loads(z.read("project.json"))
+        project = library.import_project(data)
+    except (zipfile.BadZipFile, KeyError, ValueError):
+        return jsonify({"error": "this is not a Requirements Workbench project file"}), 400
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 400
+    for src in data["tables"].get("sources") or []:
+        folder = library.source_dir(library.get_source(src["id"]))
+        prefix = f"sources/{src['id']}/"
+        for name in z.namelist():
+            if name.startswith(prefix) and "/" not in name[len(prefix):] and ".." not in name:
+                with open(os.path.join(folder, name[len(prefix):]), "wb") as f:
+                    f.write(z.read(name))
+    return jsonify(project)
+
+
+@app.route("/api/ai/check", methods=["POST"])
+def api_ai_check():
+    """Setup checklist "Проверить": is the AI for this project ready to answer? (PM-26)"""
+    pid = (request.get_json(silent=True) or {}).get("project_id")
+    project = library.get_project(pid) if pid else library.current_project()
+    prefs, api_key, problem = _ai_prefs(project)
+    if problem:
+        body, code = problem
+        return jsonify({"ok": False, **body.get_json()}), 200
+    try:
+        from core.llm import complete_json
+        complete_json("Reply with ok=true.", "ping", {"type": "object", "properties": {"ok": {"type": "boolean"}},
+                                                      "required": ["ok"], "additionalProperties": False},
+                      prefs, api_key, OLLAMA_URL)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+    return jsonify({"ok": True, "provider": prefs["llm_provider"], "model": model_name(prefs)})
 
 
 @app.route("/api/sources/<source_id>", methods=["GET"])
@@ -896,7 +1064,23 @@ def api_source(source_id):
     return jsonify({**source, "segments": segments, "speaker_names": speaker_names,
                     "text": library.transcript_text(source_id) if segments else "",
                     "summary": library.latest_summary(source_id),
+                    "atom_marks": library.atom_marks(source_id),
                     "audio_url": f"/api/sources/{source_id}/audio" if source.get("audio_file") else None})
+
+
+@app.route("/api/sources/<source_id>/segments/<int:idx>", methods=["PATCH"])
+def api_edit_segment(source_id, idx):
+    """Correct a recognition error; returns atoms whose quote no longer matches (PM-25)."""
+    return _store_call(library.edit_segment, source_id, idx, (request.get_json(silent=True) or {}).get("text"))
+
+
+@app.route("/api/consent", methods=["POST"])
+def api_consent():
+    """The BA confirmed the participants know the call is recorded (FR-SRC-02, PM-05)."""
+    d = request.get_json(silent=True) or {}
+    pid = d.get("project_id") or library.current_project()["id"]
+    library.audit_event("project", pid, "recording_consent", after={"note": (d.get("note") or "")[:200]})
+    return jsonify({"ok": True})
 
 
 @app.route("/api/sources/<source_id>", methods=["PATCH"])
@@ -963,13 +1147,13 @@ def api_audit():
 _extracting = {}          # source_id → job_id, so a double click doesn't run two extractions
 
 
-def _run_extraction(job_id, source_id, prefs, api_key):
+def _run_extraction(job_id, source_id, prefs, api_key, note=None):
     def progress(done, total, message):
         jobs.set_progress(job_id, int(100 * done / max(total, 1)), message)
     try:
         project_id = library.get_source(source_id)["project_id"]
         result = extract_atoms(library, source_id, prefs, api_key, OLLAMA_URL, progress=progress,
-                               skillset=_skillset(project_id))
+                               skillset=_skillset(project_id), note=note)
     except SummaryError as e:
         jobs.fail(job_id, e)
     except Exception as e:  # unexpected: keep the message, don't crash the worker
@@ -995,11 +1179,34 @@ def api_extract_atoms(source_id):
     prefs, api_key, problem = _ai_prefs(library.get_project(source["project_id"]))
     if problem:
         return problem
+    note = (request.get_json(silent=True) or {}).get("note")
+    return jsonify(_start_extraction(source_id, prefs, api_key, note))
+
+
+def _start_extraction(source_id, prefs, api_key, note=None):
     job_id = jobs.create()
     _extracting[source_id] = job_id
     jobs.set_progress(job_id, 0, "Reading the source…")
-    threading.Thread(target=_run_extraction, args=(job_id, source_id, prefs, api_key), daemon=True).start()
-    return jsonify({"job_id": job_id, "source_id": source_id})
+    threading.Thread(target=_run_extraction, args=(job_id, source_id, prefs, api_key, note), daemon=True).start()
+    return {"job_id": job_id, "source_id": source_id}
+
+
+def _after_transcription(source_id):
+    """PM-13: when the project wants it and the AI is set up, go straight on to requirement extraction."""
+    try:
+        source = library.get_source(source_id)
+        project = library.get_project(source["project_id"])
+    except StoreError:
+        return None
+    if not project.get("auto_extract") or source["status"] != "ready" or source_id in _extracting:
+        return None
+    try:                                    # a convenience: it must never fail the transcription itself
+        prefs, api_key, problem = _ai_prefs(project)
+        if problem:
+            return None
+        return _start_extraction(source_id, prefs, api_key)["job_id"]
+    except Exception:
+        return None
 
 
 @app.route("/api/projects/<project_id>/atoms")
@@ -1022,10 +1229,31 @@ def api_update_atom(atom_id):
 
     def update():
         atom = library.update_atom(atom_id, **changes)
-        if atom["type"] == "question" and changes.get("status") == "accepted":
-            library.answer_question(atom_id)      # answering a conflict's question closes the conflict
         return {**atom, "stats": library.atom_stats(atom["project_id"])}
     return _store_call(update)
+
+
+@app.route("/api/atoms/<atom_id>/answer", methods=["POST"])
+def api_answer_question(atom_id):
+    """The client's answer to a question; for a conflict's question it may settle the conflict (PM-21)."""
+    d = request.get_json(silent=True) or {}
+
+    def answer():
+        atom = library.answer_question(atom_id, d.get("answer"), d.get("source"), d.get("resolution"), d.get("statement"))
+        return {**atom, "stats": library.atom_stats(atom["project_id"])}
+    return _store_call(answer)
+
+
+@app.route("/api/projects/<project_id>/atoms", methods=["POST"])
+def api_add_ba_atom(project_id):
+    """A requirement the BA writes down themselves (PM-16)."""
+    d = request.get_json(silent=True) or {}
+
+    def add():
+        atom = library.add_ba_atom(project_id, d.get("type") or "functional", d.get("statement"), d.get("note"),
+                                   d.get("source_id"), d.get("segment_idx"))
+        return {**atom, "stats": library.atom_stats(project_id)}
+    return _store_call(add)
 
 
 @app.route("/api/projects/<project_id>/atoms/bulk", methods=["POST"])
@@ -1107,9 +1335,9 @@ def api_document(project_id):
                     "building": job if job and (jobs.get(job) or {}).get("status") == "processing" else None})
 
 
-def _run_build(job_id, project_id, prefs, api_key, mode):
+def _run_build(job_id, project_id, prefs, api_key, mode, note=None):
     try:
-        result = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode=mode,
+        result = frd.build(library, project_id, prefs, api_key, OLLAMA_URL, mode=mode, note=note,
                            progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg), skillset=_skillset(project_id))
     except (frd.BuildError, SummaryError) as e:
         jobs.fail(job_id, e)
@@ -1127,7 +1355,8 @@ def api_build_document(project_id):
         project = library.get_project(project_id)
     except StoreError as e:
         return jsonify({"error": str(e)}), 404
-    mode = (request.get_json(silent=True) or {}).get("mode", "changed")
+    body = request.get_json(silent=True) or {}
+    mode, note = body.get("mode", "changed"), body.get("note")
     if mode not in ("changed", "full"):
         return jsonify({"error": "mode must be changed or full"}), 400
     if not library.atom_stats(project_id)["accepted"]:
@@ -1141,7 +1370,7 @@ def api_build_document(project_id):
     job_id = jobs.create()
     _building[project_id] = job_id
     jobs.set_progress(job_id, 0, "Writing the document…")
-    threading.Thread(target=_run_build, args=(job_id, project_id, prefs, api_key, mode), daemon=True).start()
+    threading.Thread(target=_run_build, args=(job_id, project_id, prefs, api_key, mode, note), daemon=True).start()
     return jsonify({"job_id": job_id})
 
 
@@ -1160,6 +1389,92 @@ def api_document_diff(document_id):
     if not new or not old or old["number"] == new["number"]:
         return jsonify({"error": "there is no earlier version to compare with"}), 400
     return jsonify({"from": old["number"], "to": new["number"], "changes": frd.diff(old, new)})
+
+
+@app.route("/api/documents/<document_id>/versions/<int:number>/status", methods=["POST"])
+def api_version_status(document_id, number):
+    """Sign-off: draft / review / approved (PM-34)."""
+    status = (request.get_json(silent=True) or {}).get("status")
+    return _store_call(lambda: (library.set_version_status(document_id, number, status),
+                                {"versions": library.versions(document_id), "baseline": library.baseline(document_id)})[1])
+
+
+@app.route("/api/documents/<document_id>/changes")
+def api_document_changes(document_id):
+    """Change requests: everything that differs from the approved baseline, and what it touches downstream."""
+    try:
+        doc = library.get_document(document_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    base_n = library.baseline(document_id)
+    latest = library.version(document_id)
+    if not base_n or not latest or latest["number"] == base_n:
+        return jsonify({"baseline": base_n, "changes": []})
+    changes = frd.diff(library.version(document_id, base_n), latest)
+    by_ref = {}
+    for item in library.backlog(doc["project_id"]):
+        for r in item.get("refs") or []:
+            by_ref.setdefault(r["id"], []).append({"title": item["title"], "key": item.get("jira_key"),
+                                                   "url": item.get("jira_url")})
+    for c in changes:
+        c["impact"] = by_ref.get(c["id"], [])
+    return jsonify({"baseline": base_n, "to": latest["number"], "changes": changes})
+
+
+@app.route("/api/documents/<document_id>/export.md")
+def api_export_markdown(document_id):
+    try:
+        doc = library.get_document(document_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    version = library.version(document_id, request.args.get("version"))
+    if not version:
+        return jsonify({"error": "build the document first"}), 400
+    lang = version["content"].get("language", "ru")
+    text = exports.markdown(doc, version, library.free_blocks(document_id), lang)
+    library.audit_event("document", document_id, "export", after={"version": version["number"], "format": "md"})
+    name = "".join(ch for ch in doc["title"] if ch not in '\\/:*?"<>|').strip() or "FRD"
+    return send_file(io.BytesIO(text.encode("utf-8")), as_attachment=True, download_name=f"{name} v{version['number']}.md",
+                     mimetype="text/markdown; charset=utf-8")
+
+
+@app.route("/api/projects/<project_id>/traceability.xlsx")
+def api_traceability(project_id):
+    """Quote → atom → FR → story → Jira, one row per piece of evidence (PM-28)."""
+    try:
+        project = library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    lang = request.args.get("lang") or "ru"
+    rows, version = exports.traceability_rows(library, project_id, lang)
+    if version is None:
+        return jsonify({"error": "build the document first"}), 400
+    name = "".join(ch for ch in project["name"] if ch not in '\\/:*?"<>|').strip() or "project"
+    return send_file(io.BytesIO(exports.xlsx(rows)), as_attachment=True,
+                     download_name=f"{name} — traceability v{version['number']}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/api/documents/<document_id>/review", methods=["POST"])
+def api_import_review(document_id):
+    """A reviewed .docx comes back: each comment becomes a line of a new source, tagged with its FR id (bet 4.4)."""
+    try:
+        doc = library.get_document(document_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    upload = request.files.get("file")
+    if not upload:
+        return jsonify({"error": "attach the reviewed .docx"}), 400
+    found = exports.docx_comments(upload.read())
+    if not found:
+        return jsonify({"error": "No review comments found in this file."}), 400
+    title = f"{os.path.splitext(upload.filename or 'review')[0]} — замечания"
+    source = library.create_source(doc["project_id"], "document", title, original_filename=upload.filename)
+    segments = [{"speaker": author or None, "text": (f"[{req}] " if req else "") + text +
+                 (f" (к тексту: «{anchor}»)" if anchor else "")} for req, author, text, anchor in found]
+    library.save_transcript(source["id"], {"segments": segments, "text": "\n".join(s["text"] for s in segments)})
+    return jsonify({"source_id": source["id"], "comments": len(found),
+                    "linked": sum(1 for req, *_ in found if req)})
 
 
 @app.route("/api/documents/<document_id>/export.docx")
@@ -1308,7 +1623,8 @@ def api_backlog_build(project_id):
     doc = library.document(project_id)
     if library.version(doc["id"]) is None:
         return jsonify({"error": "Build the document first: the backlog is made from its requirements."}), 400
-    return _start_backlog_job(project_id, backlog.build, "Writing stories…")
+    note = (request.get_json(silent=True) or {}).get("note")
+    return _start_backlog_job(project_id, functools.partial(backlog.build, note=note), "Writing stories…")
 
 
 @app.route("/api/projects/<project_id>/backlog/invest", methods=["POST"])
