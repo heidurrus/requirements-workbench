@@ -203,6 +203,7 @@
             </select>
             <button class="btn btn-primary" onclick={exportDocx}><Icon name="download" /> {t("doc.export")}</button>
           </div>
+          <button class="btn btn-ghost" onclick={() => go("/backlog")}>{t("doc.to_backlog")} →</button>
         {/if}
       </div>
     {/if}

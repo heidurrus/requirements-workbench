@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.8.0 (2026-09-28): Increment 4a, decomposition
+
+- **A new Декомпозиция screen (step 5).** **Собрать бэклог** turns the latest FRD into:
+  - epics, each with the business goal it serves
+  - user stories: "Как <роль>, я хочу …, чтобы …"
+  - acceptance criteria in Дано / Когда / Тогда form, including negative cases
+  - optional technical sub-tasks
+
+  Every story links to its FRD section and requirement (FRD 3.1 · FR-2). Every functional
+  requirement is covered; any the AI misses get a story of their own.
+- **Tickboxes decide what goes to Jira.** Unticking an epic unticks its stories. AI-generated
+  sub-tasks and non-functional requirements start unticked. An NFR can be moved into a
+  story's criteria with one click.
+- **Проверить по INVEST.** Each story is checked (Independent, Negotiable, Valuable,
+  Estimable, Small, Testable), and problems come with a suggested fix you can apply.
+- **Edit everything:** titles, story text, goals and criteria (add or remove), plus adding,
+  reordering and deleting (with undo) epics, stories and sub-tasks. Edited items are pinned,
+  so **Пересобрать** never overwrites them.
+- When the document gets a newer version, the backlog tells you and offers to rebuild.
+- Two new editable skills: **Декомпозиция на истории** and **Проверка INVEST**.
+- The Document screen has a **К декомпозиции** link.
+
 ## 2.7.2 (2026-09-28): Action items are no longer requirements
 
 - Extraction now tells **requirements** (what the system must do) apart from **action items**

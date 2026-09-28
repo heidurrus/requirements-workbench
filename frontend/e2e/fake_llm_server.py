@@ -18,6 +18,18 @@ from core import atoms  # noqa: E402
 def fake_complete(system, user, schema, prefs, api_key, ollama_url):
     props = schema["properties"]
     reqs = re.findall(r"^((?:FR|NFR|Q)-\d+) \[\w+\] (.+?)(?:  \(conflicts.*)?$", user, flags=re.M)
+    if "epics" in props:                                         # backlog: decomposition
+        frs = re.findall(r"^(FR-\d+) \(section [\d.]+\): (.+)$", user, flags=re.M)
+        nfrs = re.findall(r"^(NFR-\d+) \(section", user, flags=re.M)
+        return {"epics": [{"title": "Работа оператора", "goal": "Быстрее обслуживать звонки", "stories": [
+            {"title": t[:60], "story": f"Как оператор, я хочу {t.lower()}, чтобы работать быстрее", "refs": [r],
+             "acceptance": [{"given": "звонок поступил", "when": "оператор открывает карточку", "then": "данные видны"},
+                            {"given": "номер неизвестен", "when": "звонок поступил", "then": "открыт поиск"}],
+             "subtasks": ["API", "Интерфейс"]} for r, t in frs]}],
+            "nfr_links": [{"id": n, "stories_for": [frs[0][0]] if frs else []} for n in nfrs]}
+    if "findings" in props:                                      # backlog: INVEST
+        return {"findings": [{"id": "S1", "letter": "S", "reason": "История слишком большая для спринта.",
+                              "fix": "Разделить на просмотр карточки и поиск по номеру."}]}
     if "groups" in props:                                        # FRD: full build
         return {"purpose": "Документ описывает требования к карточке клиента.", "context": "Операторы колл-центра.",
                 "assumptions": [], "out_of_scope": [],
@@ -42,6 +54,8 @@ def fake_complete(system, user, schema, prefs, api_key, ollama_url):
 app_module.extract_atoms = functools.partial(atoms.extract_atoms, complete=fake_complete)
 atoms.extract_candidates = functools.partial(atoms.extract_candidates, complete=fake_complete)
 app_module.frd.build = functools.partial(app_module.frd.build, complete=fake_complete)
+app_module.backlog.build = functools.partial(app_module.backlog.build, complete=fake_complete)
+app_module.backlog.invest = functools.partial(app_module.backlog.invest, complete=fake_complete)
 app_module.frd.suggest_fix = functools.partial(app_module.frd.suggest_fix, complete=fake_complete)
 app_module.settings.secret = lambda name: "fake-key"
 
