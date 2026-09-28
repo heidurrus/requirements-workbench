@@ -219,7 +219,7 @@ def test_summarize_streams_partial_text_into_the_job(client, app_module, monkeyp
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
     release = threading.Event()
 
-    def fake_summarize(text, prefs, api_key, url, on_delta, title=None):
+    def fake_summarize(text, prefs, api_key, url, on_delta, title=None, skillset=None):
         assert api_key == "sk-ant-x" and title == "call.vtt"
         on_delta("## Итоги\n")
         release.wait(2)

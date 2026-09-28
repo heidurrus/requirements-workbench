@@ -2,38 +2,31 @@
 
 One requirement in the document = one accepted atom, under a stable ID (FR-n,
 NFR-n, Q-n; BR-14), with its sources copied into the version for provenance
-(FR-DOC-03). The model writes the prose (purpose, context, formal wording,
-grouping into sub-sections) and flags quality problems; code enforces the
-structure: every atom appears exactly once, nothing is invented.
+(FR-DOC-03). The *frd* skill decides the document's sections, their titles and
+order (plus extra AI-written sections) and how requirements are worded; the
+*quality* skill decides which checks run. Code enforces the structure: every
+atom appears exactly once, nothing is invented.
 
 "Rebuild" regenerates only what changed since the last version (Q-15, FR-DOC-05
 AC2): unchanged requirements keep their text and place word for word.
 """
 import re
 
+from core import skills
 from core.llm import LLMError, complete_json, for_project, model_name
 
-ORDER = ["purpose", "context", "functional", "nfr", "out_of_scope", "questions"]
-TITLES = {
-    "ru": {"purpose": "Назначение документа", "context": "Контекст и допущения",
-           "functional": "Функциональные требования", "nfr": "Нефункциональные требования",
-           "out_of_scope": "Вне рамок проекта", "questions": "Открытые вопросы",
-           "assumptions": "Допущения", "other": "Прочее", "empty": "В источниках не указано."},
-    "en": {"purpose": "Purpose", "context": "Context and assumptions",
-           "functional": "Functional requirements", "nfr": "Non-functional requirements",
-           "out_of_scope": "Out of scope", "questions": "Open questions",
-           "assumptions": "Assumptions", "other": "Other", "empty": "Not stated in the sources."},
+LABELS = {
+    "ru": {"assumptions": "Допущения", "other": "Прочее"},
+    "en": {"assumptions": "Assumptions", "other": "Other"},
 }
-RULES = ["not_measurable", "vague", "ambiguous", "compound", "untestable"]
-SECTION_OF_TYPE = {"functional": "functional", "nfr": "nfr", "question": "questions"}
+RULES = list(skills.BUILTIN_RULES)
 
-# Subjective words that make a requirement untestable (BR-08). Stems, matched at word start.
+# Fallback vague stems when no quality skill is given (the quality skill's list wins).
 VAGUE = {
     "ru": ["быстр", "удобн", "интуитивн", "современн", "надёжн", "надежн", "дружелюбн", "оптимальн",
-           "эффективн", "гибк", "масштабируем", "по возможности", "при необходимости", "и т\\.\\s?д", "как правило",
-           "максимально", "минимальн\\w* время"],
+           "эффективн", "гибк", "масштабируем", "по возможности", "при необходимости", "как правило", "максимально"],
     "en": ["fast", "quick", "user-friendly", "intuitive", "easy", "modern", "reliable", "efficient", "flexible",
-           "scalable", "as appropriate", "if possible", "etc\\.", "robust", "seamless", "as soon as possible"],
+           "scalable", "as appropriate", "if possible", "robust", "seamless", "as soon as possible"],
 }
 # NFRs about these qualities need a number or threshold to be testable (BR-08); others
 # (access rules, compliance, localisation) are testable without one.
@@ -45,60 +38,72 @@ NUMBER_WORDS = re.compile(r"\d|\b(одн|один|два|двух|три|трё�
                           r"двадцат|тридцат|сорок|пятьдесят|сто|сотн|тысяч|миллион|процент|one|two|three|four|five|"
                           r"six|seven|eight|nine|ten|twenty|thirty|hundred|thousand|million|percent)", re.I)
 
-FULL_SYSTEM = """You are a senior business analyst writing a Functional Requirements Document (FRD) from requirement atoms that the analyst has already reviewed and accepted. Write everything in {language}.
+# What the app adds to the frd skill, whatever the skill says (keeps the structure intact).
+FULL_CONTRACT = """- items: each atom becomes exactly one item with the atom's ID. Keep every number, limit, role and name exactly; never add facts that are not in the atoms.
+- groups: every FR ID goes into exactly one group (a sub-section with a short title).
+- purpose, context, assumptions, out_of_scope: as instructed above; leave empty when the atoms give nothing.
+{extra}- issues: check each FR and NFR item you wrote against the rules below and report only real problems, with a one-sentence message in {language}.
 
-Rules:
-- Each atom becomes exactly one requirement item with the atom's ID. Rewrite its statement as one clear, formal, testable requirement ("The system shall…" / "Система должна…"). Keep every number, limit, role and name exactly; never add facts that are not in the atom. Questions (Q-…) stay questions to the client, phrased clearly.
-- Group the functional requirements (FR-…) into 2–8 sub-sections by capability, each with a short noun-phrase title. Every FR ID goes into exactly one group. (With only a few FRs, one or two groups are fine.)
-- purpose: 2–4 sentences on what the system or feature is and what this document covers, based only on the atoms and the list of sources.
-- context: one short paragraph on the users, their situation and the problem, as far as the atoms show it.
-- assumptions: only assumptions the atoms clearly imply; may be empty.
-- out_of_scope: only things the atoms explicitly exclude; otherwise empty.
-- issues: check each FR and NFR item you wrote against these rules and report only real problems, with a one-sentence message: not_measurable (an NFR without a number or threshold), vague (subjective words like "fast" or "convenient"), ambiguous (can be read in more than one way), compound (several requirements in one), untestable."""
+Quality rules:
+{rules}"""
 
-CHANGED_SYSTEM = """You are a senior business analyst updating a Functional Requirements Document (FRD). Only some requirement atoms are new or changed; everything else stays as it is. Write in {language}.
-
-For each item listed under "To write":
-- text: rewrite the atom's statement as one clear, formal, testable requirement ("The system shall…" / "Система должна…"), keeping every number, limit and name exactly and adding nothing. Questions (Q-…) stay questions to the client.
+CHANGED_CONTRACT = """Only some requirement atoms are new or changed; everything else in the document stays as it is.
+For each item under "To write":
+- text: rewrite it as instructed above, keeping every number, limit and name exactly and adding nothing.
 - group: for a functional requirement (FR-…), the title of the existing sub-section it belongs to, copied exactly, or a short new title if none fits. Empty for other items.
-- issues: report real problems in the text you wrote: not_measurable (an NFR without a number or threshold), vague, ambiguous, compound, untestable."""
+- issues: report real problems in the text you wrote, with a one-sentence message in {language}.
 
-FULL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "purpose": {"type": "string"},
-        "context": {"type": "string"},
-        "assumptions": {"type": "array", "items": {"type": "string"}},
-        "groups": {"type": "array", "items": {
-            "type": "object", "properties": {"title": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}}},
-            "required": ["title", "ids"], "additionalProperties": False}},
-        "items": {"type": "array", "items": {
-            "type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
-            "required": ["id", "text"], "additionalProperties": False}},
-        "out_of_scope": {"type": "array", "items": {"type": "string"}},
-        "issues": {"type": "array", "items": {
-            "type": "object", "properties": {"id": {"type": "string"}, "rule": {"type": "string", "enum": RULES},
-                                             "message": {"type": "string"}},
-            "required": ["id", "rule", "message"], "additionalProperties": False}},
-    },
-    "required": ["purpose", "context", "assumptions", "groups", "items", "out_of_scope", "issues"],
-    "additionalProperties": False,
-}
+Quality rules:
+{rules}"""
 
-CHANGED_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "items": {"type": "array", "items": {
-            "type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "group": {"type": "string"}},
-            "required": ["id", "text", "group"], "additionalProperties": False}},
-        "issues": FULL_SCHEMA["properties"]["issues"],
-    },
-    "required": ["items", "issues"],
-    "additionalProperties": False,
-}
+FIX_CONTRACT = """Keep every fact, number and name from the original; do not invent new facts. If fixing needs a value nobody has stated (for example a time limit), put a placeholder in square brackets, e.g. "[уточнить: N секунд]" or "[to confirm: N seconds]". Return only the rewritten requirement."""
 
-FIX_SYSTEM = """You improve one requirement of a software specification so it passes a quality check. Write in {language}.
-Return the requirement rewritten as one clear, testable statement that fixes the problem named below. Keep every fact, number and name from the original; do not invent new facts. If fixing needs a value nobody has stated (for example a time limit), put a placeholder in square brackets, e.g. "[уточнить: N секунд]" or "[to confirm: N seconds]"."""
+
+def _issue_schema(rule_ids):
+    return {"type": "array", "items": {
+        "type": "object", "properties": {"id": {"type": "string"}, "rule": {"type": "string", "enum": rule_ids},
+                                         "message": {"type": "string"}},
+        "required": ["id", "rule", "message"], "additionalProperties": False}}
+
+
+def full_schema(rule_ids, extra_keys=()):
+    strings = {"type": "array", "items": {"type": "string"}}
+    key = {"type": "string", "enum": list(extra_keys)} if extra_keys else {"type": "string"}
+    return {
+        "type": "object",
+        "properties": {
+            "purpose": {"type": "string"}, "context": {"type": "string"}, "assumptions": strings,
+            "groups": {"type": "array", "items": {
+                "type": "object", "properties": {"title": {"type": "string"}, "ids": strings},
+                "required": ["title", "ids"], "additionalProperties": False}},
+            "items": {"type": "array", "items": {
+                "type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
+                "required": ["id", "text"], "additionalProperties": False}},
+            "out_of_scope": strings,
+            "extra": {"type": "array", "items": {
+                "type": "object", "properties": {"key": key, "text": {"type": "string"}},
+                "required": ["key", "text"], "additionalProperties": False}},
+            "issues": _issue_schema(rule_ids),
+        },
+        "required": ["purpose", "context", "assumptions", "groups", "items", "out_of_scope", "extra", "issues"],
+        "additionalProperties": False,
+    }
+
+
+def changed_schema(rule_ids):
+    return {
+        "type": "object",
+        "properties": {
+            "items": {"type": "array", "items": {
+                "type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"},
+                                                 "group": {"type": "string"}},
+                "required": ["id", "text", "group"], "additionalProperties": False}},
+            "issues": _issue_schema(rule_ids),
+        },
+        "required": ["items", "issues"],
+        "additionalProperties": False,
+    }
+
 
 FIX_SCHEMA = {"type": "object", "properties": {"statement": {"type": "string"}},
               "required": ["statement"], "additionalProperties": False}
@@ -119,28 +124,72 @@ def _lang_name(lang):
     return "Russian" if lang == "ru" else "English"
 
 
+# ── quality ──────────────────────────────────────────────────────────────────
+
+class Quality:
+    """The rules in effect, from the quality skill."""
+
+    def __init__(self, skill=None):
+        meta = skill.meta if skill else {}
+        self.skill = skill
+        self.vague = {k: list(v) for k, v in (meta.get("vague_words") or VAGUE).items()}
+        self.custom = [r for r in meta.get("rules") or [] if isinstance(r, dict)]
+        self.rule_ids = RULES + [r["id"] for r in self.custom]
+        self.titles = {r["id"]: r["title"] for r in self.custom}
+
+    def prompt(self, language):
+        text = skills.instructions(self.skill, language).strip() if self.skill else ""
+        if self.custom:
+            text += "\nYour own rules:\n" + "\n".join(f"- {r['id']}: {r['description']}" for r in self.custom)
+        return text or "Report ambiguous, vague, compound, untestable and not measurable requirements."
+
+    def checks(self, text, kind, lang):
+        """Deterministic checks (BR-08), on top of what the model reports."""
+        issues = []
+        stems = [str(w).strip() for w in self.vague.get(lang, []) if str(w).strip()]
+        found = None
+        for w in stems:
+            m = re.search(r"(?<!\w)" + re.escape(w) + r"\w*", text, flags=re.I)
+            if m:
+                found = m.group(0)
+                break
+        if found:
+            issues.append({"rule": "vague", "message": (f"Нечёткое слово «{found}» — чем его измерить?" if lang == "ru"
+                                                       else f"Vague word “{found}”: how would it be measured?")})
+        if kind == "nfr" and QUANTITATIVE.search(text) and not NUMBER_WORDS.search(text):
+            issues.append({"rule": "not_measurable", "message": ("Нет измеримого критерия (числа или порога)." if lang == "ru"
+                                                                else "No measurable criterion (a number or threshold).")})
+        return issues
+
+    def merge(self, *lists):
+        seen, out = set(), []
+        for lst in lists:
+            for issue in lst or []:
+                if issue.get("rule") in self.rule_ids and issue["rule"] not in seen:
+                    seen.add(issue["rule"])
+                    out.append({"rule": issue["rule"], "message": str(issue.get("message") or "").strip()})
+        return out
+
+
 def rule_checks(text, kind, lang):
-    """Deterministic quality rules (BR-08), on top of what the model reports."""
-    issues = []
-    words = [w for w in VAGUE[lang] if re.search(r"(?<!\w)" + w, text, flags=re.I)]
-    if words:
-        found = re.search(r"(?<!\w)(" + "|".join(words) + r")\w*", text, flags=re.I).group(0)
-        issues.append({"rule": "vague", "message": (f"Нечёткое слово «{found}» — чем его измерить?" if lang == "ru"
-                                                   else f"Vague word “{found}”: how would it be measured?")})
-    if kind == "nfr" and QUANTITATIVE.search(text) and not NUMBER_WORDS.search(text):
-        issues.append({"rule": "not_measurable", "message": ("Нет измеримого критерия (числа или порога)." if lang == "ru"
-                                                            else "No measurable criterion (a number or threshold).")})
-    return issues
+    return Quality().checks(text, kind, lang)
 
 
-def _merge_issues(*lists):
-    seen, out = set(), []
-    for lst in lists:
-        for issue in lst or []:
-            if issue["rule"] in RULES and issue["rule"] not in seen:
-                seen.add(issue["rule"])
-                out.append({"rule": issue["rule"], "message": issue["message"].strip()})
-    return out
+# ── document structure (from the frd skill) ──────────────────────────────────
+
+def section_spec(skill, lang):
+    """[(key, title, instructions)] in the skill's order."""
+    return [(s["key"], skills.title_text(s.get("title"), lang), str(s.get("instructions") or "").strip())
+            for s in skill.meta.get("sections") or []]
+
+
+def _extra_contract(spec):
+    custom = [(k, t, i) for k, t, i in spec if k not in skills.FRD_KINDS]
+    if not custom:
+        return "- extra: return an empty list.\n"
+    lines = "\n".join(f"  - {k} (“{t}”): {i}" for k, t, i in custom)
+    return ("- extra: one entry per additional section below, with its key and its text (based only on the atoms "
+            "and sources; empty text when they give nothing):\n" + lines + "\n")
 
 
 def _sources(evidence):
@@ -182,24 +231,33 @@ def _number(sections):
     return sections
 
 
-def _assemble(lang, purpose, context, assumptions, groups, nfr_blocks, out_of_scope, question_blocks):
-    t = TITLES[lang]
-    context_blocks = [{"id": "context", "kind": "text", "text": context.strip()}] if context.strip() else []
-    if assumptions:
-        context_blocks.append({"id": "assumptions", "kind": "list", "title": t["assumptions"],
-                               "items": [a.strip() for a in assumptions if a.strip()]})
-    sections = [
-        {"key": "purpose", "title": t["purpose"], "blocks": [{"id": "purpose", "kind": "text", "text": purpose.strip()}]
-         if purpose.strip() else []},
-        {"key": "context", "title": t["context"], "blocks": context_blocks},
-        {"key": "functional", "title": t["functional"], "blocks": [],
-         "subsections": [{"key": f"functional.{i}", "title": title, "blocks": blocks}
-                         for i, (title, blocks) in enumerate(groups, 1) if blocks]},
-        {"key": "nfr", "title": t["nfr"], "blocks": nfr_blocks},
-        {"key": "out_of_scope", "title": t["out_of_scope"],
-         "blocks": [{"id": "out_of_scope", "kind": "list", "items": out_of_scope}] if out_of_scope else []},
-        {"key": "questions", "title": t["questions"], "blocks": question_blocks},
-    ]
+def _assemble(spec, lang, parts):
+    """Sections in the skill's order. parts: purpose, context, assumptions, groups, nfr, out_of_scope,
+    questions, extra {key: text}."""
+    sections = []
+    for key, title, _instr in spec:
+        sec = {"key": key, "title": title, "blocks": []}
+        if key == "purpose" and parts["purpose"].strip():
+            sec["blocks"] = [{"id": "purpose", "kind": "text", "text": parts["purpose"].strip()}]
+        elif key == "context":
+            if parts["context"].strip():
+                sec["blocks"].append({"id": "context", "kind": "text", "text": parts["context"].strip()})
+            items = [a.strip() for a in parts["assumptions"] if a.strip()]
+            if items:
+                sec["blocks"].append({"id": "assumptions", "kind": "list", "title": LABELS[lang]["assumptions"],
+                                      "items": items})
+        elif key == "functional":
+            sec["subsections"] = [{"key": f"functional.{i}", "title": t, "blocks": b}
+                                  for i, (t, b) in enumerate(parts["groups"], 1) if b]
+        elif key == "nfr":
+            sec["blocks"] = parts["nfr"]
+        elif key == "out_of_scope" and parts["out_of_scope"]:
+            sec["blocks"] = [{"id": "out_of_scope", "kind": "list", "items": parts["out_of_scope"]}]
+        elif key == "questions":
+            sec["blocks"] = parts["questions"]
+        elif key not in skills.FRD_KINDS and (parts["extra"].get(key) or "").strip():
+            sec["blocks"] = [{"id": key, "kind": "text", "text": parts["extra"][key].strip()}]
+        sections.append(sec)
     return {"sections": _number(sections)}
 
 
@@ -214,8 +272,12 @@ def req_blocks(content):
                 yield sub["number"], sub["key"], b
 
 
-def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progress=None, complete=complete_json):
-    """Build a new version. mode "changed": rewrite only new/changed atoms; "full": rewrite everything."""
+# ── building ─────────────────────────────────────────────────────────────────
+
+def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progress=None, complete=complete_json,
+          skillset=None, save=True):
+    """Build a new version. mode "changed": rewrite only new/changed atoms; "full": rewrite everything.
+    save=False returns the content without storing a version (used to try a skill)."""
     report = progress or (lambda pct, msg: None)
     project = store.get_project(project_id)
     doc = store.document(project_id)
@@ -223,19 +285,29 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
     if not atoms:
         raise BuildError("There are no accepted atoms yet. Review the atoms first.")
     prefs = for_project(prefs, project)
+    skillset = skillset or skills.resolve()
     rids = store.requirement_ids(project_id, atoms)
     order = {"FR": 0, "NFR": 1, "Q": 2}
     atoms.sort(key=lambda a: (order[rids[a["id"]].split("-")[0]], int(rids[a["id"]].split("-")[1])))
     by_rid = {rids[a["id"]]: a for a in atoms}
     conflicts = _open_conflicts(store, project_id)
     lang = language_of([a["statement"] for a in atoms])
+    ctx = {"store": store, "project": project, "atoms": atoms, "rids": rids, "by_rid": by_rid, "conflicts": conflicts,
+           "lang": lang, "prefs": prefs, "api_key": api_key, "ollama_url": ollama_url, "report": report,
+           "complete": complete, "skillset": skillset, "quality": Quality(skillset.get("quality")),
+           "spec": section_spec(skillset["frd"], lang)}
     previous = store.version(doc["id"])
     if previous is None or mode == "full":
-        content = _build_full(store, project, atoms, rids, by_rid, conflicts, lang, prefs, api_key, ollama_url, report, complete)
+        content = _build_full(ctx)
         mode = "full"
     else:
-        content = _build_changed(previous, atoms, rids, by_rid, conflicts, lang, prefs, api_key, ollama_url, report, complete)
+        content = _build_changed(ctx, previous)
     content["language"] = lang
+    content["skills"] = {"frd": skillset["frd"].name, "quality": skillset["quality"].name}
+    content["rule_titles"] = ctx["quality"].titles
+    if not save:
+        report(100, "Done")
+        return {"content": content, "atoms": len(atoms), "mode": mode}
     number = store.add_version(doc["id"], content, _snapshot(atoms, rids), len(atoms),
                                provider=prefs["llm_provider"], model=model_name(prefs), mode=mode)
     report(100, "Done")
@@ -244,104 +316,129 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
 
 
 def _sources_line(store, project_id):
-    lines = []
-    for s in store.list_sources(project_id):
-        if s["status"] == "ready":
-            lines.append(f"- {s['title']} ({s['kind']})")
+    lines = [f"- {s['title']} ({s['kind']})" for s in store.list_sources(project_id) if s["status"] == "ready"]
     return "\n".join(lines[:40])
 
 
-def _build_full(store, project, atoms, rids, by_rid, conflicts, lang, prefs, api_key, ollama_url, report, complete):
-    report(5, "Writing the document…")
-    user = (f"Project: {project['name']}\n\nSources:\n{_sources_line(store, project['id'])}\n\n"
-            "Accepted requirement atoms:\n" + "\n".join(_atom_lines(atoms, rids, conflicts)))
-    reply = complete(FULL_SYSTEM.format(language=_lang_name(lang)), user, FULL_SCHEMA, prefs, api_key, ollama_url)
-    report(85, "Checking quality…")
-    texts = {i["id"].strip(): i["text"] for i in reply.get("items") or [] if i.get("id", "").strip() in by_rid and i.get("text", "").strip()}
-    model_issues = {}
+def _system(ctx, contract):
+    lang = _lang_name(ctx["lang"])
+    return skills.compose(ctx["skillset"], "frd", contract.replace("{language}", lang), language=lang)
+
+
+def _model_issues(reply):
+    out = {}
     for issue in reply.get("issues") or []:
-        model_issues.setdefault(issue.get("id", "").strip(), []).append(issue)
+        out.setdefault(str(issue.get("id", "")).strip(), []).append(issue)
+    return out
+
+
+def _build_full(ctx):
+    ctx["report"](5, "Writing the document…")
+    q, by_rid, lang = ctx["quality"], ctx["by_rid"], ctx["lang"]
+    contract = FULL_CONTRACT.replace("{extra}", _extra_contract(ctx["spec"])).replace("{rules}", q.prompt(_lang_name(lang)))
+    user = (f"Project: {ctx['project']['name']}\n\nSources:\n{_sources_line(ctx['store'], ctx['project']['id'])}\n\n"
+            "Accepted requirement atoms:\n" + "\n".join(_atom_lines(ctx["atoms"], ctx["rids"], ctx["conflicts"])))
+    custom = [(k, t) for k, t, _i in ctx["spec"] if k not in skills.FRD_KINDS]
+    reply = ctx["complete"](_system(ctx, contract), user, full_schema(q.rule_ids, [k for k, _t in custom]),
+                            ctx["prefs"], ctx["api_key"], ctx["ollama_url"])
+    ctx["report"](85, "Checking quality…")
+    texts = {str(i.get("id", "")).strip(): i["text"] for i in reply.get("items") or []
+             if str(i.get("id", "")).strip() in by_rid and str(i.get("text", "")).strip()}
+    model_issues = _model_issues(reply)
 
     def block(rid):
         atom = by_rid[rid]
         text = texts.get(rid) or atom["statement"]
-        return _block(atom, rid, text, conflicts, _merge_issues(
-            model_issues.get(rid), rule_checks(text, atom["type"], lang) if atom["type"] != "question" else []))
+        return _block(atom, rid, text, ctx["conflicts"], q.merge(
+            model_issues.get(rid), q.checks(text, atom["type"], lang) if atom["type"] != "question" else []))
 
     frs = [r for r in by_rid if r.startswith("FR-")]
     placed, groups = set(), []
     for g in reply.get("groups") or []:
-        ids = [i.strip() for i in g.get("ids") or [] if i.strip() in by_rid and i.strip().startswith("FR-") and i.strip() not in placed]
+        ids = [str(i).strip() for i in g.get("ids") or []]
+        ids = [i for i in ids if i in by_rid and i.startswith("FR-") and i not in placed]
         placed.update(ids)
-        if ids and g.get("title", "").strip():
+        if ids and str(g.get("title", "")).strip():
             groups.append((g["title"].strip(), [block(r) for r in ids]))
     missing = [r for r in frs if r not in placed]
     if missing:                                   # the model skipped some: never drop a requirement
-        groups.append((TITLES[lang]["other"], [block(r) for r in missing]))
-    nfr = [block(r) for r in by_rid if r.startswith("NFR-")]
-    questions = [block(r) for r in by_rid if r.startswith("Q-")]
-    out_of_scope = [x.strip() for x in reply.get("out_of_scope") or [] if x.strip()]
-    return _assemble(lang, reply.get("purpose") or "", reply.get("context") or "", reply.get("assumptions") or [],
-                     groups, nfr, out_of_scope, questions)
+        groups.append((LABELS[lang]["other"], [block(r) for r in missing]))
+    # Match by key; models sometimes answer with the section's title instead.
+    by_title = {t.strip().casefold(): k for k, t in custom}
+    extra = {}
+    for e in reply.get("extra") or []:
+        raw = str(e.get("key", "")).strip()
+        k = raw if raw in dict(custom) else by_title.get(raw.casefold())
+        if k and str(e.get("text") or "").strip():
+            extra[k] = e["text"]
+    return _assemble(ctx["spec"], lang, {
+        "purpose": reply.get("purpose") or "", "context": reply.get("context") or "",
+        "assumptions": reply.get("assumptions") or [], "groups": groups,
+        "nfr": [block(r) for r in by_rid if r.startswith("NFR-")],
+        "out_of_scope": [x.strip() for x in reply.get("out_of_scope") or [] if str(x).strip()],
+        "questions": [block(r) for r in by_rid if r.startswith("Q-")], "extra": extra})
 
 
-def _build_changed(previous, atoms, rids, by_rid, conflicts, lang, prefs, api_key, ollama_url, report, complete):
-    snap = previous["snapshot"]
+def _build_changed(ctx, previous):
+    snap, rids, by_rid, lang, q = previous["snapshot"], ctx["rids"], ctx["by_rid"], ctx["lang"], ctx["quality"]
     old = {b["id"]: (num, key, b) for num, key, b in req_blocks(previous["content"])}
-    old_group = {}
-    functional = next(s for s in previous["content"]["sections"] if s["key"] == "functional")
+    sections = {s["key"]: s for s in previous["content"]["sections"]}
+    functional = sections.get("functional", {"subsections": []})
     group_titles = [sub["title"] for sub in functional.get("subsections") or []]
-    for sub in functional.get("subsections") or []:
-        for b in sub["blocks"]:
-            old_group[b["id"]] = sub["title"]
+    old_group = {b["id"]: sub["title"] for sub in functional.get("subsections") or [] for b in sub["blocks"]}
 
     def unchanged(atom):
         s = snap.get(atom["id"])
         return s is not None and s["statement"] == atom["statement"] and s["type"] == atom["type"] \
             and s["rid"] == rids[atom["id"]] and rids[atom["id"]] in old
 
-    to_write = [a for a in atoms if not unchanged(a)]
-    removed = [aid for aid in snap if aid not in {a["id"] for a in atoms}]
+    to_write = [a for a in ctx["atoms"] if not unchanged(a)]
+    removed = [aid for aid in snap if aid not in {a["id"] for a in ctx["atoms"]}]
     if not to_write and not removed:
         raise BuildError("The document is up to date: no atoms changed since the last version.")
     reply = {"items": [], "issues": []}
     if to_write:
-        report(10, f"Rewriting {len(to_write)} changed requirement(s)…")
+        ctx["report"](10, f"Rewriting {len(to_write)} changed requirement(s)…")
+        contract = CHANGED_CONTRACT.replace("{rules}", q.prompt(_lang_name(lang)))
         user = ("Existing functional sub-sections:\n" + ("\n".join(f"- {t}" for t in group_titles) or "(none)") +
-                "\n\nTo write:\n" + "\n".join(_atom_lines(to_write, rids, conflicts)))
-        reply = complete(CHANGED_SYSTEM.format(language=_lang_name(lang)), user, CHANGED_SCHEMA, prefs, api_key, ollama_url)
-    report(85, "Checking quality…")
-    written = {i["id"].strip(): i for i in reply.get("items") or [] if i.get("id", "").strip() in by_rid}
-    model_issues = {}
-    for issue in reply.get("issues") or []:
-        model_issues.setdefault(issue.get("id", "").strip(), []).append(issue)
+                "\n\nTo write:\n" + "\n".join(_atom_lines(to_write, rids, ctx["conflicts"])))
+        reply = ctx["complete"](_system(ctx, contract), user, changed_schema(q.rule_ids), ctx["prefs"],
+                                ctx["api_key"], ctx["ollama_url"])
+    ctx["report"](85, "Checking quality…")
+    written = {str(i.get("id", "")).strip(): i for i in reply.get("items") or [] if str(i.get("id", "")).strip() in by_rid}
+    model_issues = _model_issues(reply)
 
     def block(rid):
         atom = by_rid[rid]
         if unchanged(atom):
             prev = dict(old[rid][2])
-            prev.update(sources=_sources(atom["evidence"]), conflict=conflicts.get(atom["id"]))
+            prev.update(sources=_sources(atom["evidence"]), conflict=ctx["conflicts"].get(atom["id"]))
             return prev
-        text = (written.get(rid) or {}).get("text", "").strip() or atom["statement"]
-        return _block(atom, rid, text, conflicts, _merge_issues(
-            model_issues.get(rid), rule_checks(text, atom["type"], lang) if atom["type"] != "question" else []))
+        text = str((written.get(rid) or {}).get("text", "")).strip() or atom["statement"]
+        return _block(atom, rid, text, ctx["conflicts"], q.merge(
+            model_issues.get(rid), q.checks(text, atom["type"], lang) if atom["type"] != "question" else []))
 
     groups = {t: [] for t in group_titles}
     for rid in (r for r in by_rid if r.startswith("FR-")):
         if unchanged(by_rid[rid]) and rid in old_group:
             title = old_group[rid]
         else:
-            title = (written.get(rid) or {}).get("group", "").strip() or old_group.get(rid) or TITLES[lang]["other"]
+            title = str((written.get(rid) or {}).get("group", "")).strip() or old_group.get(rid) or LABELS[lang]["other"]
         groups.setdefault(title, []).append(block(rid))
-    sections = {s["key"]: s for s in previous["content"]["sections"]}
 
     def text_of(key):
-        return next((b["text"] for b in sections[key]["blocks"] if b["kind"] == "text"), "")
-    assumptions = next((b["items"] for b in sections["context"]["blocks"] if b["kind"] == "list"), [])
-    out_of_scope = next((b["items"] for b in sections["out_of_scope"]["blocks"] if b["kind"] == "list"), [])
-    return _assemble(lang, text_of("purpose"), text_of("context"), assumptions, list(groups.items()),
-                     [block(r) for r in by_rid if r.startswith("NFR-")], out_of_scope,
-                     [block(r) for r in by_rid if r.startswith("Q-")])
+        sec = sections.get(key)
+        return next((b["text"] for b in sec["blocks"] if b["kind"] == "text"), "") if sec else ""
+
+    def list_of(key):
+        sec = sections.get(key)
+        return next((b["items"] for b in sec["blocks"] if b["kind"] == "list"), []) if sec else []
+    extra = {k: text_of(k) for k, _t, _i in ctx["spec"] if k not in skills.FRD_KINDS}
+    return _assemble(ctx["spec"], lang, {
+        "purpose": text_of("purpose"), "context": text_of("context"), "assumptions": list_of("context"),
+        "groups": list(groups.items()), "nfr": [block(r) for r in by_rid if r.startswith("NFR-")],
+        "out_of_scope": list_of("out_of_scope"), "questions": [block(r) for r in by_rid if r.startswith("Q-")],
+        "extra": extra})
 
 
 def staleness(store, project_id, version):
@@ -392,13 +489,15 @@ def diff(old, new):
     return changes
 
 
-def suggest_fix(store, project_id, atom_id, rule, message, prefs, api_key, ollama_url, complete=complete_json):
+def suggest_fix(store, project_id, atom_id, rule, message, prefs, api_key, ollama_url, complete=complete_json,
+                skillset=None):
     """A rewrite of the atom that fixes a quality finding; the BA accepts, edits or dismisses it (FR-DOC-06 AC2)."""
     atom = store.get_atom(atom_id)
     prefs = for_project(prefs, store.get_project(project_id))
-    lang = language_of([atom["statement"]])
+    lang = _lang_name(language_of([atom["statement"]]))
+    system = skills.compose(skillset or skills.resolve(), "fix", FIX_CONTRACT, language=lang)
     user = f"Requirement ({atom['type']}): {atom['statement']}\n\nProblem ({rule}): {message}"
-    reply = complete(FIX_SYSTEM.format(language=_lang_name(lang)), user, FIX_SCHEMA, prefs, api_key, ollama_url)
+    reply = complete(system, user, FIX_SCHEMA, prefs, api_key, ollama_url)
     statement = (reply.get("statement") or "").strip()
     if not statement:
         raise LLMError("The model returned an empty suggestion; try again.")

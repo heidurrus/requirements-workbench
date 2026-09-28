@@ -12,6 +12,7 @@ pypdf>=5          # reading PDF transcripts and documents
 anthropic>=1      # AI summaries with Claude
 olefile>=0.46     # reading Outlook .msg emails
 python-docx>=1.1  # FRD export to Word
+pyyaml>=6         # skill headers (SKILL.md frontmatter)
 # macOS: system-audio capture in the desktop app (Core Audio process taps)
 pyobjc-framework-CoreAudio>=11; sys_platform == "darwin"
 pyobjc-framework-AVFoundation>=11; sys_platform == "darwin"   # microphone permission prompt

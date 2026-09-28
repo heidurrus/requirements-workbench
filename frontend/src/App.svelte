@@ -6,6 +6,7 @@
   import Settings from "./screens/Settings.svelte";
   import Atoms from "./screens/Atoms.svelte";
   import DocumentScreen from "./screens/Document.svelte";
+  import Skills from "./screens/Skills.svelte";
   import { api } from "./lib/api.js";
   import { app, t, loadProjects, loadSources, setLang } from "./lib/state.svelte.js";
 
@@ -45,6 +46,8 @@
         <Atoms />
       {:else if app.route.name === "document"}
         <DocumentScreen />
+      {:else if app.route.name === "skills"}
+        <Skills />
       {:else if app.route.name === "settings"}
         <Settings />
       {:else}

@@ -68,7 +68,7 @@ def test_rename_speaker_shows_everywhere_and_feeds_summaries(client, app_module,
 
     seen = {}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
-    monkeypatch.setattr(app_module, "summarize", lambda text, prefs, key, url, on_delta, title=None:
+    monkeypatch.setattr(app_module, "summarize", lambda text, prefs, key, url, on_delta, title=None, skillset=None:
                         seen.update(text=text, title=title, provider=prefs["llm_provider"]) or "## Итоги")
     job = client.post("/summarize", json={"source_id": sid}).get_json()["job_id"]
     assert wait_for(lambda: client.get(f"/job/{job}").get_json()["status"] == "done")
@@ -85,7 +85,7 @@ def test_local_only_project_never_uses_the_cloud(client, app_module, lib, monkey
     monkeypatch.setattr(app_module.settings, "load_settings",
                         lambda: {"llm_provider": "claude", "claude_model": "claude-opus-5", "ollama_model": "qwen3:8b",
                                  "local_model": ""})
-    monkeypatch.setattr(app_module, "summarize", lambda text, prefs, key, url, on_delta, title=None:
+    monkeypatch.setattr(app_module, "summarize", lambda text, prefs, key, url, on_delta, title=None, skillset=None:
                         seen.update(provider=prefs["llm_provider"]) or "ok")
     monkeypatch.setattr(app_module.local_llm, "ready", lambda: False)
     r = client.post("/summarize", json={"source_id": sid})

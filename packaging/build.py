@@ -36,7 +36,7 @@ BUILD = os.getenv("BUILD_DIR") or (
 APP_NAME = "Requirements Workbench"
 BUNDLE_ID = "com.heidurrus.requirements-workbench"
 ARTIFACT = "RequirementsWorkbench"
-APP_FILES = ["app.py", "launcher.py", "boot.py", "requirements.txt", "VERSION", "core", "static"]
+APP_FILES = ["app.py", "launcher.py", "boot.py", "requirements.txt", "VERSION", "core", "skills", "static"]
 
 
 def log(msg):

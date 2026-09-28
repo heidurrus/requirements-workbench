@@ -12,31 +12,12 @@ import urllib.request
 
 import anthropic
 
-from core import local_llm
+from core import local_llm, skills
 from core.llm import LLMError, claude_errors, claude_params, local_model_id
 
-SYSTEM_PROMPT = """You summarise sources for a business analyst who gathers requirements from clients: call and meeting transcripts, emails, and documents such as earlier specifications. The first line tells you which kind it is.
-
-Write the whole summary, including the section headings, in the same language as the transcript. For a Russian transcript the headings are: ## Кратко, ## Главное, ## Требования, ## Решения, ## Открытые вопросы, ## Задачи. Use Markdown with these sections, leaving out any section that would be empty:
-
-## Summary
-A short paragraph: who met, what it was about, the outcome.
-
-## Key points
-The substance of the discussion.
-
-## Requirements mentioned
-What the client needs the system to do, and qualities such as speed, security or availability. Keep numbers and limits exactly as stated.
-
-## Decisions
-
-## Open questions
-Anything left unresolved, contradictory, or "to discuss later".
-
-## Action items
-Who does what, and by when if it was said.
-
-Refer to the source of each point with the speaker and timestamp in square brackets, e.g. [Anna, 12:30], when the transcript has them; for an email, name the sender when it matters. Only state what the transcript supports; if something is unclear, say so rather than guessing."""
+def default_prompt():
+    """The summary skill in effect globally (skills/summarize-source by default) plus house rules."""
+    return skills.compose(skills.resolve(), "summary")
 
 # The same user-facing error for summaries and extraction.
 SummaryError = LLMError
@@ -49,11 +30,11 @@ def _user_content(transcript, title=None):
 
 # ── Claude ───────────────────────────────────────────────────────────────────
 
-def summarize_with_claude(transcript, model, api_key, on_delta, title=None, client=None):
+def summarize_with_claude(transcript, model, api_key, on_delta, title=None, client=None, system=None):
     if not api_key:
         raise SummaryError("Add your Anthropic API key in Settings to create summaries with Claude.")
     client = client or anthropic.Anthropic(api_key=api_key)
-    params = claude_params(model, SYSTEM_PROMPT, [{"role": "user", "content": _user_content(transcript, title)}])
+    params = claude_params(model, system or default_prompt(), [{"role": "user", "content": _user_content(transcript, title)}])
     with claude_errors(model):
         with client.beta.messages.stream(**params) as stream:
             for text in stream.text_stream:
@@ -97,12 +78,12 @@ class _ThinkFilter:
         return "".join(out)
 
 
-def summarize_with_ollama(transcript, model, on_delta, url, title=None, opener=urllib.request.urlopen):
+def summarize_with_ollama(transcript, model, on_delta, url, title=None, opener=urllib.request.urlopen, system=None):
     body = json.dumps({
         "model": model,
         "stream": True,
         "think": False,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+        "messages": [{"role": "system", "content": system or default_prompt()},
                      {"role": "user", "content": _user_content(transcript, title)}],
     }).encode()
     req = urllib.request.Request(url.rstrip("/") + "/api/chat", data=body,
@@ -134,9 +115,9 @@ def summarize_with_ollama(transcript, model, on_delta, url, title=None, opener=u
 
 # ── built-in local model ─────────────────────────────────────────────────────
 
-def summarize_with_local(transcript, model_id, on_delta, title=None, opener=None):
+def summarize_with_local(transcript, model_id, on_delta, title=None, opener=None, system=None):
     body = {"stream": True, "temperature": 0.3,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+            "messages": [{"role": "system", "content": system or default_prompt()},
                          {"role": "user", "content": _user_content(transcript, title)}]}
     parts, think = [], _ThinkFilter()
     kwargs = {"opener": opener} if opener else {}
@@ -164,11 +145,13 @@ def summarize_with_local(transcript, model_id, on_delta, title=None, opener=None
 
 # ── entry point ──────────────────────────────────────────────────────────────
 
-def summarize(transcript, settings, api_key, ollama_url, on_delta, title=None):
+def summarize(transcript, settings, api_key, ollama_url, on_delta, title=None, skillset=None):
+    """Summarise with the provider chosen in Settings and the summary skill in effect (global or project)."""
     if not transcript or not transcript.strip():
         raise SummaryError("There is no transcript text to summarise.")
+    system = skills.compose(skillset or skills.resolve(), "summary")
     if settings["llm_provider"] == "local":
-        return summarize_with_local(transcript, local_model_id(settings), on_delta, title)
+        return summarize_with_local(transcript, local_model_id(settings), on_delta, title, system=system)
     if settings["llm_provider"] == "ollama":
-        return summarize_with_ollama(transcript, settings["ollama_model"], on_delta, ollama_url, title)
-    return summarize_with_claude(transcript, settings["claude_model"], api_key, on_delta, title)
+        return summarize_with_ollama(transcript, settings["ollama_model"], on_delta, ollama_url, title, system=system)
+    return summarize_with_claude(transcript, settings["claude_model"], api_key, on_delta, title, system=system)
