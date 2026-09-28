@@ -49,7 +49,8 @@ const [popup] = await Promise.all([context.waitForEvent("page"), page.getByRole(
 await popup.getByText("Jira подключена").waitFor();
 await popup.close();
 await page.getByText("подключено", { exact: true }).waitFor({ timeout: 10000 });
-step("connect Jira (sign-in in the browser)");
+await page.getByText("Доступ к сайтам: sandbox.atlassian.net").waitFor();
+step("connect Jira (sign-in in the browser); connected sites are shown");
 
 // Target: site, project; issue types mapped by meaning.
 await page.locator("#jr-project").selectOption("SBX");

@@ -293,6 +293,23 @@ def test_oauth_register_pkce_exchange_refresh_disconnect():
         auth.access_token()
 
 
+def test_requests_carry_the_app_user_agent():
+    """Cloudflare in front of Atlassian blocks Python's default user agent (error 1010)."""
+    seen = []
+
+    def opener(req, timeout=None):
+        seen.append(req.headers.get("User-agent"))
+        m = json.loads(req.data) if req.data else {}
+        if m.get("method") == "notifications/initialized":
+            return Resp("")
+        return Resp(json.dumps({"jsonrpc": "2.0", "id": m.get("id"), "result": {"content": []}}))
+    McpSession("https://mcp/x", lambda force_refresh=False: "t", opener=opener).call("getAccessibleAtlassianResources")
+    atl = FakeAtlassian()
+    AtlassianAuth(store=MemoryStore(), opener=lambda req, timeout=None: seen.append(req.headers.get("User-agent")) or atl(req),
+                  base="https://mcp").metadata()
+    assert seen and all(ua and ua.startswith("RequirementsWorkbench/") for ua in seen)
+
+
 def test_keyring_store_splits_long_values():
     class KR:
         def __init__(self):

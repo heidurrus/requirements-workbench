@@ -27,7 +27,7 @@
     editingTarget = !target;
   }
   $effect(() => { app.currentProjectId; preview = null; result = null; status(); loadTarget(); });
-  $effect(() => { if (connected && editingTarget && !sites.length) loadSites(); });
+  $effect(() => { if (connected && !sites.length) loadSites(); });
 
   function fail(err) {
     if (err.body?.needs_connect) connected = false;
@@ -52,6 +52,8 @@
     await api("/api/jira/disconnect", { method: "POST" });
     connected = false;
     preview = null;
+    sites = [];
+    projects = [];
   }
 
   async function loadSites() {
@@ -145,6 +147,10 @@
           <button class="btn btn-sm btn-ghost" onclick={disconnect}>{t("jr.disconnect")}</button>
         {/if}
       </div>
+      {#if connected && sites.length}
+        <p class="hint">{t("jr.access", { sites: sites.map(s => s.url.replace("https://", "")).join(", ") })}</p>
+        <p class="hint">{t("jr.wrong_account")}</p>
+      {/if}
       {#if connected === false}
         <p class="panel-desc">{t("jr.connect_hint")}</p>
         <button class="btn btn-primary" disabled={waiting} onclick={connect}>

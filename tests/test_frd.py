@@ -306,3 +306,50 @@ def test_desktop_save_file_and_text(tmp_path):
     assert DesktopApi("http://x", lambda n: None).save_text("a.txt", "t") == {"cancelled": True}
     api.save_text("a.txt", "привет")
     assert target.read_text(encoding="utf-8") == "привет"
+
+
+# ── output language (per project) ────────────────────────────────────────────
+
+def test_project_language_switches_the_document_and_forces_a_full_rebuild(store):
+    pid, ids, _ = seed(store)
+    frd.build(store, pid, PREFS, "k", "", complete=llm(full_reply()))          # Russian sources → Russian doc
+    assert store.version(store.document(pid)["id"])["content"]["language"] == "ru"
+    store.update_project(pid, language="en")
+    fake = llm(full_reply())
+    r = frd.build(store, pid, PREFS, "k", "", mode="changed", complete=fake)
+    v = store.version(store.document(pid)["id"])
+    assert r["mode"] == "full", "a language switch rewrites everything"
+    assert v["content"]["language"] == "en" and v["content"]["sections"][0]["title"] == "Purpose"
+    assert "Write everything in English" in fake.calls[0]["system"]
+
+
+def test_language_rule_reaches_extraction_and_jira(store):
+    from core import atoms, jira
+    from core.fake_jira import FakeJira
+    from core.llm import language_rule
+    pid, ids, sid = seed(store, accept=False)
+    store.update_project(pid, language="en")
+    assert "in English" in language_rule(store.get_project(pid))
+    fake = llm({"atoms": []})
+    atoms.extract_candidates(store, sid, PREFS, "k", "", complete=fake)
+    assert "Write everything you produce" in fake.calls[0]["system"] and "Quotes and evidence stay" in fake.calls[0]["system"]
+    for i in ids:
+        store.update_atom(i, status="accepted")
+    frd.build(store, pid, PREFS, "k", "", complete=llm(full_reply()))
+    from core import backlog as bl
+    from tests.test_backlog import decomposition
+    bl.build(store, pid, PREFS, "k", "", complete=llm(decomposition()))
+    j = FakeJira(localized=False)
+    types = jira.suggest_types(jira.projects(j, "c")[0]["issue_types"])
+    store.set_jira_target(pid, j.cloud_id, j.site, j.project_key, "S", types)
+    rows = [r["item_id"] for r in jira.plan(store, pid, j)["rows"] if r["action"] == "create"]
+    jira.push(store, pid, j, rows)
+    story = next(i for i in j.issues.values() if i["fields"]["issuetype"]["name"] == "Story")
+    assert "**Acceptance criteria**" in story["fields"]["description"] and "Created in Requirements Workbench" in story["fields"]["description"]
+
+
+def test_project_language_is_validated(store):
+    pid = store.current_project()["id"]
+    with pytest.raises(Exception):
+        store.update_project(pid, language="de")
+    assert store.update_project(pid, language="ru")["language"] == "ru"

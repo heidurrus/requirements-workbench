@@ -27,7 +27,7 @@ from core import backlog, frd, jira, skills
 from core.atlassian_auth import MCP_URL, AtlassianAuth, AuthError, AuthRequired
 from core.mcp_client import McpError, McpSession
 from core import local_llm
-from core.llm import for_project, model_name
+from core.llm import for_project, language_rule, model_name
 from core.jobs import JobStore, SerialQueue
 from core.paths import models_dir, recordings_dir, use_app_model_cache
 from core.macos_permissions import microphone_access
@@ -662,8 +662,9 @@ def ollama_status():
 
 def _run_summary(job_id, text, title, prefs, api_key, source_id=None, project_id=None):
     try:
+        project = library.get_project(project_id) if project_id else None
         result = summarize(text, prefs, api_key, OLLAMA_URL, on_delta=lambda piece: jobs.append_partial(job_id, piece),
-                           title=title, skillset=_skillset(project_id))
+                           title=title, skillset=_skillset(project_id), language_rule=language_rule(project))
     except SummaryError as e:
         jobs.fail(job_id, e)
     except Exception as e:  # unexpected: keep the message, don't crash the worker
@@ -845,7 +846,7 @@ def api_create_project():
 def api_update_project(project_id):
     data = request.get_json(silent=True) or {}
     return _store_call(library.update_project, project_id,
-                       **{k: data[k] for k in ("name", "local_only", "archived") if k in data})
+                       **{k: data[k] for k in ("name", "local_only", "archived", "language") if k in data})
 
 
 @app.route("/api/projects/<project_id>/current", methods=["POST"])
@@ -1678,7 +1679,7 @@ def _run_try(job_id, stage, skill, project_id, source_id, prefs, api_key):
             source = library.get_source(source_id)
             text = summarize(library.transcript_text(source_id), prefs, api_key, OLLAMA_URL,
                              on_delta=lambda piece: jobs.append_partial(job_id, piece), title=source["title"],
-                             skillset=skillset)
+                             skillset=skillset, language_rule=language_rule(library.get_project(project_id)))
             jobs.finish(job_id, {"kind": "markdown", "text": text})
         elif stage == "extract":
             found, dropped, _, skipped = atoms_mod.extract_candidates(

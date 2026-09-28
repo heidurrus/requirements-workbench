@@ -113,7 +113,8 @@ CREATE TABLE IF NOT EXISTS quality_dismissals (
   PRIMARY KEY (document_id, atom_id, rule));
 """
 
-PROJECT_FIELDS = ("id", "name", "local_only", "archived", "created_at", "created_by", "updated_at", "updated_by")
+PROJECT_FIELDS = ("id", "name", "local_only", "archived", "language", "created_at", "created_by", "updated_at", "updated_by")
+OUTPUT_LANGUAGES = ("auto", "ru", "en")
 SOURCE_FIELDS = ("id", "project_id", "kind", "title", "original_filename", "status", "error", "duration",
                  "speakers", "asr_model", "diarized", "import_format", "audio_file", "meta_json", "deleted_at",
                  "created_at", "created_by", "updated_at", "updated_by")
@@ -149,6 +150,9 @@ class Store:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(sources)")}
         if "meta_json" not in cols:                       # v1 → v2: email / document metadata
             c.execute("ALTER TABLE sources ADD COLUMN meta_json TEXT")
+        pcols = {r["name"] for r in c.execute("PRAGMA table_info(projects)")}
+        if "language" not in pcols:                       # v7: the language the AI writes in, per project
+            c.execute("ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT 'auto'")
         bcols = {r["name"] for r in c.execute("PRAGMA table_info(backlog_items)")}
         for col in ("jira_hash TEXT", "jira_pushed_at REAL", "jira_remote_updated TEXT", "jira_url TEXT"):  # v6 → v7
             if col.split()[0] not in bcols:
@@ -231,16 +235,19 @@ class Store:
             name = self._check_name(c, name)
             now, by = self._stamp()
             pid = str(uuid.uuid4())
-            c.execute("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?)", (pid, name, int(local_only), 0, now, by, now, by))
+            c.execute("INSERT INTO projects (id, name, local_only, archived, created_at, created_by, updated_at, updated_by) "
+                      "VALUES (?,?,?,?,?,?,?,?)", (pid, name, int(local_only), 0, now, by, now, by))
             project = self._row(c.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone(), PROJECT_FIELDS)
             self._audit(c, "project", pid, "create", after=project)
         return project
 
     def update_project(self, project_id, **changes):
-        allowed = {"name", "local_only", "archived"}
+        allowed = {"name", "local_only", "archived", "language"}
         unknown = set(changes) - allowed
         if unknown:
             raise StoreError(f"cannot change {sorted(unknown)}")
+        if "language" in changes and changes["language"] not in OUTPUT_LANGUAGES:
+            raise StoreError(f"language must be one of {OUTPUT_LANGUAGES}")
         with self._write() as c:
             before = self._row(c.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone(), PROJECT_FIELDS)
             if before is None:

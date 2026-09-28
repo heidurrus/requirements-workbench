@@ -91,6 +91,13 @@ await download.saveAs(saved);
 if (!saved.endsWith("v2.docx") || statSync(saved).size < 10000) throw new Error("bad export " + saved);
 step("DOCX export (GOST)");
 
+// Output language: switching the project to English asks for a full rebuild.
+await page.locator(".rail").getByRole("button", { name: "Настройки" }).click();
+await page.locator(".out-lang").getByRole("button", { name: "English" }).click();
+await page.goto(base + "/#/document");
+await page.getByText("Документ собран на русском, а язык проекта — на английском").waitFor();
+step("output language setting and the rebuild hint");
+
 await browser.close();
 if (errors.length) { console.error("page errors:", errors); process.exit(1); }
 console.log("all document steps passed");

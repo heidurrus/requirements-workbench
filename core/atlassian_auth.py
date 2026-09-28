@@ -22,6 +22,17 @@ SERVICE = "RequirementsWorkbench.atlassian"
 CHUNK = 1000                           # Windows Credential Manager limits one secret to ~2.5 KB
 
 
+def user_agent():
+    """Atlassian's Cloudflare rejects Python's default "Python-urllib" agent (error 1010)."""
+    import os
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")) as f:
+            version = f.read().strip()
+    except OSError:
+        version = "dev"
+    return f"RequirementsWorkbench/{version} (+https://github.com/heidurrus/requirements-workbench)"
+
+
 class AuthError(Exception):
     """A user-facing sign-in problem."""
 
@@ -111,7 +122,7 @@ class AtlassianAuth:
         return self._store
 
     def _request(self, url, data=None, form=False, method=None):
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": "application/json", "User-Agent": user_agent()}
         body = None
         if data is not None:
             if form:

@@ -78,9 +78,9 @@ step("new project is created and empty");
 
 // Language switch.
 await page.locator(".rail").getByRole("button", { name: "Настройки" }).click();
-await page.getByRole("button", { name: "English" }).click();
+await page.getByRole("group", { name: "Язык интерфейса" }).getByRole("button", { name: "English" }).click();
 await page.getByRole("heading", { name: "Settings" }).waitFor();
-await page.getByRole("button", { name: "Русский" }).click();
+await page.getByRole("group", { name: "Interface language" }).getByRole("button", { name: "Русский" }).click();
 step("language switches RU ↔ EN");
 
 await browser.close();

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.9.1 (2026-09-28): Output language, Jira sign-in fix
+
+- **Язык результатов per project** (Settings → Проект): Как в источниках / Русский / English.
+  The AI writes summaries, requirements, the FRD, stories and criteria, and the labels in Jira
+  descriptions in that language, translating from Russian or English sources. Quotes stay in
+  the original language, because they're evidence. Switching the language rebuilds the whole
+  document, and the Document screen tells you when it's in the other language.
+- Fixed: connecting Jira failed with "403 … Error 1010". Atlassian's Cloudflare blocked
+  Python's default user agent; the app now identifies itself. Found and fixed during a live
+  push to a sandbox project.
+- The Выгрузка screen shows which Atlassian sites the connection can access, so signing in
+  with the wrong account (e.g. a work login remembered by the browser) is obvious.
+
 ## 2.9.0 (2026-09-28): Increment 4b, Jira export
 
 - **A new Выгрузка screen (step 6).** It sends the ticked backlog to Jira Cloud through the
