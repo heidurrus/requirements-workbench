@@ -363,3 +363,29 @@ def test_api_not_connected(client, app_module, lib, monkeypatch):
     monkeypatch.setattr(app_module, "_jira_session", lambda: type("S", (), {"call": lambda self, *a, **k: not_connected()})())
     r = client.get("/api/jira/sites")
     assert r.status_code == 401 and r.get_json()["needs_connect"]
+
+
+# ── private sign-in window ───────────────────────────────────────────────────
+
+def test_private_window_prefers_installed_browsers():
+    from core.private_browser import find_browser, open_private
+    mac = find_browser("darwin", exists=lambda p: p == "/Applications/Firefox.app")
+    assert mac == (["open", "-na", "Firefox", "--args"], "-private-window", "Firefox")
+    win = find_browser("win32", exists=lambda p: p.endswith("msedge.exe"), env={"PROGRAMFILES": r"C:\PF"})
+    assert win[1] == "--inprivate" and win[0][0].endswith("msedge.exe")
+    assert find_browser("darwin", exists=lambda p: False) is None
+    ran = []
+    name = open_private("https://mcp.atlassian.com/x", run=lambda cmd, **k: ran.append(cmd),
+                        platform="darwin", exists=lambda p: p == "/Applications/Google Chrome.app")
+    assert name == "Google Chrome" and ran == [["open", "-na", "Google Chrome", "--args", "--incognito", "https://mcp.atlassian.com/x"]]
+
+
+def test_connect_opens_a_private_window_by_default(client, app_module, lib, monkeypatch):
+    import core.private_browser as pb
+    opened = []
+    monkeypatch.setattr(pb, "open_private", lambda url, **k: opened.append(url) or "Google Chrome")
+    monkeypatch.setattr(app_module.jira_auth, "start", lambda redirect: "https://mcp.atlassian.com/v1/authorize?x=1")
+    r = client.post("/api/jira/connect", json={}).get_json()
+    assert r["opened_private"] == "Google Chrome" and opened == ["https://mcp.atlassian.com/v1/authorize?x=1"]
+    r = client.post("/api/jira/connect", json={"private": False}).get_json()
+    assert r["opened_private"] is None and len(opened) == 1

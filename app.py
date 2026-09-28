@@ -1371,8 +1371,17 @@ def api_jira_status():
 
 @app.route("/api/jira/connect", methods=["POST"])
 def api_jira_connect():
+    """Start the sign-in. By default it opens in a private browser window, so Atlassian asks which account
+    to use instead of silently reusing the one the normal browser is logged into."""
+    from core.private_browser import open_private
     redirect_uri = request.host_url.rstrip("/") + "/api/jira/callback"
-    return _jira_call(lambda: {"url": jira_auth.start(redirect_uri)})
+    private = (request.get_json(silent=True) or {}).get("private", True)
+
+    def start():
+        url = jira_auth.start(redirect_uri)
+        opened = open_private(url) if private else None
+        return {"url": url, "opened_private": opened}
+    return _jira_call(start)
 
 
 @app.route("/api/jira/callback")
