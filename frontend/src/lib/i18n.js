@@ -535,6 +535,12 @@ const ru = {
   "at.conflicts_desc": "Атомы противоречат друг другу: оставьте один, объедините или спросите заказчика.",
   "at.done_title": "Все атомы разобраны",
   "at.done_meta": "Принято {accepted} из {total}",
+  "jr.sheet_body": "Задачи сразу появятся в Jira. Отменить выгрузку из приложения нельзя.",
+  "jr.col_action": "Действие",
+  "jr.col_type": "Тип",
+  "jr.col_title": "Название",
+  "jr.col_key": "Ключ",
+  "jr.types_short": "Типы",
 };
 
 const en = {
@@ -1071,6 +1077,12 @@ const en = {
   "at.conflicts_desc": "These atoms contradict each other: keep one, merge them or ask the customer.",
   "at.done_title": "All atoms reviewed",
   "at.done_meta": "{accepted} of {total} accepted",
+  "jr.sheet_body": "The issues appear in Jira right away. The app can't undo a push.",
+  "jr.col_action": "Action",
+  "jr.col_type": "Type",
+  "jr.col_title": "Title",
+  "jr.col_key": "Key",
+  "jr.types_short": "Types",
 };
 
 export const DICTS = { ru, en };
