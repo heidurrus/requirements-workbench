@@ -443,13 +443,14 @@ def _pid_file():
 
 def _is_our_server(pid, port):
     """True only if pid is still the llama-server we started on that port, so a recycled pid
-    (or any other program that merely mentions llama-server) is never killed."""
+    (or any other program that merely mentions llama-server) is never killed. `-ww`: Linux ps
+    cuts the command line at 80 columns when it isn't writing to a terminal."""
     try:
         if sys.platform == "win32":
             out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
                                  text=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW).stdout
             return '"llama-server.exe"' in out.lower()
-        args = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True,
+        args = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "command="], capture_output=True, text=True,
                               timeout=5).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return False

@@ -5,7 +5,9 @@ Atlassian account is already logged in there (often a work account), and the MCP
 sign-in doesn't let an app ask for an account choice. A private window has no
 login, so the user picks the account.
 """
+import ntpath
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -26,16 +28,16 @@ def find_browser(platform=None, exists=os.path.exists, which=shutil.which, env=o
     platform = platform or sys.platform
     if platform == "darwin":
         for app, flag in MAC_BROWSERS:
-            for base in ("/Applications", os.path.expanduser("~/Applications")):
-                if exists(os.path.join(base, f"{app}.app")):
+            for base in ("/Applications", posixpath.expanduser("~/Applications")):
+                if exists(posixpath.join(base, f"{app}.app")):
                     return ["open", "-na", app, "--args"], flag, app
     elif platform == "win32":
         roots = [env.get(k) for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA") if env.get(k)]
         for rel, flag in WIN_BROWSERS:
             for root in roots:
-                path = os.path.join(root, rel)
+                path = ntpath.join(root, rel)
                 if exists(path):
-                    return [path], flag, os.path.basename(path)
+                    return [path], flag, ntpath.basename(path)
     else:
         for exe, flag in LINUX_BROWSERS:
             path = which(exe)

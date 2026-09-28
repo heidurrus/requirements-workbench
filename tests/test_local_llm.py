@@ -131,7 +131,8 @@ def test_installer_downloads_engine_then_model(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path))
     engine_src = tmp_path / "src" / "llama-b1"
     engine_src.mkdir(parents=True)
-    (engine_src / "llama-server").write_text("#!/bin/sh\n")
+    exe = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    (engine_src / exe).write_text("#!/bin/sh\n")
     tgz = tmp_path / "engine.tar.gz"
     with tarfile.open(tgz, "w:gz") as t:
         t.add(engine_src, arcname="llama-b1")
@@ -146,7 +147,7 @@ def test_installer_downloads_engine_then_model(tmp_path, monkeypatch):
     inst.start("tiny")
     inst._thread.join(5)
     assert inst.status()["status"] == "done"
-    assert local_llm.server_binary().endswith("llama-server") and local_llm.model_installed("tiny")
+    assert local_llm.server_binary().endswith(exe) and local_llm.model_installed("tiny")
     if sys.platform != "win32":
         assert os.access(local_llm.server_binary(), os.X_OK)
 
