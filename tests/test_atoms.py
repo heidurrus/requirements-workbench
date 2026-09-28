@@ -188,6 +188,41 @@ def test_edits_keep_the_original_and_are_audited(store):
         store.update_atom(a, statement="  ")
 
 
+def test_bulk_update_in_one_go_with_audit(store):
+    pid, a, b = _two_atoms(store)
+    other = store.create_project("Чужой")
+    sid = make_source(store, project=other["id"])
+    foreign = store.add_atoms(other["id"], [{"type": "nfr", "statement": "x",
+                                             "evidence": [{"source_id": sid, "quote": "двух секунд"}]}])[0]
+    changed = store.bulk_update_atoms(pid, [{"id": a, "status": "accepted"}, {"id": b, "status": "accepted"},
+                                            {"id": foreign, "status": "accepted"}, {"id": "nope", "status": "accepted"}])
+    assert changed == [a, b], "other projects' and unknown atoms are skipped"
+    assert store.get_atom(foreign)["status"] == "pending"
+    assert store.atom_stats(pid)["accepted"] == 2
+    entry = store.audit("atom", a)[0]
+    assert entry["action"] == "accepted" and entry["after"]["bulk"] is True
+    assert store.bulk_update_atoms(pid, [{"id": a, "status": "accepted"}]) == [], "no-op changes are not counted"
+    assert store.bulk_update_atoms(pid, [{"id": a, "type": "question"}]) == [a]
+    assert store.get_atom(a)["type"] == "question"
+
+
+@pytest.mark.parametrize("items,match", [
+    ([], "nothing"), ([{"id": "x"}], "status or type"), ([{"id": "x", "status": "merged"}], "status"),
+    ([{"id": "x", "type": "epic"}], "type"), ([{"id": "x", "status": "accepted", "statement": "y"}], "only status and type"),
+])
+def test_bulk_update_validates(store, items, match):
+    pid, *_ = _two_atoms(store)
+    with pytest.raises(StoreError, match=match):
+        store.bulk_update_atoms(pid, items)
+
+
+def test_bulk_accepting_a_conflict_question_closes_the_conflict(store):
+    pid, a, b = _two_atoms(store)
+    q = store.resolve_conflict(store.add_conflict(pid, a, b, "2 или 5?"), "question")["question_atom"]
+    store.bulk_update_atoms(pid, [{"id": q, "status": "accepted"}])
+    assert store.list_conflicts(pid) == []
+
+
 @pytest.mark.parametrize("action,expect", [
     ("keep_a", {"a": "pending", "b": "rejected"}),
     ("keep_b", {"a": "rejected", "b": "pending"}),
@@ -275,6 +310,19 @@ def test_api_extract_review_and_resolve(client, app_module, lib, monkeypatch):
     client.patch(f"/api/atoms/{r['question_atom']}", json={"status": "accepted"})
     assert client.get(f"/api/projects/{pid}/conflicts").get_json()["conflicts"] == []
     assert any(e["action"] == "extract_atoms" for e in lib.audit("source", sid))
+
+
+def test_api_bulk(client, lib):
+    pid, a, b = _two_atoms(lib)
+    r = client.post(f"/api/projects/{pid}/atoms/bulk", json={"items": [{"id": a, "status": "rejected"},
+                                                                       {"id": b, "status": "rejected"}]})
+    body = r.get_json()
+    assert r.status_code == 200 and body["changed"] == [a, b] and body["stats"]["rejected"] == 2
+    undo = client.post(f"/api/projects/{pid}/atoms/bulk", json={"items": [{"id": a, "status": "pending"},
+                                                                          {"id": b, "status": "pending"}]})
+    assert undo.get_json()["stats"]["pending"] == 2
+    assert client.post(f"/api/projects/{pid}/atoms/bulk", json={"items": []}).status_code == 400
+    assert client.post(f"/api/projects/{pid}/atoms/bulk", json={}).status_code == 400
 
 
 def test_api_extract_needs_text_and_a_key(client, app_module, lib, monkeypatch):

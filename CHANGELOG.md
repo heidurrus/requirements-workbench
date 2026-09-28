@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.1 (2026-09-28): Bulk review of atoms
+
+- **Review hundreds of atoms at once.** Tick atoms (shift-click selects a range), or tick
+  **Все (N)** to take everything matching the current filters. Then **Принять**,
+  **Отклонить**, **На ревью** or **Сменить тип…** for all of them in one go, with one
+  **Undo** for the whole batch. The bar shows how many of the selected atoms are in conflicts.
+- **Source filter** in the atoms list, e.g. to accept everything from one email.
+- Keyboard: Space ticks the current atom, ⌘A (Ctrl+A) ticks everything under the filters, Esc clears.
+- Every change in a batch is still recorded in the audit log.
+
 ## 2.7.0 (2026-09-28): Increment 3b, skills
 
 - **A new Скиллы screen.** Every AI step has an editable, shareable skill:

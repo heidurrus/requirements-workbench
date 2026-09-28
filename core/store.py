@@ -573,6 +573,45 @@ class Store:
             self._audit(c, "atom", atom_id, action, {k: before[k] for k in changes}, {k: after[k] for k in changes})
         return self.get_atom(atom_id)
 
+    def bulk_update_atoms(self, project_id, items):
+        """Change many atoms in one transaction: items = [{id, status?, type?}]. Merged atoms and atoms
+        of other projects are skipped. Each change is audited like a single one. Returns the ids changed."""
+        if not isinstance(items, list) or not items:
+            raise StoreError("nothing to change")
+        if len(items) > 5000:
+            raise StoreError("too many atoms at once")
+        for it in items:
+            if not isinstance(it, dict) or not it.get("id") or not ({"status", "type"} & set(it)):
+                raise StoreError("each item needs an id and a status or type")
+            if set(it) - {"id", "status", "type"}:
+                raise StoreError("only status and type can be changed in bulk")
+            if "status" in it and it["status"] not in ATOM_STATUSES - {"merged"}:
+                raise StoreError("status must be pending, accepted or rejected")
+            if "type" in it and it["type"] not in ATOM_TYPES:
+                raise StoreError(f"unknown atom type {it['type']}")
+        changed = []
+        with self._write() as c:
+            now, by = self._stamp()
+            for it in items:
+                row = c.execute("SELECT * FROM atoms WHERE id = ?", (it["id"],)).fetchone()
+                if row is None or row["project_id"] != project_id or row["status"] == "merged":
+                    continue
+                changes = {k: it[k] for k in ("status", "type") if k in it and it[k] != row[k]}
+                if not changes:
+                    continue
+                sets = ", ".join(f"{k} = ?" for k in changes)
+                c.execute(f"UPDATE atoms SET {sets}, updated_at = ?, updated_by = ? WHERE id = ?",
+                          (*changes.values(), now, by, it["id"]))
+                action = changes["status"] if set(changes) == {"status"} else "edit"
+                self._audit(c, "atom", it["id"], action, {k: row[k] for k in changes},
+                            {**changes, "bulk": True})
+                changed.append(it["id"])
+                # Accepting a question raised by a conflict closes that conflict (as for one atom).
+                if changes.get("status") == "accepted" and (changes.get("type") or row["type"]) == "question":
+                    c.execute("UPDATE conflicts SET status = 'resolved', resolved_at = ?, resolved_by = ? "
+                              "WHERE question_atom = ? AND status = 'awaiting_answer'", (now, by, it["id"]))
+        return changed
+
     def merge_atoms(self, duplicate_id, into_id, audit_reason="duplicate"):
         """Fold a duplicate into another atom: its quotes move over, it leaves the review queue (BR-03)."""
         if duplicate_id == into_id:

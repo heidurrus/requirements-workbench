@@ -39,8 +39,10 @@ await page.getByRole("button", { name: "4 атома" }).waitFor({ timeout: 1500
 step("extraction from the transcript screen");
 
 await page.getByRole("button", { name: "4 атома" }).click();
-await page.getByText("Только источник: Созвон по карточке").waitFor();
-await page.getByRole("button", { name: "Показать все" }).click();
+await page.locator(".src-select").waitFor();
+if (!(await page.locator(".src-select option:checked").textContent()).startsWith("Созвон по карточке"))
+  throw new Error("the source filter should be set");
+await page.locator(".src-select").selectOption({ label: "Все источники" });
 await page.getByText("4 на ревью · принято 0 из 4").waitFor();
 await page.locator(".conflict", { hasText: "Разные требования к сроку" }).waitFor();
 await shot("atoms.png");
