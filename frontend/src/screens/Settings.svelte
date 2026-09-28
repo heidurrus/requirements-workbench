@@ -3,7 +3,7 @@
   import LocalModel from "../components/LocalModel.svelte";
   import { api } from "../lib/api.js";
   import { LANGS } from "../lib/i18n.js";
-  import { app, t, setLang, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
+  import { app, t, setLang, setTheme, currentProject, loadProjects, switchProject, toast } from "../lib/state.svelte.js";
 
   let s = $state(null);              // server settings payload
   let keyDraft = $state("");
@@ -71,140 +71,158 @@
     </div>
   </header>
 
-  <div class="stack">
-    {#if currentProject()}
-      <Block id="set-project" title={t("set.project")} meta={currentProject().name}>
-        <div class="stack-sm">
-          <div class="field">
-            <label class="label" for="pname">{t("set.project_name")}</label>
-            <input class="input" id="pname" bind:value={projectName}
-                   onblur={() => projectName.trim() && projectName.trim() !== currentProject().name && updateProject({ name: projectName.trim() })}
-                   onkeydown={e => e.key === "Enter" && e.currentTarget.blur()} />
-          </div>
-          <label class="check">
-            <input type="checkbox" class="switch" checked={currentProject().local_only}
-                   onchange={e => updateProject({ local_only: e.currentTarget.checked })} />
-            {t("project.local_only")}
-          </label>
-          <p class="hint">{t("set.local_only_hint")}</p>
-          <div class="field">
-            <span class="label">{t("set.out_lang")}</span>
-            <div class="seg out-lang" role="group" aria-label={t("set.out_lang")}>
-              {#each ["auto", "ru", "en"] as l (l)}
-                <button aria-pressed={(currentProject().language || "auto") === l}
-                        onclick={() => updateProject({ language: l })}>{t("set.out_lang." + l)}</button>
-              {/each}
-            </div>
-            <span class="hint">{t("set.out_lang_hint")}</span>
-          </div>
-          {#if currentProject().local_only && !localReady && s && s.llm_provider !== "ollama"}
-            <div class="need-local">
-              <p class="note warn">{t("llm.local_only_needs")}</p>
-              <LocalModel only="recommended" selected={s.local_model}
-                          onSelect={id => save({ local_model: id })} onReady={checkLocal} />
-            </div>
-          {/if}
-          <div class="actions">
-            <button class="btn btn-sm" onclick={archive} disabled={app.projects.length < 2}>{t("set.archive")}</button>
-          </div>
-          {#if app.archivedProjects.length}
-            <div class="archived">
-              <span class="label">{t("project.archived")}</span>
-              {#each app.archivedProjects as p (p.id)}
-                <div class="archived-row"><span>{p.name}</span>
-                  <button class="btn btn-ghost btn-sm" onclick={() => restore(p.id)}>{t("project.restore")}</button></div>
-              {/each}
-            </div>
-          {/if}
+  {#if currentProject()}
+    <h2 class="group-t">{t("set.project")}</h2>
+    <section class="card">
+      <div class="form-row">
+        <label class="l" for="pname"><b>{t("set.project_name")}</b></label>
+        <div class="c grow-c">
+          <input class="input" id="pname" bind:value={projectName}
+                 onblur={() => projectName.trim() && projectName.trim() !== currentProject().name && updateProject({ name: projectName.trim() })}
+                 onkeydown={e => e.key === "Enter" && e.currentTarget.blur()} />
         </div>
-      </Block>
-    {/if}
-
-    {#if s}
-      <Block id="set-ai" title={t("set.ai")}
-             meta={s.llm_provider === "ollama" ? s.ollama_model : s.llm_provider === "local" ? t("set.provider.local") : s.claude_model}>
-        <div class="stack-sm">
-          <div class="field">
-            <span class="label">{t("set.provider")}</span>
-            <div class="seg provider" role="group" aria-label={t("set.provider")}>
-              {#each ["claude", "local", "ollama"] as p (p)}
-                <button aria-pressed={s.llm_provider === p} onclick={() => save({ llm_provider: p })}>{t("set.provider." + p)}</button>
-              {/each}
-            </div>
-            <span class="hint">{t("set.provider_hint." + s.llm_provider)}</span>
-          </div>
-          {#if s.llm_provider === "claude"}
-            <div class="field">
-              <label class="label" for="akey">{t("set.anthropic_key")}</label>
-              <div class="input-row">
-                <input class="input code" id="akey" type={showKey ? "text" : "password"} bind:value={keyDraft} autocomplete="off"
-                       placeholder={s.anthropic_key_set ? t("set.key_saved_placeholder") : "sk-ant-..."} />
-                <button class="btn" onclick={() => (showKey = !showKey)}>{showKey ? t("set.hide") : t("set.show")}</button>
-                <button class="btn btn-primary" onclick={saveKey} disabled={!keyDraft.trim()}>{t("set.save")}</button>
-              </div>
-              <span class="hint" class:ok={s.anthropic_key_set} class:bad={!s.anthropic_key_set}>
-                {s.anthropic_key_set ? t("set.key_set") : t("set.key_unset")}</span>
-            </div>
-            <div class="field">
-              <label class="label" for="cmodel">{t("set.claude_model")}</label>
-              <select class="select" id="cmodel" value={s.claude_model} onchange={e => save({ claude_model: e.currentTarget.value })}>
-                {#each s.claude_models as m (m.id)}<option value={m.id}>{t("model." + m.id) === "model." + m.id ? m.label : t("model." + m.id)}</option>{/each}
-              </select>
-            </div>
-            <p class="note">{t("set.claude_note")}</p>
-            <div class="field sub">
-              <span class="label">{t("llm.for_local_only")}</span>
-              <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
-            </div>
-          {:else if s.llm_provider === "local"}
-            <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
-            <p class="note">{t("llm.quality_note")}</p>
-          {:else}
-            <div class="field">
-              <label class="label" for="omodel">{t("set.ollama_model")}</label>
-              <input class="input code" id="omodel" value={s.ollama_model} placeholder="qwen3:8b"
-                     onchange={e => save({ ollama_model: e.currentTarget.value.trim() || "qwen3:8b" })} />
-              {#if ollama !== null}<span class="hint" class:ok={ollama} class:bad={!ollama}>
-                {ollama ? t("set.ollama_running") : t("set.ollama_stopped")}</span>{/if}
-            </div>
-            <p class="note">{t("set.ollama_note")}</p>
-          {/if}
-        </div>
-      </Block>
-
-      <Block id="set-hf" title={t("set.hf")} meta={s.hf_token_set ? t("env.set") : t("env.missing")} open={!s.hf_token_set}>
-        <div class="stack-sm">
-          <div class="field">
-            <label class="label" for="hf">{t("set.hf_token")}</label>
-            <div class="input-row">
-              <input class="input code" id="hf" type={showHf ? "text" : "password"} bind:value={hfDraft} autocomplete="off"
-                     placeholder={s.hf_token_set ? t("set.key_saved_placeholder") : "hf_..."} />
-              <button class="btn" onclick={() => (showHf = !showHf)}>{showHf ? t("set.hide") : t("set.show")}</button>
-              <button class="btn btn-primary" onclick={saveHf} disabled={!hfDraft.trim()}>{t("set.save")}</button>
-            </div>
-            <span class="hint" class:ok={s.hf_token_set} class:bad={!s.hf_token_set}>{s.hf_token_set ? t("set.hf_set") : t("set.hf_unset")}</span>
-          </div>
-          <div class="note">
-            {t("set.hf_note")}
-            <ul>
-              <li><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a></li>
-              <li><a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener">pyannote/segmentation-3.0</a></li>
-              <li><a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener">pyannote/speaker-diarization-3.1</a></li>
-              <li><a href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noopener">pyannote/speaker-diarization-community-1</a></li>
-            </ul>
-          </div>
-        </div>
-      </Block>
-    {/if}
-
-    <Block id="set-lang" title={t("set.language")} meta={LANGS.find(l => l.id === app.lang)?.label}>
-      <div class="seg" role="group" aria-label={t("set.language")}>
-        {#each LANGS as l (l.id)}
-          <button aria-pressed={app.lang === l.id} onclick={() => setLang(l.id)}>{l.label}</button>
-        {/each}
       </div>
-    </Block>
+      <label class="form-row">
+        <span class="l"><b>{t("project.local_only")}</b><span>{t("set.local_only_hint")}</span></span>
+        <span class="c"><input type="checkbox" class="switch" checked={currentProject().local_only}
+               onchange={e => updateProject({ local_only: e.currentTarget.checked })} /></span>
+      </label>
+      {#if currentProject().local_only && !localReady && s && s.llm_provider !== "ollama"}
+        <div class="form-row col">
+          <p class="banner warn"><span>{t("llm.local_only_needs")}</span></p>
+          <LocalModel only="recommended" selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
+        </div>
+      {/if}
+      <div class="form-row">
+        <span class="l"><b>{t("set.out_lang")}</b><span>{t("set.out_lang_hint")}</span></span>
+        <div class="c">
+          <div class="seg out-lang" role="group" aria-label={t("set.out_lang")}>
+            {#each ["auto", "ru", "en"] as l (l)}
+              <button aria-pressed={(currentProject().language || "auto") === l}
+                      onclick={() => updateProject({ language: l })}>{t("set.out_lang." + l)}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <span class="l"><b>{t("set.archive")}</b><span>{t("set.archive_hint")}</span></span>
+        <div class="c"><button class="btn btn-danger" onclick={archive} disabled={app.projects.length < 2}>{t("set.archive")}</button></div>
+      </div>
+      {#if app.archivedProjects.length}
+        <div class="form-row col">
+          <span class="label">{t("project.archived")}</span>
+          {#each app.archivedProjects as p (p.id)}
+            <div class="archived-row"><span>{p.name}</span>
+              <button class="btn btn-ghost btn-sm" onclick={() => restore(p.id)}>{t("project.restore")}</button></div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+  {/if}
 
+  {#if s}
+    <h2 class="group-t">{t("set.ai")}</h2>
+    <section class="card">
+      <div class="form-row">
+        <span class="l"><b>{t("set.provider")}</b><span>{t("set.provider_hint." + s.llm_provider)}</span></span>
+        <div class="c">
+          <div class="seg provider" role="group" aria-label={t("set.provider")}>
+            {#each ["claude", "local", "ollama"] as p (p)}
+              <button aria-pressed={s.llm_provider === p} onclick={() => save({ llm_provider: p })}>{t("set.provider." + p)}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
+      {#if s.llm_provider === "claude"}
+        <div class="form-row col">
+          <label class="l" for="akey"><b>{t("set.anthropic_key")}</b>
+            <span class:ok={s.anthropic_key_set} class:bad={!s.anthropic_key_set}>{s.anthropic_key_set ? t("set.key_set") : t("set.key_unset")}</span></label>
+          <div class="input-row">
+            <input class="input code" id="akey" type={showKey ? "text" : "password"} bind:value={keyDraft} autocomplete="off"
+                   placeholder={s.anthropic_key_set ? t("set.key_saved_placeholder") : "sk-ant-..."} />
+            <button class="btn" onclick={() => (showKey = !showKey)}>{showKey ? t("set.hide") : t("set.show")}</button>
+            <button class="btn btn-primary" onclick={saveKey} disabled={!keyDraft.trim()}>{t("set.save")}</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="l" for="cmodel"><b>{t("set.claude_model")}</b><span>{t("set.claude_note")}</span></label>
+          <div class="c">
+            <select class="select" id="cmodel" value={s.claude_model} onchange={e => save({ claude_model: e.currentTarget.value })}>
+              {#each s.claude_models as m (m.id)}<option value={m.id}>{t("model." + m.id) === "model." + m.id ? m.label : t("model." + m.id)}</option>{/each}
+            </select>
+          </div>
+        </div>
+        <div class="form-row col">
+          <span class="l"><b>{t("llm.for_local_only")}</b></span>
+          <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
+        </div>
+      {:else if s.llm_provider === "local"}
+        <div class="form-row col">
+          <LocalModel selected={s.local_model} onSelect={id => save({ local_model: id })} onReady={checkLocal} />
+          <p class="hint">{t("llm.quality_note")}</p>
+        </div>
+      {:else}
+        <div class="form-row">
+          <label class="l" for="omodel"><b>{t("set.ollama_model")}</b>
+            {#if ollama !== null}<span class:ok={ollama} class:bad={!ollama}>{ollama ? t("set.ollama_running") : t("set.ollama_stopped")}</span>{/if}</label>
+          <div class="c">
+            <input class="input code" id="omodel" value={s.ollama_model} placeholder="qwen3:8b"
+                   onchange={e => save({ ollama_model: e.currentTarget.value.trim() || "qwen3:8b" })} />
+          </div>
+        </div>
+        <div class="form-row col"><p class="hint">{t("set.ollama_note")}</p></div>
+      {/if}
+    </section>
+
+    <h2 class="group-t">{t("set.hf")}</h2>
+    <section class="card">
+      <div class="form-row col">
+        <label class="l" for="hf"><b>{t("set.hf_token")}</b>
+          <span class:ok={s.hf_token_set} class:bad={!s.hf_token_set}>{s.hf_token_set ? t("set.hf_set") : t("set.hf_unset")}</span></label>
+        <div class="input-row">
+          <input class="input code" id="hf" type={showHf ? "text" : "password"} bind:value={hfDraft} autocomplete="off"
+                 placeholder={s.hf_token_set ? t("set.key_saved_placeholder") : "hf_..."} />
+          <button class="btn" onclick={() => (showHf = !showHf)}>{showHf ? t("set.hide") : t("set.show")}</button>
+          <button class="btn btn-primary" onclick={saveHf} disabled={!hfDraft.trim()}>{t("set.save")}</button>
+        </div>
+        <div class="hint hf-note">
+          {t("set.hf_note")}
+          <ul>
+            <li><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a></li>
+            <li><a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener">pyannote/segmentation-3.0</a></li>
+            <li><a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener">pyannote/speaker-diarization-3.1</a></li>
+            <li><a href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noopener">pyannote/speaker-diarization-community-1</a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  {/if}
+
+  <h2 class="group-t">{t("set.interface")}</h2>
+  <section class="card">
+    <div class="form-row">
+      <span class="l"><b>{t("set.language")}</b></span>
+      <div class="c">
+        <div class="seg" role="group" aria-label={t("set.language")}>
+          {#each LANGS as l (l.id)}
+            <button aria-pressed={app.lang === l.id} onclick={() => setLang(l.id)}>{l.label}</button>
+          {/each}
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <span class="l"><b>{t("set.theme")}</b><span>{t("set.theme_hint")}</span></span>
+      <div class="c">
+        <div class="seg" role="group" aria-label={t("set.theme")}>
+          {#each ["auto", "light", "dark"] as th (th)}
+            <button aria-pressed={app.theme === th} onclick={() => setTheme(th)}>{t("theme.s." + th)}</button>
+          {/each}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="env-block">
     <Block id="set-env" title={t("set.env")} open={false}>
       <div class="env">
         {#each env as [name, value, ok] (name)}
@@ -216,16 +234,28 @@
 </div>
 
 <style>
-  .provider { display: flex; width: 100%; }
-  .need-local { display: flex; flex-direction: column; gap: var(--s-2); }
-  .provider button { flex: 1; padding: 0 var(--s-2); }
-  .sub { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--rule); gap: var(--s-2); }
-
-  .narrow { width: min(720px, 100%); }
-  .ok { color: var(--ok); }
-  .bad { color: var(--danger); }
-  .archived { border-top: 1px solid var(--rule); padding-top: var(--s-3); margin-top: var(--s-2); }
-  .archived-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); padding: var(--s-1) 0; }
-  .env { display: grid; gap: var(--s-2); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .env-cell { display: flex; flex-direction: column; gap: 2px; padding: var(--s-2) var(--s-3); background: var(--sunk); border-radius: var(--r-md); }
+  .group-t { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin: var(--sp-8) 0 var(--sp-4) var(--sp-5); }
+  .group-t:first-of-type { margin-top: var(--sp-4); }
+  .form-row { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-6); min-height: 48px; }
+  .form-row + .form-row { border-top: 1px solid var(--line); }
+  label.form-row { cursor: pointer; }
+  .form-row.col { flex-direction: column; align-items: stretch; gap: var(--sp-4); }
+  .l { flex: 1; min-width: 0; }
+  .l b { display: block; font-weight: 500; }
+  .l span { display: block; font-size: var(--fs-12); color: var(--text-3); margin-top: 1px; line-height: 16px; }
+  .c { flex: none; display: flex; gap: var(--sp-4); align-items: center; max-width: 60%; }
+  .grow-c { flex: 1; max-width: 320px; }
+  .c .select, .c .input { width: auto; min-width: 200px; max-width: 100%; }
+  .grow-c .input { width: 100%; }
+  .l .ok, .ok { color: var(--ok) !important; }
+  .l .bad, .bad { color: var(--danger) !important; }
+  .archived-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+  .hf-note ul { margin: var(--sp-2) 0 0; padding-left: var(--sp-6); }
+  .env-block { margin-top: var(--sp-8); }
+  .env { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .env-cell { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-4) var(--sp-5); background: var(--surface-2); border-radius: var(--r-md); }
+  @media (max-width: 720px) {
+    .form-row:not(.col) { flex-direction: column; align-items: stretch; gap: var(--sp-4); }
+    .c { max-width: none; }
+  }
 </style>

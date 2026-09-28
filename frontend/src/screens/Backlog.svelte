@@ -1,5 +1,6 @@
 <script>
   import Icon from "../components/Icon.svelte";
+  import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { app, t, go, toast } from "../lib/state.svelte.js";
   import { SvelteSet } from "svelte/reactivity";
@@ -37,8 +38,8 @@
   const hasFindings = $derived(items.some(i => i.kind === "story" && i.invest?.length));
 
   function fail(err) {
-    const setup = err.body?.needs_setup;
-    toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+    const e = explain(err);
+    toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
   }
   async function follow(jobId, kind) {
     job = { kind, progress: 0, message: "" };

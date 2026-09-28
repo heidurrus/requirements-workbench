@@ -1,6 +1,7 @@
 <script>
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { fmtDate, fmtTime } from "../lib/format.js";
   import { saveUrl } from "../lib/save.js";
@@ -62,8 +63,8 @@
       diff = null;
       toast(t("doc.built", { v: job.result.version }));
     } catch (err) {
-      const setup = err.body?.needs_setup || /API key|Settings/.test(err.message);
-      toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+      const e = explain(err);
+      toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
     } finally {
       build = null;
       load();
@@ -75,8 +76,8 @@
       const { job_id } = await api(`/api/projects/${app.currentProjectId}/document/build`, { method: "POST", body: { mode } });
       follow(job_id);
     } catch (err) {
-      const setup = err.body?.needs_setup;
-      toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+      const e = explain(err);
+      toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
     }
   }
 
@@ -469,7 +470,7 @@
   .tb-sep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 var(--sp-2); }
   .split .btn + .btn, .split .btn + .select { margin-left: 1px; }
   .split .btn:last-child { padding: 0 8px; }
-  .export .tpl { width: auto; max-width: 170px; padding-right: 26px; text-align: left; background-position: right 7px center;
+  .export .tpl { width: auto; max-width: 180px; padding-right: 30px; overflow: hidden; text-overflow: ellipsis; text-align: left; background-position: right 7px center;
     background-repeat: no-repeat; }
   .export .tpl.btn-primary { background-color: var(--primary); }
   .export .tpl.btn-primary:hover { background-color: var(--primary-hover); }

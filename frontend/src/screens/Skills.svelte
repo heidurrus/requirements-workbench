@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { fmtDate, renderMarkdown } from "../lib/format.js";
   import { saveUrl } from "../lib/save.js";
@@ -173,8 +174,8 @@
       tryState = { running: false, result: job.result };
     } catch (err) {
       tryState = null;
-      const setup = err.body?.needs_setup;
-      toast(err.message, { kind: "danger", ...(setup ? { action: t("nav.settings"), onAction: () => go("/settings") } : {}) });
+      const e = explain(err);
+      toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
     }
   }
   async function exportSample() {

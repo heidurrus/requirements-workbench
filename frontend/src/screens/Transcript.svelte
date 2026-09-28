@@ -1,6 +1,7 @@
 <script>
   import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { extractAtoms } from "../lib/atoms.js";
   import { fmtTime, fmtDate, fmtDuration, renderMarkdown, speakerClass, speakerDisplay } from "../lib/format.js";
@@ -18,7 +19,7 @@
 
   let summaryText = $state("");
   let summaryMeta = $state("");
-  let summaryError = $state("");
+  let summaryError = $state(null);          // {message, setup}
   let summarizing = $state(false);
   let summaryStarted = $state(0);
   let tick = $state(0);
@@ -115,7 +116,7 @@
 
   async function summarize() {
     summarizing = true;
-    summaryError = "";
+    summaryError = null;
     summaryText = "";
     summaryStarted = Date.now();
     const timer = setInterval(() => (tick = Math.round((Date.now() - summaryStarted) / 1000)), 500);
@@ -126,10 +127,7 @@
       summaryMeta = t("tr.summarised_with", { model: job.result.model });
       loadSources();
     } catch (err) {
-      summaryError = err.message;
-      if (err.body?.needs_setup || /API key|Settings/.test(err.message)) {
-        toast(err.message, { action: t("nav.settings"), onAction: () => go("/settings"), kind: "danger" });
-      }
+      summaryError = explain(err);
     } finally {
       clearInterval(timer);
       summarizing = false;
@@ -283,7 +281,10 @@
               <p class="muted">{t("tr.no_summary")}</p>
             {/if}
             {#if summarizing && !summaryText}<p class="hint"><span class="spinner"></span> {t("tr.writing", { s: tick })}</p>{/if}
-            {#if summaryError}<p class="note danger">{summaryError}</p>{/if}
+            {#if summaryError}
+              <div class="banner danger err-banner"><span class="grow">{summaryError.message}</span>
+                {#if summaryError.setup}<button class="btn btn-sm" onclick={() => go("/settings")}>{t("err.open_settings")}</button>{/if}</div>
+            {/if}
           </Block>
         </div>
       </div>
@@ -337,6 +338,8 @@
   .prose { max-width: 72ch; margin: 0; }
   .para { font-size: var(--fs-15); line-height: 24px; margin: 0 0 var(--sp-5); scroll-margin: 120px; border-radius: var(--r-sm); }
   .para:last-child { margin-bottom: 0; }
+  .err-banner { align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 0; }
   .flash { background: var(--mark) !important; transition: background .6s ease; }
   @media (max-width: 600px) {
     .seg-row { grid-template-columns: 56px minmax(0, 1fr); }

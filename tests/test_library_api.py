@@ -184,3 +184,14 @@ def test_prose_import_becomes_a_document(client, lib):
     src = client.get(f"/api/sources/{body['source_id']}").get_json()
     assert src["kind"] == "document" and src["title"] == "Требования v2"
     assert [s["text"] for s in src["segments"]] == ["Требования заказчика.", "Система должна показывать историю обращений."]
+
+
+def test_project_status_counts_for_the_sidebar(client, lib):
+    pid = client.get("/api/projects").get_json()["current_project_id"]
+    empty = client.get(f"/api/projects/{pid}/status").get_json()
+    assert empty["sources"] == 0 and empty["atoms"] == {"review": 0, "total": 0, "conflicts": 0}
+    assert empty["document"] == {"version": None, "stale": False}
+    assert empty["backlog"]["items"] == 0 and empty["export"]["pushed"] == 0
+    import_vtt(client, project_id=pid)
+    assert client.get(f"/api/projects/{pid}/status").get_json()["sources"] == 1
+    assert client.get("/api/projects/nope/status").status_code == 404
