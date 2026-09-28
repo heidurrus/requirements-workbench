@@ -23,7 +23,9 @@ from core.ffmpeg import ensure_ffmpeg_on_path
 from core import macos_audio, settings
 from core.summarize import SummaryError, summarize
 from core.atoms import extract_atoms
-from core import backlog, frd, skills
+from core import backlog, frd, jira, skills
+from core.atlassian_auth import MCP_URL, AtlassianAuth, AuthError, AuthRequired
+from core.mcp_client import McpError, McpSession
 from core import local_llm
 from core.llm import for_project, model_name
 from core.jobs import JobStore, SerialQueue
@@ -1337,6 +1339,152 @@ def api_backlog_move_into(item_id, story_id):
         return jsonify(backlog.move_nfr_into(library, item_id, story_id))
     except (backlog.BacklogError, StoreError) as e:
         return jsonify({"error": str(e)}), 400
+
+
+# ── Jira through the Atlassian Remote MCP (increment 4b, FR-JIRA-*, D-05/D-08) ──
+jira_auth = AtlassianAuth()
+_jira_jobs = {}
+
+
+def _jira_session():
+    return McpSession(MCP_URL, jira_auth.access_token)
+
+
+def _jira_call(fn):
+    """Run a Jira read; turn sign-in and MCP problems into clear JSON errors."""
+    try:
+        return jsonify(fn())
+    except AuthRequired as e:
+        return jsonify({"error": str(e), "needs_connect": True}), 401
+    except (AuthError, McpError, jira.JiraError, StoreError) as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/jira/status")
+def api_jira_status():
+    try:
+        return jsonify({"connected": jira_auth.connected()})
+    except Exception as e:                                  # e.g. no credential store available
+        return jsonify({"connected": False, "error": str(e)})
+
+
+@app.route("/api/jira/connect", methods=["POST"])
+def api_jira_connect():
+    redirect_uri = request.host_url.rstrip("/") + "/api/jira/callback"
+    return _jira_call(lambda: {"url": jira_auth.start(redirect_uri)})
+
+
+@app.route("/api/jira/callback")
+def api_jira_callback():
+    """Atlassian sends the browser back here after sign-in."""
+    if request.args.get("error"):
+        ok, text = False, request.args.get("error_description") or request.args.get("error")
+    else:
+        try:
+            jira_auth.finish(request.args.get("state"), request.args.get("code"))
+            library.audit_event("jira", "account", "connect")
+            ok, text = True, "Jira подключена. Вернитесь в Requirements Workbench — это окно можно закрыть."
+        except AuthError as e:
+            ok, text = False, str(e)
+    colour = "#3A6A4B" if ok else "#9E3626"
+    safe = text.replace("&", "&amp;").replace("<", "&lt;")
+    return (f"<!doctype html><meta charset=utf-8><title>Requirements Workbench</title>"
+            f"<body style='font:16px -apple-system,Segoe UI,sans-serif;display:grid;place-items:center;height:90vh;"
+            f"background:#EDEFEC'><p style='max-width:520px;color:{colour}'>{safe}</p></body>")
+
+
+@app.route("/api/jira/disconnect", methods=["POST"])
+def api_jira_disconnect():
+    jira_auth.disconnect()
+    library.audit_event("jira", "account", "disconnect")
+    return jsonify({"connected": False})
+
+
+@app.route("/api/jira/sites")
+def api_jira_sites():
+    return _jira_call(lambda: {"sites": jira.sites(_jira_session())})
+
+
+@app.route("/api/jira/projects")
+def api_jira_projects():
+    cloud_id = request.args.get("cloud_id")
+    if not cloud_id:
+        return jsonify({"error": "choose a Jira site"}), 400
+
+    def load():
+        found = jira.projects(_jira_session(), cloud_id, request.args.get("q"))
+        for p in found:
+            p["suggested_types"] = jira.suggest_types(p["issue_types"])
+        return {"projects": found}
+    return _jira_call(load)
+
+
+@app.route("/api/projects/<project_id>/jira/target", methods=["GET"])
+def api_jira_target(project_id):
+    return _store_call(lambda: {"target": library.jira_target(project_id)})
+
+
+@app.route("/api/projects/<project_id>/jira/target", methods=["PUT"])
+def api_jira_set_target(project_id):
+    d = request.get_json(silent=True) or {}
+    return _store_call(lambda: {"target": library.set_jira_target(
+        project_id, d.get("cloud_id"), d.get("site_url"), d.get("project_key"), d.get("project_name"), d.get("types"))})
+
+
+def _run_jira(job_id, project_id, kind, item_ids):
+    try:
+        session = _jira_session()
+        if kind == "preview":
+            jobs.set_progress(job_id, 20, "Reading Jira…")
+            result = jira.plan(library, project_id, session)
+        else:
+            result = jira.push(library, project_id, session, item_ids,
+                               progress=lambda pct, msg: jobs.set_progress(job_id, pct, msg))
+            library.audit_event("jira", project_id, "push", after={"done": len(result["done"]),
+                                                                   "failed": len(result["failed"])})
+    except AuthRequired as e:
+        jobs.fail(job_id, f"{e} (Выгрузка → Подключить Jira)")
+    except (AuthError, McpError, jira.JiraError, StoreError) as e:
+        jobs.fail(job_id, e)
+    except Exception as e:
+        jobs.fail(job_id, f"Jira step failed: {e}")
+    else:
+        jobs.finish(job_id, result)
+    finally:
+        _jira_jobs.pop(project_id, None)
+
+
+def _start_jira(project_id, kind, item_ids=None):
+    running = _jira_jobs.get(project_id)
+    if running and (jobs.get(running) or {}).get("status") == "processing":
+        return jsonify({"error": "A Jira step is already running for this project."}), 409
+    job_id = jobs.create()
+    _jira_jobs[project_id] = job_id
+    jobs.set_progress(job_id, 0, "Connecting to Jira…")
+    threading.Thread(target=_run_jira, args=(job_id, project_id, kind, item_ids), daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/projects/<project_id>/jira/preview", methods=["POST"])
+def api_jira_preview(project_id):
+    """Dry run: read-only calls only, nothing is written to Jira (BR-11)."""
+    if not library.jira_target(project_id):
+        return jsonify({"error": "Choose the Jira site and project first."}), 400
+    return _start_jira(project_id, "preview")
+
+
+@app.route("/api/projects/<project_id>/jira/push", methods=["POST"])
+def api_jira_push(project_id):
+    """Write to Jira. The request must name the target project key, so a push never lands somewhere unexpected."""
+    d = request.get_json(silent=True) or {}
+    target = library.jira_target(project_id)
+    if not target:
+        return jsonify({"error": "Choose the Jira site and project first."}), 400
+    if d.get("confirm_project_key") != target["project_key"]:
+        return jsonify({"error": f"Confirm the target project ({target['project_key']}) to push."}), 400
+    if not d.get("item_ids"):
+        return jsonify({"error": "Отметь хотя бы одну строку."}), 400
+    return _start_jira(project_id, "push", d["item_ids"])
 
 
 # ── skills (FR-SET-04): editable, shareable instructions per AI stage ─────────

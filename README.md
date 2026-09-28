@@ -37,7 +37,7 @@ Full requirements: [`docs/specs/requirements-workbench-spec.md`](docs/specs/requ
 | 1 | Source library | Projects, everything saved locally, sources list, transcript viewer with playback, emails and documents, channel-aware recordings, Russian + English UI | ✅ **2.3.0** |
 | 2 | Atoms | AI extraction of requirement atoms with source quotes, review (accept / edit / reject, keyboard), duplicates, conflicts between sources, open questions | ✅ **2.4.0** |
 | 3 | FRD & skills | Document built from accepted atoms, versions and diff, stale-section detection, quality check, DOCX export; editable/shareable skills for every AI step, per-project choice, Word templates with your own layout | ✅ **2.6.0 / 2.7.0** |
-| 4 | Backlog & Jira | Epics / stories / acceptance criteria, INVEST check (✅ **2.8.0**); dry-run preview and push to Jira Cloud through the Atlassian MCP (⏳ next) | ◐ |
+| 4 | Backlog & Jira | Epics / stories / acceptance criteria, INVEST check, dry-run preview and push to Jira Cloud through the Atlassian MCP | ✅ **2.8.0 / 2.9.0** |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
 

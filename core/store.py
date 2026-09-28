@@ -21,7 +21,7 @@ from contextlib import contextmanager
 
 from core.paths import app_data_dir
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 BACKLOG_KINDS = {"epic", "story", "subtask", "nfr"}
 ATOM_TYPES = {"functional", "nfr", "question"}
 ATOM_STATUSES = {"pending", "accepted", "rejected", "merged"}
@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS backlog_items (
   position REAL NOT NULL, frd_version INTEGER, jira_key TEXT, deleted_at REAL,
   created_at REAL NOT NULL, created_by TEXT NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS backlog_by_project ON backlog_items(project_id, deleted_at, position);
+CREATE TABLE IF NOT EXISTS jira_targets (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id), cloud_id TEXT NOT NULL, site_url TEXT NOT NULL,
+  project_key TEXT NOT NULL, project_name TEXT, types_json TEXT NOT NULL DEFAULT '{}',
+  updated_at REAL NOT NULL, updated_by TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS project_skills (
   project_id TEXT NOT NULL REFERENCES projects(id), stage TEXT NOT NULL, skill TEXT NOT NULL,
   updated_at REAL NOT NULL, updated_by TEXT NOT NULL, PRIMARY KEY (project_id, stage));
@@ -145,6 +149,10 @@ class Store:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(sources)")}
         if "meta_json" not in cols:                       # v1 → v2: email / document metadata
             c.execute("ALTER TABLE sources ADD COLUMN meta_json TEXT")
+        bcols = {r["name"] for r in c.execute("PRAGMA table_info(backlog_items)")}
+        for col in ("jira_hash TEXT", "jira_pushed_at REAL", "jira_remote_updated TEXT", "jira_url TEXT"):  # v6 → v7
+            if col.split()[0] not in bcols:
+                c.execute(f"ALTER TABLE backlog_items ADD COLUMN {col}")
 
     # ── plumbing ─────────────────────────────────────────────────────────────
     @contextmanager
@@ -1068,6 +1076,36 @@ class Store:
                           (int(bool(included)), now, by, iid))
             self._audit(c, "project", project_id, "backlog_include", after={"ids": sorted(targets), "included": included})
         return sorted(targets)
+
+    # Jira target per project and what was pushed (FR-JIRA-01/04)
+    def jira_target(self, project_id):
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM jira_targets WHERE project_id = ?", (project_id,)).fetchone()
+        if r is None:
+            return None
+        d = dict(r)
+        d["types"] = json.loads(d.pop("types_json") or "{}")
+        return d
+
+    def set_jira_target(self, project_id, cloud_id, site_url, project_key, project_name=None, types=None):
+        self.get_project(project_id)
+        if not cloud_id or not project_key:
+            raise StoreError("choose a Jira site and project")
+        with self._write() as c:
+            now, by = self._stamp()
+            c.execute("INSERT OR REPLACE INTO jira_targets VALUES (?,?,?,?,?,?,?,?)",
+                      (project_id, cloud_id, site_url or "", project_key, project_name,
+                       json.dumps(types or {}, ensure_ascii=False), now, by))
+            self._audit(c, "project", project_id, "jira_target", after={"site": site_url, "project": project_key})
+        return self.jira_target(project_id)
+
+    def mark_pushed(self, item_id, key, url, fingerprint, remote_updated=None):
+        with self._write() as c:
+            now, by = self._stamp()
+            c.execute("UPDATE backlog_items SET jira_key = ?, jira_url = ?, jira_hash = ?, jira_pushed_at = ?, "
+                      "jira_remote_updated = ?, updated_at = updated_at WHERE id = ?",
+                      (key, url, fingerprint, now, remote_updated, item_id))
+            self._audit(c, "backlog", item_id, "jira_push", after={"key": key})
 
     def delete_backlog_item(self, item_id, restore=False):
         """Soft-delete an item and its subtree (undo restores the same subtree)."""

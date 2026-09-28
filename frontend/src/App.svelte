@@ -8,6 +8,7 @@
   import DocumentScreen from "./screens/Document.svelte";
   import Skills from "./screens/Skills.svelte";
   import Backlog from "./screens/Backlog.svelte";
+  import Export from "./screens/Export.svelte";
   import { api } from "./lib/api.js";
   import { app, t, loadProjects, loadSources, setLang } from "./lib/state.svelte.js";
 
@@ -49,6 +50,8 @@
         <DocumentScreen />
       {:else if app.route.name === "backlog"}
         <Backlog />
+      {:else if app.route.name === "export"}
+        <Export />
       {:else if app.route.name === "skills"}
         <Skills />
       {:else if app.route.name === "settings"}

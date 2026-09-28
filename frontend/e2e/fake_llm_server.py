@@ -59,6 +59,35 @@ app_module.backlog.invest = functools.partial(app_module.backlog.invest, complet
 app_module.frd.suggest_fix = functools.partial(app_module.frd.suggest_fix, complete=fake_complete)
 app_module.settings.secret = lambda name: "fake-key"
 
+# Jira: a fake Atlassian sign-in and an in-memory Jira project "SBX". Nothing real is ever contacted.
+from core.fake_jira import FakeJira  # noqa: E402
+
+FAKE_JIRA = FakeJira(project_key="SBX", site="https://sandbox.atlassian.net")
+
+
+class FakeAuth:
+    def __init__(self):
+        self.ok = False
+
+    def connected(self):
+        return self.ok
+
+    def start(self, redirect_uri):
+        return redirect_uri + "?state=s&code=c"
+
+    def finish(self, state, code):
+        self.ok = True
+
+    def disconnect(self):
+        self.ok = False
+
+    def access_token(self, force_refresh=False):
+        return "fake"
+
+
+app_module.jira_auth = FakeAuth()
+app_module._jira_session = lambda: FAKE_JIRA
+
 # Pretend to be another machine for screenshots: FAKE_GPU="none" or a size in GB.
 if os.getenv("FAKE_GPU"):
     fake = {} if os.environ["FAKE_GPU"] == "none" else {"name": "NVIDIA GeForce RTX 2060", "backend": "Vulkan0",
