@@ -1013,6 +1013,18 @@ def api_bulk_atoms(project_id):
                                 "stats": library.atom_stats(project_id)})
 
 
+@app.route("/api/projects/<project_id>/atoms/delete", methods=["POST"])
+def api_delete_atoms(project_id):
+    ids = (request.get_json(silent=True) or {}).get("ids")
+    return _store_call(lambda: {"deleted": library.delete_atoms(project_id, ids), "stats": library.atom_stats(project_id)})
+
+
+@app.route("/api/projects/<project_id>/atoms/restore", methods=["POST"])
+def api_restore_atoms(project_id):
+    ids = (request.get_json(silent=True) or {}).get("ids")
+    return _store_call(lambda: {"restored": library.restore_atoms(project_id, ids), "stats": library.atom_stats(project_id)})
+
+
 @app.route("/api/atoms/<atom_id>/merge", methods=["POST"])
 def api_merge_atom(atom_id):
     into = (request.get_json(silent=True) or {}).get("into")

@@ -150,6 +150,9 @@ class Store:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(sources)")}
         if "meta_json" not in cols:                       # v1 → v2: email / document metadata
             c.execute("ALTER TABLE sources ADD COLUMN meta_json TEXT")
+        acols = {r["name"] for r in c.execute("PRAGMA table_info(atoms)")}
+        if "deleted_at" not in acols:                     # v7: atoms can be deleted (soft, with undo)
+            c.execute("ALTER TABLE atoms ADD COLUMN deleted_at REAL")
         pcols = {r["name"] for r in c.execute("PRAGMA table_info(projects)")}
         if "language" not in pcols:                       # v7: the language the AI writes in, per project
             c.execute("ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT 'auto'")
@@ -325,7 +328,7 @@ class Store:
         with self._conn() as c:
             rows = c.execute("""SELECT s.*, (SELECT COUNT(*) FROM summaries m WHERE m.source_id = s.id) AS summary_count,
                                   (SELECT COUNT(DISTINCT e.atom_id) FROM evidence e JOIN atoms a ON a.id = e.atom_id
-                                   WHERE e.source_id = s.id AND a.status != 'merged') AS atom_count
+                                   WHERE e.source_id = s.id AND a.status != 'merged' AND a.deleted_at IS NULL) AS atom_count
                                 FROM sources s WHERE s.project_id = ? AND s.deleted_at IS NULL
                                 ORDER BY s.created_at DESC""", (project_id,)).fetchall()
         out = []
@@ -540,7 +543,7 @@ class Store:
         return out
 
     def list_atoms(self, project_id, status=None, type=None, source_id=None):
-        q, args = "SELECT * FROM atoms WHERE project_id = ?", [project_id]
+        q, args = "SELECT * FROM atoms WHERE project_id = ? AND deleted_at IS NULL", [project_id]
         if status:
             q += " AND status = ?"
             args.append(status)
@@ -588,6 +591,8 @@ class Store:
             before = self._atom_row(c, atom_id)
             if before["status"] == "merged":
                 raise StoreError("this atom was merged into another one")
+            if before.get("deleted_at"):
+                raise StoreError("this atom was deleted")
             now, by = self._stamp()
             sets = ", ".join(f"{k} = ?" for k in changes)
             c.execute(f"UPDATE atoms SET {sets}, updated_at = ?, updated_by = ? WHERE id = ?",
@@ -618,7 +623,7 @@ class Store:
             now, by = self._stamp()
             for it in items:
                 row = c.execute("SELECT * FROM atoms WHERE id = ?", (it["id"],)).fetchone()
-                if row is None or row["project_id"] != project_id or row["status"] == "merged":
+                if row is None or row["project_id"] != project_id or row["status"] == "merged" or row["deleted_at"]:
                     continue
                 changes = {k: it[k] for k in ("status", "type") if k in it and it[k] != row[k]}
                 if not changes:
@@ -659,6 +664,42 @@ class Store:
             self._audit(c, "atom", duplicate_id, "merge", {"status": dup["status"]},
                         {"merged_into": into_id, "reason": audit_reason})
 
+    def delete_atoms(self, project_id, ids):
+        """Delete atoms (soft: undo restores them). Open conflicts they're part of close, and reopen on undo."""
+        if not isinstance(ids, list) or not ids:
+            raise StoreError("nothing to delete")
+        with self._write() as c:
+            now, by = self._stamp()
+            done = []
+            for aid in ids:
+                row = c.execute("SELECT project_id, deleted_at FROM atoms WHERE id = ?", (aid,)).fetchone()
+                if row is None or row["project_id"] != project_id or row["deleted_at"]:
+                    continue
+                c.execute("UPDATE atoms SET deleted_at = ?, updated_at = ?, updated_by = ? WHERE id = ?", (now, now, by, aid))
+                c.execute("UPDATE conflicts SET status = 'resolved', resolution = 'deleted', resolved_at = ?, resolved_by = ? "
+                          "WHERE (atom_a = ? OR atom_b = ?) AND status != 'resolved'", (now, by, aid, aid))
+                self._audit(c, "atom", aid, "delete")
+                done.append(aid)
+        return done
+
+    def restore_atoms(self, project_id, ids):
+        with self._write() as c:
+            now, by = self._stamp()
+            done = []
+            for aid in ids or []:
+                row = c.execute("SELECT project_id, deleted_at FROM atoms WHERE id = ?", (aid,)).fetchone()
+                if row is None or row["project_id"] != project_id or not row["deleted_at"]:
+                    continue
+                c.execute("UPDATE atoms SET deleted_at = NULL, updated_at = ?, updated_by = ? WHERE id = ?", (now, by, aid))
+                done.append(aid)
+                self._audit(c, "atom", aid, "restore")
+            for aid in done:                                 # conflicts closed by the deletion come back
+                c.execute("""UPDATE conflicts SET status = 'open', resolution = NULL, resolved_at = NULL, resolved_by = NULL
+                             WHERE (atom_a = ? OR atom_b = ?) AND resolution = 'deleted'
+                             AND atom_a IN (SELECT id FROM atoms WHERE deleted_at IS NULL)
+                             AND atom_b IN (SELECT id FROM atoms WHERE deleted_at IS NULL)""", (aid, aid))
+        return done
+
     def delete_pending_atoms_for_source(self, source_id):
         """Before re-extraction: drop atoms still pending that only this source supports
         (reviewed atoms are kept, so no review work is lost; spec FR-TR-04 AC2)."""
@@ -679,7 +720,8 @@ class Store:
     def atom_stats(self, project_id):
         with self._conn() as c:
             counts = {r["status"]: r["n"] for r in c.execute(
-                "SELECT status, COUNT(*) AS n FROM atoms WHERE project_id = ? GROUP BY status", (project_id,))}
+                "SELECT status, COUNT(*) AS n FROM atoms WHERE project_id = ? AND deleted_at IS NULL GROUP BY status",
+                (project_id,))}
             open_conflicts = c.execute("SELECT COUNT(*) FROM conflicts WHERE project_id = ? AND status = 'open'",
                                        (project_id,)).fetchone()[0]
         stats = {s: counts.get(s, 0) for s in ATOM_STATUSES}

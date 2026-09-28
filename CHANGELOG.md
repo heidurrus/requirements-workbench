@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.9.4 (2026-09-28): Delete atoms
+
+- **Atoms can now be deleted**, not just rejected:
+  - the trash button on an atom
+  - **Удалить** in the bulk bar for everything ticked
+  - the **Delete** / **Backspace** key
+
+  Deleted atoms leave the list, the counters and the next document build. Open conflicts
+  they were part of close. **Отменить** brings everything back, conflicts included, and every
+  deletion is recorded in the audit log.
+- Keyboard shortcuts on the Atoms screen keep working right after you tick a checkbox.
+
 ## 2.9.3 (2026-09-28): Jira sign-in asks which account
 
 - **Подключить Jira** now opens the Atlassian sign-in in a **private browser window**

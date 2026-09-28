@@ -158,6 +158,28 @@
     return r;
   }
 
+  // Delete (with undo): gone from the list, the counters and the next document build.
+  async function removeAtoms(list) {
+    if (!list.length) return;
+    const ids = list.map(a => a.id);
+    const i = visible.findIndex(a => a.id === ids[0]);
+    try {
+      const r = await api(`/api/projects/${app.currentProjectId}/atoms/delete`, { method: "POST", body: { ids } });
+      stats = r.stats;
+      atoms = atoms.filter(a => !r.deleted.includes(a.id));
+      for (const id of r.deleted) checked.delete(id);
+      const next = visible[Math.min(i, visible.length - 1)];
+      if (next) select(next.id);
+      if (conflicts.length) load();
+      loadSources();
+      toast(t("at.deleted", { n: r.deleted.length }), { action: t("at.undo"), ms: 10000, onAction: async () => {
+        await api(`/api/projects/${app.currentProjectId}/atoms/restore`, { method: "POST", body: { ids: r.deleted } });
+        await load();
+        loadSources();
+      } });
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
+
   function startEdit(atom) {
     editingId = atom.id;
     selectedId = atom.id;
@@ -189,7 +211,8 @@
   }
 
   function onKey(e) {
-    if (app.route.name !== "atoms" || e.target.closest("input, textarea, select, [contenteditable]")) return;
+    if (app.route.name !== "atoms" || e.target.closest("textarea, select, [contenteditable], input:not([type=checkbox])")) return;
+    const onCheckbox = e.target.matches?.("input[type=checkbox]");     // shortcuts still work after ticking a box
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {   // select every atom under the filters
       e.preventDefault();
       for (const a of visible) checked.add(a.id);
@@ -198,6 +221,7 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const i = visible.findIndex(a => a.id === selectedId);
     const atom = visible[i];
+    if (e.key === " " && onCheckbox) return;                          // Space toggles the focused box itself
     if (e.key === " " && atom) toggleCheck(atom, e.shiftKey);
     else if (e.key === "Escape" && checked.size) checked.clear();
     else if (e.key === "j" || e.key === "ArrowDown") { if (visible[i + 1]) select(visible[i + 1].id); }
@@ -205,6 +229,8 @@
     else if (e.key === "a" && atom) decide(atom, "accepted", { toggle: false });
     else if (e.key === "x" && atom) decide(atom, "rejected", { toggle: false });
     else if (e.key === "e" && atom) startEdit(atom);
+    else if ((e.key === "Delete" || e.key === "Backspace") && (checkedVisible.length || atom))
+      removeAtoms(checkedVisible.length ? checkedVisible : [atom]);
     else return;
     e.preventDefault();
   }
@@ -376,6 +402,8 @@
                 <button class="btn btn-ghost btn-sm icon-btn" class:on-no={atom.status === "rejected"} aria-label={t("at.reject")}
                         title="{t('at.reject')} (x)" aria-pressed={atom.status === "rejected"}
                         onclick={e => { e.stopPropagation(); decide(atom, "rejected"); }}><Icon name="close" /></button>
+                <button class="btn btn-ghost btn-sm icon-btn del" aria-label={t("at.delete")} title="{t('at.delete')} (Delete)"
+                        onclick={e => { e.stopPropagation(); removeAtoms([atom]); }}><Icon name="trash" /></button>
               </div>
             </li>
           {/each}
@@ -392,6 +420,8 @@
           <button class="btn btn-sm" disabled={bulkBusy} onclick={() => bulk({ status: "rejected" })}>
             <Icon name="close" /> {t("at.reject")}</button>
           <button class="btn btn-sm btn-ghost" disabled={bulkBusy} onclick={() => bulk({ status: "pending" })}>{t("at.bulk_pending")}</button>
+          <button class="btn btn-sm btn-ghost danger-text" disabled={bulkBusy} onclick={() => removeAtoms(checkedVisible)}>
+            <Icon name="trash" /> {t("at.delete")}</button>
           <select class="select type-select" disabled={bulkBusy} aria-label={t("at.bulk_type")} value=""
                   onchange={e => { const v = e.currentTarget.value; e.currentTarget.value = ""; if (v) bulk({ type: v }); }}>
             <option value="" disabled>{t("at.bulk_type")}</option>
@@ -489,6 +519,9 @@
   .acts { display: flex; align-items: flex-start; gap: 2px; }
   .on-ok { color: var(--ok); background: var(--ok-bg); }
   .on-no { color: var(--danger); background: var(--danger-bg); }
+  .del { opacity: .5; }
+  .atom:hover .del, .del:focus-visible { opacity: 1; }
+  .danger-text { color: var(--danger); }
   .area { height: auto; padding: var(--s-2) var(--s-3); line-height: 1.5; resize: vertical; }
   .edit-row { margin-top: var(--s-2); }
   .edit-row .seg { height: 28px; }
