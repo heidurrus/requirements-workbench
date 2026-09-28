@@ -20,6 +20,16 @@ class DesktopApi:
     def open_in_browser(self):
         webbrowser.open(self._base)
 
+    def open_url(self, url):
+        """Open an Atlassian sign-in page in the system browser (only Atlassian's own https pages)."""
+        from urllib.parse import urlparse
+        host = urlparse(url or "").hostname or ""
+        if not url.startswith("https://") or not (host == "mcp.atlassian.com" or host.endswith(".atlassian.com")
+                                                  or host.endswith(".atlassian.net")):
+            return {"error": "only Atlassian pages can be opened"}
+        webbrowser.open(url)
+        return {"ok": True}
+
     def save_file(self, path, filename):
         """Fetch one of the app's own URLs (e.g. /api/documents/…/export.docx) and save it where the user says."""
         if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):

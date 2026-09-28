@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.9.0 (2026-09-28): Increment 4b, Jira export
+
+- **A new Выгрузка screen (step 6).** It sends the ticked backlog to Jira Cloud through the
+  Atlassian Remote MCP server.
+  - **Подключить Jira** opens the Atlassian sign-in in your browser. The app registers
+    itself; there are no keys to copy.
+  - Sign-in tokens are kept in the macOS Keychain / Windows Credential Manager and refreshed
+    automatically. **Отключить** removes them.
+- **Choose the site and project** per workbench project. Issue types are mapped by what they
+  are (epic level, sub-task flag), so localised types such as Эпик / История / Задача /
+  Подзадача work. You can change the mapping.
+- **A dry-run preview** with Создать · Обновить · Без изменений · Пропустить. It only reads
+  Jira; nothing changes there until you press **Выгрузить N задач** and confirm the target
+  project by name.
+- **The push** creates epics first, then stories inside their epics, then sub-tasks under
+  their stories. Each description carries the story, the acceptance criteria, the FRD reference
+  (version · section · FR-n) and a verbatim source quote with date and time.
+- **Safe to repeat:**
+  - Every issue gets a `rw-…` label, so a retry after a failure finds issues already created
+    instead of duplicating them.
+  - Pushing again only updates what changed.
+  - Issues edited in Jira since the last push are flagged and need an explicit tick to
+    overwrite.
+  - Failed rows are listed with the reason and can be retried.
+- Only the fields the workbench owns are written: summary, description, labels, parent.
+
 ## 2.8.0 (2026-09-28): Increment 4a, decomposition
 
 - **A new Декомпозиция screen (step 5).** **Собрать бэклог** turns the latest FRD into:

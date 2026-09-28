@@ -203,7 +203,7 @@
 
         <div class="foot">
           <span class="hint">{hasFindings ? t("bl.findings_hint") : ""}</span>
-          <button class="btn" disabled title={t("nav.soon")}>{t("bl.to_export")} · {t("nav.soon")}</button>
+          <button class="btn btn-primary" onclick={() => go("/export")}>{t("bl.to_export")} →</button>
         </div>
       {/if}
     </div>
