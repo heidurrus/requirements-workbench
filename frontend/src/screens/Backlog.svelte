@@ -2,6 +2,11 @@
   import Icon from "../components/Icon.svelte";
   import { api, pollJob } from "../lib/api.js";
   import { app, t, go, toast } from "../lib/state.svelte.js";
+  import { SvelteSet } from "svelte/reactivity";
+
+  const collapsed = new SvelteSet();          // item ids folded in this session
+  const fold = id => (collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id));
+  const glyph = { epic: "E", story: "S", subtask: "T", nfr: "N" };
 
   let body = $state(null);
   let error = $state("");
@@ -115,12 +120,15 @@
         {:else}{t("bl.sub_empty")}{/if}
       </p>
     </div>
-    {#if body}
+    {#if body && body.latest}
       <div class="actions">
-        <button class="btn" class:btn-primary={!items.length || body.stale} disabled={!!job || !body.latest}
-                onclick={() => run("build")}>{items.length ? t("bl.rebuild") : t("bl.build")}</button>
         {#if items.length}
-          <button class="btn" class:btn-primary={!!items.length && !body.stale} disabled={!!job} onclick={() => run("invest")}>{t("bl.invest")}</button>
+          <button class="btn" class:btn-ghost={!body.stale} disabled={!!job} onclick={() => run("build")}>
+            <Icon name="refresh" size={14} /> {t("bl.rebuild")}</button>
+          <button class="btn" disabled={!!job} onclick={() => run("invest")}><Icon name="check" size={14} /> {t("bl.invest")}</button>
+          <button class="btn btn-primary" onclick={() => go("/export")}>{t("bl.to_export")} <Icon name="arrow" size={14} /></button>
+        {:else}
+          <button class="btn btn-primary" disabled={!!job} onclick={() => run("build")}>{t("bl.build")}</button>
         {/if}
       </div>
     {/if}
@@ -131,109 +139,112 @@
   {#if body}
     <div class="stack">
       {#if job}
-        <div class="panel running"><span class="spinner"></span>
-          <div class="grow"><div class="bar"><i style="width: {job.progress}%"></i></div></div>
-          <span class="mono faint">{job.message}</span></div>
+        <div class="banner info running"><span class="spinner"></span>
+          <span class="num">{job.message}</span>
+          <div class="grow"><div class="bar"><i style="width: {job.progress}%"></i></div></div></div>
       {/if}
 
       {#if !body.latest}
-        <div class="empty panel">
+        <div class="card empty">
+          <div class="glyph"><Icon name="tree" /></div>
           <p class="panel-title">{t("bl.no_doc_title")}</p>
           <p>{t("bl.no_doc")}</p>
-          <button class="btn" style="margin-top: var(--s-3)" onclick={() => go("/document")}>{t("bl.to_doc")}</button>
+          <button class="btn btn-lg btn-primary" onclick={() => go("/document")}>{t("bl.to_doc")}</button>
         </div>
       {:else if !items.length}
-        <div class="empty panel">
+        <div class="card empty">
+          <div class="glyph"><Icon name="tree" /></div>
           <p class="panel-title">{t("bl.ready_title", { v: body.latest })}</p>
           <p>{t("bl.ready")}</p>
         </div>
       {:else}
         {#if body.stale}
-          <p class="note warn row-note"><span>{t("bl.stale", { a: body.built_from, b: body.latest })}</span>
+          <p class="banner warn row-note"><Icon name="warn" /><span class="grow">{t("bl.stale", { a: body.built_from, b: body.latest })}</span>
             <button class="btn btn-sm" disabled={!!job} onclick={() => run("build")}>{t("bl.rebuild")}</button></p>
         {/if}
-        <p class="hint">{t("bl.hint")}</p>
+        <p class="hint-line"><Icon name="info" size={12} /> {t("bl.hint")}{#if hasFindings}{" "}<b class="warn-t">{t("bl.findings_hint")}</b>{/if}</p>
 
-        <section class="panel tree">
+        <section class="tree" role="tree" aria-label={t("nav.decomposition")}>
           {#each epics as epic (epic.id)}
-            <div class="node epic" class:off={!epic.included}>
-              {@render row(epic)}
-              <div class="kids">
-                {#each children(epic.id) as story (story.id)}
-                  <div class="node story" class:off={!story.included}>
-                    {@render row(story)}
-                    {#if children(story.id).length}
-                      <div class="kids">
-                        {#each children(story.id) as sub (sub.id)}
-                          <div class="node sub" class:off={!sub.included}>{@render row(sub)}</div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {/each}
-                <button class="btn btn-sm btn-ghost add" onclick={() => add("story", epic)}><Icon name="plus" /> {t("bl.add_story")}</button>
-              </div>
+            <div class="node epic" class:off={!epic.included} class:folded={collapsed.has(epic.id)} role="treeitem" aria-selected="false"
+                 aria-expanded={!collapsed.has(epic.id)}>
+              {@render row(epic, children(epic.id).length > 0)}
+              {#if !collapsed.has(epic.id)}
+                <div class="kids" role="group">
+                  {#each children(epic.id) as story (story.id)}
+                    <div class="node story" class:off={!story.included} role="treeitem" aria-selected="false"
+                         aria-expanded={!collapsed.has(story.id)}>
+                      {@render row(story, true)}
+                      {#if !collapsed.has(story.id) && children(story.id).length}
+                        <div class="kids" role="group">
+                          {#each children(story.id) as sub (sub.id)}
+                            <div class="node sub" class:off={!sub.included} role="treeitem" aria-selected="false">{@render row(sub, false)}</div>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                  <button class="btn btn-sm btn-ghost add lvl-1" onclick={() => add("story", epic)}><Icon name="plus" size={14} /> {t("bl.add_story")}</button>
+                </div>
+              {/if}
             </div>
           {/each}
-          <button class="btn btn-sm btn-ghost add" onclick={() => add("epic", null)}><Icon name="plus" /> {t("bl.add_epic")}</button>
+          <button class="btn btn-sm btn-ghost add" onclick={() => add("epic", null)}><Icon name="plus" size={14} /> {t("bl.add_epic")}</button>
         </section>
 
         {#if nfrs.length}
-          <section class="panel tree">
-            <p class="panel-title">{t("bl.nfr_title")}</p>
-            <p class="panel-desc">{t("bl.nfr_hint")}</p>
-            {#each nfrs as nfr (nfr.id)}
-              <div class="node nfr" class:off={!nfr.included}>
-                {@render row(nfr)}
-                {#each nfr.invest || [] as f, i (i)}
-                  {#if f.move_to?.length}
-                    <div class="moves">
-                      {#each f.move_to as sid (sid)}
-                        {#if storyTitle[sid]}
-                          <button class="btn btn-sm" onclick={() => moveInto(nfr, sid)}>{t("bl.move_into", { title: storyTitle[sid] })}</button>
-                        {/if}
-                      {/each}
-                    </div>
-                  {/if}
-                {/each}
-              </div>
-            {/each}
-          </section>
+          <div>
+            <div class="section-h"><h2>{t("bl.nfr_title")}</h2><span class="t3 num">{nfrs.length}</span></div>
+            <p class="hint nfr-hint">{t("bl.nfr_hint")}</p>
+            <section class="tree">
+              {#each nfrs as nfr (nfr.id)}
+                <div class="node nfr" class:off={!nfr.included}>
+                  {@render row(nfr, false)}
+                  {#each nfr.invest || [] as f, i (i)}
+                    {#if f.move_to?.length}
+                      <div class="moves">
+                        {#each f.move_to as sid (sid)}
+                          {#if storyTitle[sid]}
+                            <button class="btn btn-sm" onclick={() => moveInto(nfr, sid)}><Icon name="arrow" size={12} /> {t("bl.move_into", { title: storyTitle[sid] })}</button>
+                          {/if}
+                        {/each}
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              {/each}
+            </section>
+          </div>
         {/if}
-
-        <div class="foot">
-          <span class="hint">{hasFindings ? t("bl.findings_hint") : ""}</span>
-          <button class="btn btn-primary" onclick={() => go("/export")}>{t("bl.to_export")} →</button>
-        </div>
       {/if}
     </div>
   {/if}
 </div>
 
-{#snippet row(item)}
+{#snippet row(item, foldable)}
   <div class="row-line">
-    <input type="checkbox" class="inc" checked={item.included} aria-label={item.title}
-           onchange={e => include(item, e.currentTarget.checked)} />
+    <span class="cb-hit"><input type="checkbox" class="inc" checked={item.included} aria-label={item.title}
+           onchange={e => include(item, e.currentTarget.checked)} /></span>
     <div class="main">
       {#if editing?.id === item.id}
         <div class="edit">
           <input class="input" bind:value={editing.title} aria-label={t("bl.title")} />
           {#if item.kind === "epic"}
-            <input class="input" bind:value={editing.goal} placeholder={t("bl.goal")} />
+            <input class="input" bind:value={editing.goal} placeholder={t("bl.goal")} aria-label={t("bl.goal")} />
           {:else if item.kind === "story"}
-            <textarea class="input area" rows="2" bind:value={editing.body} placeholder={t("bl.story_ph")}></textarea>
+            <textarea class="input area" rows="2" bind:value={editing.body} placeholder={t("bl.story_ph")} aria-label={t("bl.story_ph")}></textarea>
             <p class="label">{t("bl.ac")}</p>
             {#each editing.acceptance as ac, i (i)}
               <div class="ac-edit">
-                <input class="input" bind:value={ac.given} placeholder={t("bl.given")} />
-                <input class="input" bind:value={ac.when} placeholder={t("bl.when")} />
-                <input class="input" bind:value={ac.then} placeholder={t("bl.then")} />
+                <input class="input" bind:value={ac.given} placeholder={t("bl.given")} aria-label={t("bl.given")} />
+                <input class="input" bind:value={ac.when} placeholder={t("bl.when")} aria-label={t("bl.when")} />
+                <input class="input" bind:value={ac.then} placeholder={t("bl.then")} aria-label={t("bl.then")} />
                 <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sources.delete")}
-                        onclick={() => editing.acceptance.splice(i, 1)}><Icon name="close" /></button>
+                        onclick={() => editing.acceptance.splice(i, 1)}><Icon name="close" size={14} /></button>
               </div>
             {/each}
-            <button class="btn btn-sm btn-ghost" onclick={() => editing.acceptance.push({ given: "", when: "", then: "" })}>
-              <Icon name="plus" /> {t("bl.add_ac")}</button>
+            <div><button class="btn btn-sm btn-ghost" onclick={() => editing.acceptance.push({ given: "", when: "", then: "" })}>
+              <Icon name="plus" size={14} /> {t("bl.add_ac")}</button></div>
           {/if}
           <div class="actions">
             <button class="btn btn-sm btn-primary" disabled={!editing.title.trim()} onclick={() => saveEdit(item)}>{t("at.save")}</button>
@@ -242,89 +253,126 @@
         </div>
       {:else}
         <p class="title">
-          <span class="tag kind-{item.kind}">{t("bl.kind." + item.kind)}</span>
+          {#if foldable}
+            <button class="tw" class:open={!collapsed.has(item.id)} onclick={() => fold(item.id)}
+                    aria-label={item.title} aria-expanded={!collapsed.has(item.id)}><Icon name="chevron" size={14} /></button>
+          {:else}<span class="tw-gap"></span>{/if}
+          <span class="ticon {item.kind}" title={t("bl.kind." + item.kind)}>{glyph[item.kind]}</span>
           <span class="t">{item.title}</span>
-          {#if item.generated}<span class="tag">{t("bl.generated")}</span>{/if}
-          {#if item.pinned}<span class="tag accent">{t("bl.edited")}</span>{/if}
+          {#if item.pinned}<span class="tag outline">{t("bl.edited")}</span>{:else if item.generated}<span class="tag outline">{t("bl.generated")}</span>{/if}
+          {#if item.kind === "story" && item.invest?.length}<span class="tag warn">INVEST · {item.invest.map(f => f.letter).join("")}</span>{/if}
         </p>
-        {#if item.kind === "epic" && item.goal}<p class="goal">{t("bl.goal_label")}: {item.goal}</p>{/if}
-        {#if item.kind === "story" && item.body}<p class="story">{item.body}</p>{/if}
-        {#if item.acceptance?.length}
-          <ul class="acs">
-            {#each item.acceptance as ac, i (i)}
-              <li>{#if ac.given}<b>{t("bl.given")}</b>{" " + ac.given + " "}{/if}{#if ac.when}<b>{t("bl.when")}</b>{" " + ac.when + " "}{/if}<b>{t("bl.then")}</b>{" " + ac.then}</li>
-            {/each}
-          </ul>
-        {/if}
-        {#if item.refs?.length}
-          <p class="refs">{#each item.refs as r, i (r.id)}<button class="link mono" onclick={() => go("/document")}>{refLabel(r)}</button>{i < item.refs.length - 1 ? ", " : ""}{/each}</p>
-        {/if}
-        {#if item.kind === "story"}
-          {#each item.invest || [] as f, i (i)}
-            <div class="note warn invest">
-              <span><b>INVEST · {f.letter}</b> — {f.reason}{#if f.fix}<br /><span class="fix">{t("bl.fix")}: {f.fix}</span>{/if}</span>
-              {#if f.fix}<button class="btn btn-sm" onclick={() => applyFix(item, f.fix)}>{t("bl.apply")}</button>{/if}
+        {#if !collapsed.has(item.id) || !foldable}
+          {#if item.kind === "epic" && item.goal}<p class="goal">{t("bl.goal_label")}: {item.goal}</p>{/if}
+          {#if item.kind === "story" && item.body}<p class="story-text">{item.body}</p>{/if}
+          {#if item.acceptance?.length}
+            <div class="acs" role="table" aria-label={t("bl.ac")}>
+              <div class="ac-row h" role="row"><b role="columnheader">{t("bl.given")}</b><b role="columnheader">{t("bl.when")}</b><b role="columnheader">{t("bl.then")}</b></div>
+              {#each item.acceptance as ac, i (i)}
+                <div class="ac-row" role="row"><span role="cell">{ac.given}</span><span role="cell">{ac.when}</span><span role="cell">{ac.then}</span></div>
+              {/each}
             </div>
-          {/each}
-        {:else if item.kind === "nfr"}
-          {#each item.invest || [] as f, i (i)}<p class="hint">INVEST · {f.letter}: {f.reason}</p>{/each}
+          {/if}
+          {#if item.refs?.length}
+            <p class="refs">{#each item.refs as r (r.id)}<button class="link" onclick={() => go("/document")}>{refLabel(r)}</button>{/each}</p>
+          {/if}
+          {#if item.kind === "story"}
+            {#each item.invest || [] as f, i (i)}
+              <div class="invest">
+                <span class="L">{f.letter}</span>
+                <div class="grow"><p>INVEST · {f.letter} — {f.reason}</p>{#if f.fix}<p class="fix">{t("bl.fix")}: {f.fix}</p>{/if}</div>
+                {#if f.fix}<button class="btn btn-sm" onclick={() => applyFix(item, f.fix)}>{t("bl.apply")}</button>{/if}
+              </div>
+            {/each}
+          {:else if item.kind === "nfr"}
+            {#each item.invest || [] as f, i (i)}<p class="hint">INVEST · {f.letter}: {f.reason}</p>{/each}
+          {/if}
         {/if}
       {/if}
     </div>
     {#if editing?.id !== item.id}
-      <div class="acts">
+      <div class="acts row-actions">
         {#if item.kind === "story"}
-          <button class="btn btn-ghost btn-sm icon-btn" title={t("bl.add_sub")} aria-label={t("bl.add_sub")} onclick={() => add("subtask", item)}><Icon name="plus" /></button>
+          <button class="btn btn-ghost btn-sm icon-btn" title={t("bl.add_sub")} aria-label={t("bl.add_sub")} onclick={() => add("subtask", item)}><Icon name="plus" size={14} /></button>
         {/if}
         {#if item.kind !== "nfr"}
-          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.up")} onclick={() => move(item, "up")}>↑</button>
-          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.down")} onclick={() => move(item, "down")}>↓</button>
+          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.up")} title={t("sk.sec.up")} onclick={() => move(item, "up")}><Icon name="up" size={14} /></button>
+          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.down")} title={t("sk.sec.down")} onclick={() => move(item, "down")}><Icon name="down" size={14} /></button>
         {/if}
-        <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.edit")} onclick={() => startEdit(item)}><Icon name="pencil" /></button>
-        <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sources.delete")} onclick={() => remove(item)}><Icon name="trash" /></button>
+        <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.edit")} title={t("at.edit")} onclick={() => startEdit(item)}><Icon name="pencil" size={14} /></button>
+        <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sources.delete")} title={t("sources.delete")} onclick={() => remove(item)}><Icon name="trash" size={14} /></button>
       </div>
     {/if}
   </div>
 {/snippet}
 
 <style>
-  .running { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); }
-  .grow { flex: 1; }
-  .row-note { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
-  .tree { padding: var(--s-3) var(--s-4); }
-  .node { border-top: 1px solid var(--rule); }
-  .tree > .node:first-child, .tree > .panel-desc + .node { border-top: 0; }
-  .kids { margin-left: 28px; border-left: 1px solid var(--rule); padding-left: var(--s-3); }
-  .kids > .node:first-child { border-top: 0; }
-  .row-line { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--s-3); padding: var(--s-3) 0; }
-  .inc { width: 15px; height: 15px; margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
+  .grow { flex: 1; min-width: 0; }
+  .running { align-items: center; }
+  .warn-t { color: var(--warn); font-weight: 500; }
+  .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .nfr-hint { margin: calc(-1 * var(--sp-2)) 0 var(--sp-4); max-width: 80ch; }
+  .section-h { margin-top: var(--sp-4); }
+
+  .tree { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--e1); overflow: hidden; }
+  .node { border-top: 1px solid var(--line); }
+  .tree > .node:first-child { border-top: 0; }
+  .kids > .node { border-top: 1px solid var(--line); }
+  .row-line { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--sp-5); align-items: start;
+    padding: var(--sp-4) var(--sp-6); min-height: 40px; transition: background var(--t-fast); }
+  .row-line:hover { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+  .row-line .cb-hit { margin: -4px -6px; }
   .main { min-width: 0; }
-  .title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); line-height: 1.45; }
-  .epic > .row-line .t { font-weight: 600; font-size: var(--t-md); }
+  .story > .row-line .main, .sub > .row-line .main { padding-left: 22px; }
+  .sub > .row-line .main { padding-left: 48px; }
+  .title { display: flex; align-items: flex-start; gap: 6px; min-height: 20px; line-height: 20px; }
+  .title > :not(.t) { flex: none; }
+  .title .ticon, .title .tw { margin-top: 1px; }
+  .tw { width: 20px; height: 20px; border: 0; background: transparent; border-radius: 4px; display: grid; place-items: center;
+    color: var(--text-3); flex: none; padding: 0; cursor: pointer; }
+  .tw:hover { background: var(--surface-3); color: var(--text); }
+  .tw :global(.icon) { transition: transform var(--t-med) var(--ease); }
+  .tw.open :global(.icon) { transform: rotate(90deg); }
+  .tw-gap { width: 20px; flex: none; }
+  .ticon { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; flex: none; font: 700 10px/1 var(--font); color: #fff; }
+  .ticon.epic { background: #7A5AC8; } .ticon.story { background: #3F8A55; } .ticon.subtask { background: #3F7DC0; } .ticon.nfr { background: #1F6770; }
+  .t { min-width: 0; }
+  .epic > .row-line .t { font-weight: 600; }
   .story > .row-line .t { font-weight: 500; }
-  .sub .t { font-size: var(--t-sm); color: var(--ink-2); }
-  .off .t, .off .story, .off .acs { color: var(--ink-3); }
-  .kind-epic { background: var(--ink); color: var(--paper); }
-  .kind-story { background: var(--accent-bg); color: var(--accent); }
-  .kind-nfr { background: var(--warn-bg); color: var(--warn); }
-  .goal { margin-top: 2px; font-size: var(--t-sm); color: var(--ink-2); }
-  .story { margin-top: var(--s-1); line-height: 1.55; }
-  .acs { margin: var(--s-1) 0 0; padding-left: var(--s-4); font-size: var(--t-sm); color: var(--ink-2); line-height: 1.6; }
-  .acs b { font-weight: 500; color: var(--ink-3); }
-  .refs { margin-top: var(--s-1); font-size: var(--t-xs); }
-  .link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: var(--t-xs); }
-  .invest { margin-top: var(--s-2); display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
-  .invest .fix { color: var(--ink-2); }
-  .acts { display: flex; gap: 2px; align-items: flex-start; opacity: .6; }
-  .row-line:hover .acts { opacity: 1; }
-  .add { margin: var(--s-1) 0 var(--s-2); color: var(--ink-3); }
-  .edit { display: flex; flex-direction: column; gap: var(--s-2); }
-  .area { height: auto; padding: var(--s-2) var(--s-3); line-height: 1.5; resize: vertical; }
-  .ac-edit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: var(--s-2); }
-  .moves { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: 0 0 var(--s-3) 28px; }
-  .foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
-  @media (max-width: 700px) {
-    .kids { margin-left: var(--s-3); }
+  .sub .t { color: var(--text-2); }
+  .off > .row-line .t, .off > .row-line .story-text, .off > .row-line .acs { color: var(--text-3); }
+  .off > .row-line .ticon { opacity: .5; }
+  .goal { margin: 2px 0 0 46px; font-size: var(--fs-12); color: var(--text-2); }
+  .story-text, .acs, .refs, .invest { margin-left: 46px; }
+  .story-text { margin-top: var(--sp-3); font-size: var(--fs-14); line-height: 21px; max-width: 72ch; }
+  .acs { margin-top: var(--sp-5); border-radius: var(--r-md); overflow: hidden; box-shadow: 0 0 0 1px var(--line); max-width: 760px; }
+  .ac-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); font-size: 12.5px; line-height: 18px; }
+  .ac-row > * { padding: 7px var(--sp-5); border-right: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+  .ac-row > *:last-child { border-right: 0; }
+  .ac-row + .ac-row > * { border-top: 1px solid var(--line); }
+  .ac-row.h > * { background: var(--surface-2); font-weight: 600; font-size: var(--fs-11); color: var(--text-3); padding: 5px var(--sp-5); }
+  .refs { margin-top: var(--sp-4); display: flex; flex-wrap: wrap; gap: 6px; }
+  .link { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--r-full); border: 0; background: var(--surface-2);
+    color: var(--text-2); cursor: pointer; font: 500 11.5px/16px var(--mono); }
+  .link:hover { background: var(--accent-bg); color: var(--accent); }
+  .invest { margin-top: var(--sp-5); display: flex; gap: var(--sp-4); align-items: flex-start; padding: var(--sp-4) var(--sp-5);
+    border-radius: var(--r-md); background: var(--warn-bg); color: var(--warn); max-width: 760px; font-size: 12.5px; line-height: 18px; }
+  .invest .L { width: 20px; height: 20px; border-radius: 5px; background: var(--warn); color: var(--surface); display: grid; place-items: center;
+    font: 700 11px var(--font); flex: none; }
+  .invest p { color: var(--text); }
+  .invest .fix { color: var(--text-2); margin-top: 2px; }
+  .invest .btn { margin: -2px 0; }
+  .add { margin: var(--sp-2) var(--sp-6) var(--sp-4); color: var(--text-3); }
+  .add.lvl-1 { margin-left: calc(var(--sp-6) + 16px + var(--sp-5) + 22px); }
+  .edit { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .area { resize: vertical; }
+  .ac-edit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: var(--sp-4); }
+  .moves { display: flex; flex-wrap: wrap; gap: var(--sp-4); padding: 0 var(--sp-6) var(--sp-5) calc(var(--sp-6) + 16px + var(--sp-5) + 46px); }
+  @media (max-width: 720px) {
+    .story-text, .acs, .refs, .invest, .goal { margin-left: 0; }
+    .sub > .row-line .main { padding-left: 22px; }
     .ac-edit { grid-template-columns: 1fr; }
+    .ac-row { grid-template-columns: 1fr; }
+    .ac-row.h { display: none; }
   }
 </style>
