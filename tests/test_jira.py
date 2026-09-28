@@ -6,7 +6,7 @@ import urllib.parse
 import pytest
 
 from core import backlog, frd, jira
-from core.atlassian_auth import AtlassianAuth, AuthError, AuthRequired, KeyringStore, MemoryStore
+from core.atlassian_auth import AtlassianAuth, AuthError, AuthRequired, FileStore, MemoryStore
 from core.fake_jira import FakeJira
 from core.mcp_client import McpError, McpSession, RateLimited
 from core.store import Store
@@ -310,27 +310,21 @@ def test_requests_carry_the_app_user_agent():
     assert seen and all(ua and ua.startswith("RequirementsWorkbench/") for ua in seen)
 
 
-def test_keyring_store_splits_long_values():
-    class KR:
-        def __init__(self):
-            self.d = {}
-
-        def get_password(self, s, k):
-            return self.d.get((s, k))
-
-        def set_password(self, s, k, v):
-            assert len(v) <= 1000
-            self.d[(s, k)] = v
-
-        def delete_password(self, s, k):
-            self.d.pop((s, k), None)
-    kr = KR()
-    store = KeyringStore(kr)
-    value = {"access_token": "x" * 4500}
+def test_tokens_are_kept_in_a_private_file_not_the_keychain(tmp_path, monkeypatch):
+    import os
+    import stat
+    import sys
+    monkeypatch.setitem(sys.modules, "keyring", None)            # importing keyring would fail loudly
+    store = FileStore(str(tmp_path / "jira-auth.json"))
+    value = {"access_token": "x" * 4500, "refresh_token": "r"}
     store.set("tokens", value)
-    assert store.get("tokens") == value and len(kr.d) > 4
+    store.set("clients", {"http://127.0.0.1/cb": "c1"})
+    assert store.get("tokens") == value and store.get("clients") == {"http://127.0.0.1/cb": "c1"}
+    if sys.platform != "win32":
+        assert stat.S_IMODE(os.stat(tmp_path / "jira-auth.json").st_mode) == 0o600
     store.delete("tokens")
-    assert kr.d == {} and store.get("tokens") is None
+    assert store.get("tokens") is None and store.get("clients")
+    assert AtlassianAuth().store.__class__.__name__ == "FileStore"
 
 
 # ── API ──────────────────────────────────────────────────────────────────────

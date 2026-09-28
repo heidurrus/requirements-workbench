@@ -2,13 +2,15 @@
 
 OAuth 2.1 as the server advertises it: dynamic client registration (no secret,
 public client), authorization code with PKCE (S256), refresh tokens. The redirect
-lands on this app's own local server. Tokens live in the OS credential store
-(macOS Keychain / Windows Credential Manager) through `keyring`, never in .env,
-logs or exports.
+lands on this app's own local server. Tokens are kept in a private file in the
+app's data folder (readable only by the user, like the Anthropic key), never in
+logs or exports. Not in the macOS Keychain: it prompts for access again and again
+(PO decision D-21).
 """
 import base64
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
@@ -18,8 +20,6 @@ import urllib.request
 
 MCP_BASE = "https://mcp.atlassian.com"
 MCP_URL = MCP_BASE + "/v1/mcp"
-SERVICE = "RequirementsWorkbench.atlassian"
-CHUNK = 1000                           # Windows Credential Manager limits one secret to ~2.5 KB
 
 
 def user_agent():
@@ -43,44 +43,44 @@ class AuthRequired(AuthError):
 
 # ── token storage ────────────────────────────────────────────────────────────
 
-class KeyringStore:
-    """JSON values in the OS credential store, split into chunks so long tokens fit on Windows too."""
+class FileStore:
+    """JSON values in one private file in the app's data folder (0600 on macOS)."""
 
-    def __init__(self, backend=None):
-        if backend is None:
-            import keyring
-            backend = keyring
-        self.kr = backend
+    def __init__(self, path=None):
+        self._path = path
+
+    @property
+    def path(self):
+        if self._path is None:
+            from core.paths import app_data_dir
+            self._path = os.path.join(app_data_dir(), "jira-auth.json")
+        return self._path
+
+    def _load(self):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save(self, data):
+        from core.settings import _write_private
+        _write_private(self.path, json.dumps(data))
 
     def get(self, name):
-        count = self.kr.get_password(SERVICE, f"{name}.n")
-        if not count:
-            return None
-        parts = [self.kr.get_password(SERVICE, f"{name}.{i}") or "" for i in range(int(count))]
-        try:
-            return json.loads("".join(parts))
-        except ValueError:
-            return None
+        return self._load().get(name)
 
     def set(self, name, value):
-        self.delete(name)
-        text = json.dumps(value)
-        parts = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
-        for i, part in enumerate(parts):
-            self.kr.set_password(SERVICE, f"{name}.{i}", part)
-        self.kr.set_password(SERVICE, f"{name}.n", str(len(parts)))
+        data = self._load()
+        data[name] = value
+        self._save(data)
 
     def delete(self, name):
-        count = self.kr.get_password(SERVICE, f"{name}.n")
-        for i in range(int(count or 0)):
-            try:
-                self.kr.delete_password(SERVICE, f"{name}.{i}")
-            except Exception:
-                pass
-        try:
-            self.kr.delete_password(SERVICE, f"{name}.n")
-        except Exception:
-            pass
+        data = self._load()
+        if name in data:
+            data.pop(name)
+            self._save(data)
 
 
 class MemoryStore:
@@ -118,7 +118,7 @@ class AtlassianAuth:
     @property
     def store(self):
         if self._store is None:
-            self._store = KeyringStore()
+            self._store = FileStore()
         return self._store
 
     def _request(self, url, data=None, form=False, method=None):
