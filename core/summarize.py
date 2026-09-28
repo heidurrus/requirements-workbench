@@ -12,11 +12,12 @@ import urllib.request
 
 import anthropic
 
-from core.llm import LLMError, claude_errors, claude_params
+from core import local_llm
+from core.llm import LLMError, claude_errors, claude_params, local_model_id
 
 SYSTEM_PROMPT = """You summarise sources for a business analyst who gathers requirements from clients: call and meeting transcripts, emails, and documents such as earlier specifications. The first line tells you which kind it is.
 
-Write the whole summary, including the section headings, in the same language as the transcript (for a Russian transcript, translate the headings below into Russian). Use Markdown with these sections, leaving out any section that would be empty:
+Write the whole summary, including the section headings, in the same language as the transcript. For a Russian transcript the headings are: ## Кратко, ## Главное, ## Требования, ## Решения, ## Открытые вопросы, ## Задачи. Use Markdown with these sections, leaving out any section that would be empty:
 
 ## Summary
 A short paragraph: who met, what it was about, the outcome.
@@ -131,11 +132,43 @@ def summarize_with_ollama(transcript, model, on_delta, url, title=None, opener=u
     return re.sub(r"^\s+", "", "".join(parts))
 
 
+# ── built-in local model ─────────────────────────────────────────────────────
+
+def summarize_with_local(transcript, model_id, on_delta, title=None, opener=None):
+    body = {"stream": True, "temperature": 0.3,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                         {"role": "user", "content": _user_content(transcript, title)}]}
+    parts, think = [], _ThinkFilter()
+    kwargs = {"opener": opener} if opener else {}
+    try:
+        with local_llm.chat(model_id, body, **kwargs) as resp:
+            for raw in resp:                       # server-sent events: "data: {...}"
+                line = raw.decode(errors="replace").strip() if isinstance(raw, bytes) else raw.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                event = json.loads(data)
+                if event.get("error"):
+                    raise SummaryError(f"Local model error: {event['error']}")
+                delta = ((event.get("choices") or [{}])[0].get("delta") or {}).get("content") or ""
+                piece = think.feed(delta)
+                if piece:
+                    parts.append(piece)
+                    on_delta(piece)
+    except local_llm.LocalModelError as e:
+        raise SummaryError(str(e))
+    return re.sub(r"^\s+", "", "".join(parts))
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
 
 def summarize(transcript, settings, api_key, ollama_url, on_delta, title=None):
     if not transcript or not transcript.strip():
         raise SummaryError("There is no transcript text to summarise.")
+    if settings["llm_provider"] == "local":
+        return summarize_with_local(transcript, local_model_id(settings), on_delta, title)
     if settings["llm_provider"] == "ollama":
         return summarize_with_ollama(transcript, settings["ollama_model"], on_delta, ollama_url, title)
     return summarize_with_claude(transcript, settings["claude_model"], api_key, on_delta, title)

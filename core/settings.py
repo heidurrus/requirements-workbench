@@ -19,16 +19,17 @@ LEGACY_ENV_FILE = os.path.join(ROOT, ".env")
 
 SECRET_KEYS = {"HF_TOKEN", "ANTHROPIC_API_KEY"}
 DEFAULTS = {
-    "llm_provider": "claude",          # "claude" | "ollama"
+    "llm_provider": "claude",          # "claude" | "local" (built-in) | "ollama"
     "claude_model": "claude-opus-5",
     "ollama_model": "qwen3:8b",
+    "local_model": "",                 # built-in model id; empty = the downloaded one
 }
 CLAUDE_MODELS = [
     ("claude-opus-5", "Claude Opus 5 (best quality)"),
     ("claude-sonnet-5", "Claude Sonnet 5 (faster, cheaper)"),
     ("claude-haiku-4-5", "Claude Haiku 4.5 (fastest, cheapest)"),
 ]
-PROVIDERS = {"claude", "ollama"}
+PROVIDERS = {"claude", "local", "ollama"}
 
 
 def env_file():
@@ -107,6 +108,10 @@ def save_settings(updates):
             raise ValueError(f"llm_provider must be one of {sorted(PROVIDERS)}")
         if key == "claude_model" and value not in dict(CLAUDE_MODELS):
             raise ValueError(f"unsupported Claude model {value}")
+        if key == "local_model" and value:
+            from core.local_llm import MODELS_BY_ID
+            if value not in MODELS_BY_ID:
+                raise ValueError(f"unknown local model {value}")
         if key == "ollama_model" and not value:
             raise ValueError("ollama_model must not be empty")
         data[key] = value

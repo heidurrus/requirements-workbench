@@ -16,7 +16,7 @@ decide. Nothing goes to Jira until you press Push.
 
 Audio stays on your machine. Speech recognition runs locally with
 [GigaAM](https://github.com/salute-developers/GigaAM); the text stages can use
-Claude or a local model via Ollama, and a project can be set to *local only*.
+Claude or a built-in local model (one-click download, nothing else to install), and a project can be set to *local only*.
 
 > **Status: early development.** The app currently does **stage 1** of the
 > pipeline, recording and transcribing calls, and it grew out of the
@@ -64,7 +64,8 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
 - **Speaker separation** (who said what) with pyannote
 - **AI summaries** of any transcript: key points, requirements, decisions, open questions,
   action items, each citing speaker and timestamp. Uses **Claude** (add your Anthropic API key
-  in Settings; only text is sent) or a **local model via Ollama** (nothing leaves your computer)
+  in Settings; only text is sent) or the **built-in local model**: one click in Settings
+  downloads it (Gemma 4 12B or Qwen3.5 4B, chosen to fit your computer), and it runs offline
 - Runs on **CPU or GPU**: NVIDIA CUDA on Windows, Apple GPU on Apple Silicon
 - One transcription at a time, with a queue and live progress
 - The local server only accepts connections from your own computer
@@ -115,8 +116,11 @@ Open **Settings (⚙) → AI summaries** and choose one:
 
 - **Claude**: paste an API key from [console.anthropic.com](https://console.anthropic.com/settings/keys).
   Default model: Claude Opus 5 (best quality); Sonnet 5 and Haiku 4.5 are faster and cheaper.
-- **Local model**: install [Ollama](https://ollama.com/download), run `ollama pull qwen3:8b` once,
-  and choose it in Settings. Private, but slower and less accurate
+- **Built-in**: click **Download**. The app fetches the model (2.6–6.5 GB) and the
+  [llama.cpp](https://github.com/ggml-org/llama.cpp) engine itself, and starts and stops them
+  as needed. Private and offline, but less accurate than Claude. "Local only" projects always
+  use it.
+- **Ollama**: if you already run [Ollama](https://ollama.com/download), choose it and enter the model name.
 
 ---
 
