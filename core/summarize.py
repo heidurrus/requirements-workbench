@@ -17,7 +17,7 @@ from core.llm import LLMError, claude_errors, claude_params, local_model_id
 
 SYSTEM_PROMPT = """You summarise sources for a business analyst who gathers requirements from clients: call and meeting transcripts, emails, and documents such as earlier specifications. The first line tells you which kind it is.
 
-Write the whole summary, including the section headings, in the same language as the transcript (for a Russian transcript, translate the headings below into Russian). Use Markdown with these sections, leaving out any section that would be empty:
+Write the whole summary, including the section headings, in the same language as the transcript. For a Russian transcript the headings are: ## Кратко, ## Главное, ## Требования, ## Решения, ## Открытые вопросы, ## Задачи. Use Markdown with these sections, leaving out any section that would be empty:
 
 ## Summary
 A short paragraph: who met, what it was about, the outcome.
