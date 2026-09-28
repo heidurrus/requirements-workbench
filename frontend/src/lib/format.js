@@ -65,11 +65,3 @@ export function speakerClass(label, order) {
   const i = order.indexOf(label);
   return `spk-${(i < 0 ? 0 : i) % 5}`;
 }
-
-export function downloadText(filename, text) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}

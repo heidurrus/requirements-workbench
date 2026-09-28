@@ -5,6 +5,7 @@
   import Transcript from "./screens/Transcript.svelte";
   import Settings from "./screens/Settings.svelte";
   import Atoms from "./screens/Atoms.svelte";
+  import DocumentScreen from "./screens/Document.svelte";
   import { api } from "./lib/api.js";
   import { app, t, loadProjects, loadSources, setLang } from "./lib/state.svelte.js";
 
@@ -42,6 +43,8 @@
         {#key app.route.id}<Transcript id={app.route.id} autoSummarize={app.route.summarize} focusSeg={app.route.seg} />{/key}
       {:else if app.route.name === "atoms"}
         <Atoms />
+      {:else if app.route.name === "document"}
+        <DocumentScreen />
       {:else if app.route.name === "settings"}
         <Settings />
       {:else}

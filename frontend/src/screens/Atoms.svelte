@@ -308,7 +308,8 @@
       {/if}
 
       {#if stats && stats.total && !stats.pending}
-        <p class="note ok done">{t("at.all_done")}</p>
+        <p class="note ok done row-done">{t("at.all_done")}
+          <button class="btn btn-sm btn-primary" onclick={() => go("/document")}>{t("doc.build_cta")}</button></p>
       {/if}
 
       {#if atoms.length}
@@ -387,6 +388,7 @@
   .edit-row .seg { height: 28px; }
   .edit-row .seg button { padding: 0 var(--s-3); font-size: var(--t-sm); }
   .done { margin: var(--s-3) var(--s-4) 0; }
+  .row-done { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
   .keys { padding: var(--s-3) var(--s-4); border-top: 1px solid var(--rule); }
   .keys :global(.kb) { display: inline-block; padding: 0 5px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); color: var(--ink-2); }
 

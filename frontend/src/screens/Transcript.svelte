@@ -3,7 +3,8 @@
   import Icon from "../components/Icon.svelte";
   import { api, pollJob } from "../lib/api.js";
   import { extractAtoms } from "../lib/atoms.js";
-  import { fmtTime, fmtDate, fmtDuration, renderMarkdown, speakerClass, speakerDisplay, downloadText } from "../lib/format.js";
+  import { fmtTime, fmtDate, fmtDuration, renderMarkdown, speakerClass, speakerDisplay } from "../lib/format.js";
+  import { saveText } from "../lib/save.js";
   import { app, t, go, loadSources, toast, rememberSource } from "../lib/state.svelte.js";
 
   let { id, autoSummarize = false, focusSeg = null } = $props();
@@ -195,7 +196,7 @@
             {#if summarizing}<span class="spinner"></span>{/if}{summaryText ? t("tr.resummarize") : t("tr.summarize")}
           </button>
           <button class="btn" onclick={copyText}><Icon name={copied ? "check" : "copy"} /> {copied ? t("tr.copied") : t("tr.copy")}</button>
-          <button class="btn" onclick={() => downloadText(`${source.title}.txt`, source.text)}><Icon name="download" /> {t("tr.export")}</button>
+          <button class="btn" onclick={() => saveText(`${source.title}.txt`, source.text)}><Icon name="download" /> {t("tr.export")}</button>
         {/if}
         {#if source.audio_url && source.status !== "processing"}
           <button class="btn btn-ghost" onclick={retranscribe}>{source.status === "ready" ? t("tr.retranscribe") : t("tr.transcribe")}</button>

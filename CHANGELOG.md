@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.6.0 (2026-09-28): Increment 3a, the FRD document
+
+- **Build the FRD from accepted atoms.** A new **Документ** screen (step 4) turns the accepted
+  requirements into a structured document:
+  - sections: purpose, context and assumptions, functional requirements grouped into
+    sub-sections, non-functional requirements, out of scope, open questions
+  - each requirement worded formally, in the language of your sources
+- **Stable IDs and sources.** Every requirement keeps its ID (FR-3, NFR-1, Q-2) across
+  rebuilds, and IDs are never reused. It links to the exact places in your sources it came from.
+- **Versions.** Every build is a new version. You can view older versions and compare any
+  version with the previous one (added / changed / removed).
+- **Stale sections and rebuild.** Changing, rejecting or adding an atom marks the affected
+  sections as out of date. **Rebuild** rewrites only what changed and keeps everything else word
+  for word. **Rebuild everything** is there when you want a fresh pass.
+- **Quality check.** Requirements are checked for vague words ("быстро", "удобно"), missing
+  metrics, ambiguity, several requirements in one, and untestable wording. **Починить**
+  proposes a rewrite. You can edit it and apply it to the atom, or dismiss the finding.
+- **Your own text.** Add pinned paragraphs to any section. They're kept verbatim through
+  every rebuild.
+- **Export to Word.** A standard template or a **GOST** one (title page, Times New Roman 14,
+  1.5 spacing, GOST margins, page numbers), both with a table of contents. Each requirement's
+  sources become footnotes: date, time, speaker and the exact quote.
+- **Unresolved conflicts don't block the build.** The affected requirements are marked in
+  the document.
+- Fixed: saving files (transcript .txt, Word export) in the desktop app now opens a native Save
+  dialog, with **Показать** to find the file. Downloads were switched off in the app window.
+
 ## 2.5.0 (2026-09-28): Built-in local model
 
 - **A local AI model with one click, with nothing else to install.** Settings → AI → **Built-in**:
