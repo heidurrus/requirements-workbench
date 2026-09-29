@@ -97,18 +97,18 @@
 {/if}
 
 <style>
-  .gpu { margin-bottom: var(--s-2); }
-  .note.warn { margin-bottom: var(--s-2); }
+  .gpu { margin-bottom: var(--sp-4); }
+  .note.warn { margin-bottom: var(--sp-4); }
   .models { list-style: none; margin: 0; padding: 0; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line-strong); overflow: hidden; }
-  .model { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; padding: var(--s-3); }
-  .model + .model { border-top: 1px solid var(--rule); }
+  .model { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; padding: var(--sp-5); }
+  .model + .model { border-top: 1px solid var(--line); }
   .model.on { background: var(--accent-bg); }
-  .pick { display: flex; align-items: flex-start; gap: var(--s-3); flex: 1 1 260px; min-width: 0; cursor: pointer; }
+  .pick { display: flex; align-items: flex-start; gap: var(--sp-5); flex: 1 1 260px; min-width: 0; cursor: pointer; }
   .pick input { margin-top: 4px; accent-color: var(--accent); }
   .pick input:disabled { cursor: default; }
-  .name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); min-width: 0; }
+  .name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); min-width: 0; }
   .name b { font-weight: 500; }
   .name .hint { flex-basis: 100%; }
-  .side { display: flex; align-items: center; gap: var(--s-2); margin-left: auto; }
-  .dl { display: flex; flex-direction: column; gap: var(--s-1); width: 180px; }
+  .side { display: flex; align-items: center; gap: var(--sp-4); margin-left: auto; }
+  .dl { display: flex; flex-direction: column; gap: var(--sp-2); width: 180px; }
 </style>

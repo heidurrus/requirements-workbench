@@ -185,7 +185,7 @@
 <div class="screen-inner wide">
   {#if !id}
     <div class="empty panel"><p>{t("tr.none")}</p>
-      <button class="btn" style="margin-top: var(--s-3)" onclick={() => go("/sources")}>{t("tr.back")}</button></div>
+      <button class="btn" style="margin-top: var(--sp-5)" onclick={() => go("/sources")}>{t("tr.back")}</button></div>
   {:else if loadError}
     <div class="note danger">{loadError}</div>
   {:else if source}
@@ -260,7 +260,7 @@
         <div class="stack main-col">
           {#if speakerOrder.length && !isText}
             <Block id="tr-speakers" title={t("tr.speakers")} meta={String(speakerOrder.length)}>
-              <p class="hint" style="margin-bottom: var(--s-3)">{t("tr.speaker_hint")}</p>
+              <p class="hint" style="margin-bottom: var(--sp-5)">{t("tr.speaker_hint")}</p>
               <div class="speakers">
                 {#each speakerOrder as label (label)}
                   <label class="speaker">

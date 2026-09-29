@@ -28,6 +28,6 @@
 </details>
 
 <style>
-  .block-actions { display: flex; gap: var(--s-2); margin-left: var(--s-2); }
-  .block-meta + .block-actions { margin-left: var(--s-3); }
+  .block-actions { display: flex; gap: var(--sp-4); margin-left: var(--sp-4); }
+  .block-meta + .block-actions { margin-left: var(--sp-5); }
 </style>

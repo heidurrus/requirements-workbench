@@ -43,12 +43,20 @@
     link: '<path d="M7 9a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 0 0-4-4l-.8.8M9 7a2.8 2.8 0 0 0-4 0L3 9a2.8 2.8 0 0 0 4 4l.8-.8"/>',
     sidebar: '<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.8"/><path d="M6 3v10"/>',
     clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.5"/>',
+    inspector: '<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.8"/><path d="M10 3v10"/>',
+    home: '<path d="M2.5 7.5L8 2.8l5.5 4.7v5.2a.8.8 0 0 1-.8.8H3.3a.8.8 0 0 1-.8-.8z"/><path d="M6.5 13.3V9.5h3v3.8"/>',
+    updown: '<path d="M5 6l3-3 3 3M5 10l3 3 3-3"/>',
+    spark: '<path d="M8 1.8l1.5 4.2 4.2 1.5-4.2 1.5L8 13.2 6.5 9 2.3 7.5 6.5 6z"/>',
+    table: '<rect x="2" y="2.8" width="12" height="10.4" rx="1.5"/><path d="M2 6.5h12M2 10h12M6.5 6.5v6.7"/>',
+    word: '<path d="M4 1.8h5.2L12.5 5v8.7a.8.8 0 0 1-.8.8H4a.8.8 0 0 1-.8-.8V2.6a.8.8 0 0 1 .8-.8z"/><path d="M5.3 8l1 3.5L8 8.3l1.7 3.2 1-3.5"/>',
+    jira: '<path d="M8 1.8L14.2 8 8 14.2 1.8 8z"/><path d="M8 5.2L10.8 8 8 10.8 5.2 8z"/>',
+    filter: '<path d="M2.5 3.5h11L9.5 8.4v4.3l-3 1V8.4z"/>',
     cube: '<path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8zM2.8 5L8 8l5.2-3M8 8v6"/>',
   };
 </script>
 
 <svg class="icon" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-     stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html ICONS[name] || ""}</svg>
+     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">{@html ICONS[name] || ""}</svg>
 
 <style>
   .icon { flex: none; display: block; }
