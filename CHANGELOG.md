@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.3.1 (2026-09-29): Re-type old atoms
+
+- **"Уточнить типы" / "Refine types" on the Atoms screen.** Atoms extracted before 3.3 could only be functional, NFR or question, so every ID came out as FR, NFR or Q. The button re-reads accepted and pending atoms and moves the ones that fit to business (BR), risk (RSK) or as-is (AS). Wording is not changed, and one Undo reverts the whole pass. When a project has no atoms of the new types, a banner suggests the button.
+- Documents still titled "FRD — …" from before 3.2 are renamed "SRS — …".
+
 ## 3.3.0 (2026-09-29): Each document takes its own requirements
 
 - **Requirements go to the document that needs them.** Atoms have three more types, and extraction finds them:

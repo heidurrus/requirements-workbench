@@ -245,3 +245,56 @@ def _dedup(store, project_id, new_ids, prefs, api_key, ollama_url, complete, ski
         store.add_conflict(project_id, a, b, c["description"])
         conflicts += 1
     return merged, conflicts
+
+
+# ── reclassify existing atoms (3.3: business / risk / current were added) ────
+
+RECLASSIFY_CONTRACT = """You get atoms that were already extracted and reviewed. They were typed by an older version that knew only functional, nfr and question, so business goals and rules, risks and facts about today's process were forced into those types. Type each atom from scratch, using the type definitions above: business, functional, nfr, risk, current or question.
+- business: a goal, outcome, success measure, KPI or business rule — checked in the business, not in the system.
+- risk: something uncertain that could hurt the project (a dependency, an unknown, a threat to scope, time or data).
+- current: how things work today, or a problem of today's process.
+- functional / nfr: what the system must do / how well it must do it. question: still open.
+- Do not reword anything. Return every atom ID exactly once."""
+RECLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {"items": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"},
+                       "type": {"type": "string", "enum": ["business", "functional", "nfr", "risk", "current", "question"]}},
+        "required": ["id", "type"], "additionalProperties": False}}},
+    "required": ["items"], "additionalProperties": False,
+}
+
+
+def reclassify(store, project_id, prefs, api_key, ollama_url, progress=None, complete=complete_json, skillset=None,
+               chunk=60):
+    """Suggest a better type for each accepted or pending atom; returns [{id, from, to}] without saving."""
+    project = store.get_project(project_id)
+    prefs = for_project(prefs, project)
+    skillset = skillset or skills.resolve()
+    atoms = [a for a in store.list_atoms(project_id) if a["status"] in ("pending", "accepted")]
+    report = progress or (lambda done, total, message: None)
+    system = skills.compose(skillset, "extract", RECLASSIFY_CONTRACT)
+    changes = []
+    parts = [atoms[i:i + chunk] for i in range(0, len(atoms), chunk)] or [[]]
+    for n, part in enumerate(parts):
+        if not part:
+            break
+        report(n, len(parts), f"Reading part {n + 1} of {len(parts)}…")
+        keys = {f"A{i + 1}": a for i, a in enumerate(part)}
+        user = "\n".join(f"{k} {a['statement']}" +
+                         (f"  (quote: «{a['evidence'][0]['quote']}»)" if a["evidence"] else "")
+                         for k, a in keys.items())
+        reply = complete(system, user, RECLASSIFY_SCHEMA, prefs, api_key, ollama_url)
+        for item in reply.get("items") or []:
+            a = keys.get(str(item.get("id", "")).strip())
+            new = item.get("type")
+            if a and new in store_types() and new != a["type"]:
+                changes.append({"id": a["id"], "from": a["type"], "to": new, "statement": a["statement"]})
+    report(len(parts), len(parts), "Done")
+    return changes
+
+
+def store_types():
+    from core.store import ATOM_TYPES
+    return ATOM_TYPES
