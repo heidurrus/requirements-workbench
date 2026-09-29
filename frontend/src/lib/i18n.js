@@ -341,9 +341,9 @@ const ru = {
   "sk.hint.quality": "Какие проблемы искать: размытые слова, свои правила.",
   "sk.hint.fix": "Как переписывать требование по замечанию проверки.",
   "sk.hint.export": "Оформление выгрузки: титульный лист, стили, колонтитулы, лист согласования.",
-  "sk.builtin": "встроенный",
-  "sk.custom": "свой",
-  "sk.in_use": "в этом проекте",
+  "sk.builtin": "Встроенный",
+  "sk.custom": "Свой",
+  "sk.in_use": "Используется",
   "sk.broken": "ошибка",
   "sk.copy": "Сделать копию",
   "sk.copied": "Копия создана — теперь её можно менять",
@@ -1111,6 +1111,10 @@ const ru = {
   "jr.act.unchanged": "Без изменений",
   "jr.act.skip": "Пропустить",
   "jr.act.blocked": "Нельзя",
+  "sk.tab.usage": "Использование",
+  "sk.u.doc_type": "Тип документа",
+  "sk.files": "Файлы скилла",
+  "sk.rule.remove": "Убрать правило",
 };
 
 const en = {
@@ -1453,9 +1457,9 @@ const en = {
   "sk.hint.quality": "What problems to look for: vague words, your own rules.",
   "sk.hint.fix": "How to rewrite a requirement after a finding.",
   "sk.hint.export": "The export's look: title page, styles, headers and footers, approval sheet.",
-  "sk.builtin": "built-in",
-  "sk.custom": "yours",
-  "sk.in_use": "in this project",
+  "sk.builtin": "Built-in",
+  "sk.custom": "Your own",
+  "sk.in_use": "In use",
   "sk.broken": "error",
   "sk.copy": "Make a copy",
   "sk.copied": "Copy created: you can edit it now",
@@ -1498,7 +1502,7 @@ const en = {
   "sk.sec.add": "A section the AI writes",
   "sk.sec.up": "Up",
   "sk.sec.down": "Down",
-  "sk.sec.remove": "Remove section",
+  "sk.sec.remove": "Remove the section",
   "sk.sec.required": "required",
   "sk.vague": "Vague words",
   "sk.vague_hint": "Comma-separated; the start of a word is enough (“fast” finds “faster”).",
@@ -2223,6 +2227,10 @@ const en = {
   "jr.act.unchanged": "Unchanged",
   "jr.act.skip": "Skip",
   "jr.act.blocked": "Blocked",
+  "sk.tab.usage": "Usage",
+  "sk.u.doc_type": "Document type",
+  "sk.files": "The skill's files",
+  "sk.rule.remove": "Remove the rule",
 };
 
 export const DICTS = { ru, en };

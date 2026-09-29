@@ -1,7 +1,8 @@
 <script>
   import { untrack } from "svelte";
-  import Block from "../components/Block.svelte";
   import Icon from "../components/Icon.svelte";
+  import Screen from "../components/Screen.svelte";
+  import Panes from "../components/Panes.svelte";
   import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { fmtDate, renderMarkdown } from "../lib/format.js";
@@ -226,7 +227,9 @@
     ...(tryMode && !skill.error ? ["try"] : []),
     "contract",
     ...(editable ? ["history"] : []),
+    ...(!skill.error ? ["usage"] : []),
   ]);
+  const PREFIX = { functional: "FR", nfr: "NFR", question: "Q", business: "BR", risk: "RSK", current: "AS" };
   let tab = $state("instructions");
   $effect(() => { skill?.name; untrack(() => { tab = tabs[0] || "instructions"; }); });
   function tabKey(e) {
@@ -241,84 +244,78 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="screen-inner wide">
-  <header class="screen-head">
-    <div>
-      <h1 class="screen-title">{t("sk.title")}</h1>
-      <p class="screen-sub">{t("sk.sub")}</p>
-    </div>
-    <div class="actions">
-      <input type="file" accept=".zip,.md" class="hidden" bind:this={importInput} onchange={importFile} aria-label={t("sk.import")} />
-      <button class="btn" title={t("sk.import_hint")} onclick={() => importInput.click()}><Icon name="upload" size={14} /> {t("sk.import")}</button>
-    </div>
-  </header>
+<Screen title={t("sk.title")} sub={t("sk.sub")} inspector={skill && !skill.error ? "skills" : ""}>
+  {#snippet actions()}
+    <input type="file" accept=".zip,.md" class="hidden" bind:this={importInput} onchange={importFile} aria-label={t("sk.import")} />
+    <button class="btn" title={t("sk.import_hint")} onclick={() => importInput.click()}><Icon name="upload" size={14} /> {t("sk.import")}</button>
+    {#if skill && !skill.error}
+      <button class="btn" title={t("sk.export_zip_hint")}
+              onclick={() => saveUrl(`/api/skills/${skill.name}/export.zip`, `${skill.name}.zip`)}><Icon name="download" size={14} /> {t("sk.export_zip")}</button>
+      <button class="btn" class:primary={!editable} onclick={copy}><Icon name="copy" size={14} /> {t("sk.copy")}</button>
+    {/if}
+  {/snippet}
 
-  {#if error}<p class="note danger">{error}</p>{/if}
+  {#if error}<div class="pad"><div class="banner danger"><Icon name="warn" /><span class="grow">{error}</span></div></div>{/if}
 
   {#if list}
-    <div class="layout">
-      <nav class="list" aria-label={t("sk.title")}>
-        {#each grouped as g (g.id)}
-          <p class="g-title">{g.id === "broken" ? t("sk.broken") : t("sk.stage." + g.id)}</p>
-          {#each g.skills as s (s.name + g.id)}
-            {#if g.id === "broken" || !s.error}
-              <button class="item" class:on={s.name === selected} class:err={!!s.error} onclick={() => open(s.name)}
-                      aria-current={s.name === selected ? "true" : undefined}>
-                <span class="dot" class:off={!(g.id !== "broken" && g.id !== "frd" && g.effective === s.name)} class:none={g.id === "frd"}></span>
-                <span class="i-title">{s.title}</span>
-                <span class="own">{s.builtin ? t("sk.builtin") : t("sk.custom")}</span>
-                {#if g.id !== "broken" && g.id !== "frd" && g.effective === s.name}<span class="in-use">{t("sk.in_use")}</span>{/if}
-              </button>
-            {/if}
-          {/each}
-        {/each}
-      </nav>
-
-      <section class="editor">
-        {#if !skill || !draft}
-          <div class="card empty"><div class="glyph"><Icon name="skills" /></div><p>{t("sk.pick")}</p></div>
-        {:else}
-          {#key skill.name}
-          <div class="card sk-card">
-            <div class="head">
-              <div class="e-title">
-                {#if editable}
-                  <input class="input title-input" bind:value={draft.title} aria-label={t("sk.name")} />
-                {:else}
-                  <h2>{skill.title}</h2>
+    <Panes screen="skills" wideOutline>
+      {#snippet outline()}
+        <div class="pane-body scroll">
+          <nav class="list" aria-label={t("sk.title")}>
+            {#each grouped as g (g.id)}
+              <p class="cap g-title">{g.id === "broken" ? t("sk.broken") : t("sk.stage." + g.id)}</p>
+              {#each g.skills as s (s.name + g.id)}
+                {#if g.id === "broken" || !s.error}
+                  {@const used = g.id !== "broken" && g.id !== "frd" && g.effective === s.name}
+                  <button class="item" class:err={!!s.error} onclick={() => open(s.name)} aria-current={s.name === selected ? "true" : undefined}>
+                    <b class="i-title trunc">{s.title}</b>
+                    {#if used}<span class="status ok"><Icon name="check" size={12} /> {t("sk.in_use")}</span>{:else}<span></span>{/if}
+                    <span class="sub">{s.error ? t("sk.broken") : s.builtin ? t("sk.builtin") : t("sk.custom")}</span>
+                  </button>
                 {/if}
-                <p class="meta"><span class="mono">{skill.name}</span> · {t("sk.stage." + skill.stage)} · v{skill.version}
-                  · <span class="tag outline">{skill.builtin ? t("sk.builtin") : t("sk.custom")}</span></p>
-                {#if editable}
-                  <input class="input desc-input" id="sk-desc" bind:value={draft.description} placeholder={t("sk.description")} aria-label={t("sk.description")} />
-                {:else if skill.description}
-                  <p class="t2 desc">{skill.description}</p>
-                {/if}
-              </div>
-              <div class="actions">
-                <button class="btn" onclick={copy}><Icon name="copy" size={14} /> {t("sk.copy")}</button>
-                <button class="btn" title={t("sk.export_zip_hint")}
-                        onclick={() => saveUrl(`/api/skills/${skill.name}/export.zip`, `${skill.name}.zip`)}><Icon name="download" size={14} /> {t("sk.export_zip")}</button>
-                {#if editable && desktop}<button class="btn btn-ghost" onclick={() => reveal("folder")}>{t("sk.folder")}</button>{/if}
-                {#if editable}<button class="btn btn-ghost icon-btn danger-text" aria-label={t("sk.delete")} title={t("sk.delete")} onclick={remove}><Icon name="trash" size={14} /></button>{/if}
-              </div>
-            </div>
-
-            {#if skill.error}<p class="note danger pad">{t("sk.error", { error: skill.error })}</p>{/if}
-            {#if !editable && !skill.error}<p class="banner info pad"><Icon name="lock" size={14} /><span>{t("sk.readonly")}</span></p>{/if}
-
-            <div class="tabs" role="tablist" aria-label={skill.title}>
-              {#each tabs as k (k)}
-                <button role="tab" id="sk-tab-{k}" aria-selected={tab === k} tabindex={tab === k ? 0 : -1}
-                        aria-controls="sk-pane" onclick={() => (tab = k)} onkeydown={tabKey}>
-                  {t("sk.tab." + k)}
-                  {#if k === "sections" && draft.meta.sections}<span class="n">{draft.meta.sections.length}</span>{/if}
-                  {#if k === "history"}<span class="n">{skill.history.length}</span>{/if}
-                </button>
               {/each}
-            </div>
+            {/each}
+          </nav>
+        </div>
+      {/snippet}
 
-            <div class="pane" id="sk-pane" role="tabpanel" aria-labelledby="sk-tab-{tab}">
+      {#if !skill || !draft}
+        <div class="empty"><div class="glyph"><Icon name="skills" size={20} /></div><p>{t("sk.pick")}</p></div>
+      {:else}
+        {#key skill.name}
+        <div class="editor">
+          <div class="editor-head">
+            <div class="e-title">
+              {#if editable}
+                <input class="input title-input" bind:value={draft.title} aria-label={t("sk.name")} />
+              {:else}
+                <h2>{skill.title}</h2>
+              {/if}
+              <p class="meta t3"><span class="mono">{skill.name}</span> · {t("sk.stage." + skill.stage)} · v{skill.version} · {skill.builtin ? t("sk.builtin") : t("sk.custom")}</p>
+              {#if editable}
+                <input class="input desc-input" id="sk-desc" bind:value={draft.description} placeholder={t("sk.description")} aria-label={t("sk.description")} />
+              {:else if skill.description}
+                <p class="t2 desc">{skill.description}</p>
+              {/if}
+            </div>
+            {#if skill.error}<div class="banner danger"><Icon name="warn" /><span class="grow">{t("sk.error", { error: skill.error })}</span></div>
+            {:else if !editable}<div class="banner info"><Icon name="lock" /><span class="grow">{t("sk.readonly")}</span>
+              <button class="btn sm" onclick={copy}>{t("sk.copy")}</button></div>{/if}
+          </div>
+
+          <div class="tabs" role="tablist" aria-label={skill.title}>
+            {#each tabs as k (k)}
+              <button role="tab" id="sk-tab-{k}" class:narrow-tab={k === "usage"} aria-selected={tab === k} tabindex={tab === k ? 0 : -1}
+                      aria-controls="sk-pane" onclick={() => (tab = k)} onkeydown={tabKey}>
+                {t("sk.tab." + k)}
+                {#if k === "sections" && draft.meta.sections}<span class="n">{draft.meta.sections.length}</span>{/if}
+                {#if k === "history"}<span class="n">{skill.history.length}</span>{/if}
+              </button>
+            {/each}
+          </div>
+
+          <div class="pane-body scroll">
+            <div class="tab-pane" id="sk-pane" role="tabpanel" aria-labelledby="sk-tab-{tab}">
               {#if tab === "instructions"}
                 <p class="hint pane-hint">{t("sk.hint." + skill.stage)}</p>
                 <div class="field">
@@ -339,11 +336,10 @@
                           {t("sk.sec.table", { n: (sec.columns || []).length })}</span>{/if}
                         <span class="spacer"></span>
                         {#if editable}
-                          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.up")} title={t("sk.sec.up")} disabled={i === 0} onclick={() => move(i, -1)}><Icon name="up" size={14} /></button>
-                          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.down")} title={t("sk.sec.down")} disabled={i === draft.meta.sections.length - 1} onclick={() => move(i, 1)}><Icon name="down" size={14} /></button>
+                          <button class="btn sm ghost" disabled={i === 0} onclick={() => move(i, -1)}>{t("bl.up")}</button>
+                          <button class="btn sm ghost" disabled={i === draft.meta.sections.length - 1} onclick={() => move(i, 1)}>{t("bl.down")}</button>
                           {#if !REQUIRED.includes(sec.key)}
-                            <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sk.sec.remove")} title={t("sk.sec.remove")}
-                                    onclick={() => draft.meta.sections.splice(i, 1)}><Icon name="close" size={14} /></button>
+                            <button class="btn sm ghost danger" onclick={() => draft.meta.sections.splice(i, 1)}>{t("sk.sec.remove")}</button>
                           {/if}
                         {/if}
                       </div>
@@ -385,8 +381,7 @@
                       <div class="sec-fields">
                         <input class="input code" placeholder={t("sk.rule.id")} aria-label={t("sk.rule.id")} readonly={!editable} bind:value={rule.id} />
                         <input class="input" placeholder={t("sk.rule.title")} aria-label={t("sk.rule.title")} readonly={!editable} bind:value={rule.title} />
-                        {#if editable}<button class="btn btn-ghost btn-sm icon-btn" aria-label={t("sources.delete")} title={t("sources.delete")}
-                                onclick={() => draft.meta.rules.splice(i, 1)}><Icon name="close" size={14} /></button>{/if}
+                        {#if editable}<button class="btn sm ghost danger" onclick={() => draft.meta.rules.splice(i, 1)}>{t("sk.rule.remove")}</button>{/if}
                       </div>
                       <textarea class="input area" rows="2" placeholder={t("sk.rule.description")} aria-label={t("sk.rule.description")}
                                 readonly={!editable} bind:value={rule.description}></textarea>
@@ -460,7 +455,7 @@
                         <p class="label">{t("sk.try_atoms", { n: r.atoms.length })}{#if r.dropped} · {t("sk.try_dropped", { n: r.dropped })}{/if}</p>
                         <ul class="try-atoms">
                           {#each r.atoms as a, i (i)}
-                            <li><span class="tag {typeClass[a.type]}">{t("at.type." + a.type)}</span> <span class="st">{a.statement}</span>
+                            <li><span class="type {typeClass[a.type]}">{PREFIX[a.type]}</span> <span class="st">{a.statement}</span>
                               {#each a.evidence as ev, j (j)}<span class="quote">«{ev.quote}»</span>{/each}</li>
                           {/each}
                         </ul>
@@ -488,6 +483,8 @@
               {:else if tab === "contract"}
                 <p class="hint pane-hint">{t("sk.contract_hint")}</p>
                 {#if skill.contract}<pre class="contract">{skill.contract}</pre>{:else}<p class="muted">{t("sk.no_contract")}</p>{/if}
+              {:else if tab === "usage"}
+                {@render usage()}
               {:else if tab === "history"}
                 {#if !skill.history.length}<p class="muted">{t("sk.history_empty")}</p>{/if}
                 <ul class="history">
@@ -504,152 +501,139 @@
                 </ul>
               {/if}
             </div>
-
-            {#if stageInfo && !skill.error && skill.stage === "frd"}
-              <div class="usage doc-type">
-                <Icon name="doc" size={14} />
-                <span class="grow">{t("sk.doc_type_hint")}</span>
-                <button class="btn btn-sm btn-primary" onclick={() => go(`/document/new/${skill.name}`)}>{t("sk.doc_type_create")}</button>
-              </div>
-            {:else if stageInfo && !skill.error}
-              {@const here = stageInfo.effective === skill.name}
-              {@const pinnedHere = stageInfo.project === skill.name}
-              {@const isDefault = stageInfo.global === skill.name}
-              <div class="usage">
-                <p class="u-title">{t("sk.u.title", { stage: t("sk.stage." + skill.stage) })}</p>
-                <div class="u-row">
-                  <span class="u-dot" class:on={here}></span>
-                  <div class="grow">
-                    <b>{t("sk.u.this_project", { name: currentProject()?.name || "" })}</b>
-                    <p class="t3">{#if here && pinnedHere}{t("sk.u.here_pinned")}{:else if here}{t("sk.u.here_default")}{:else}{t("sk.u.here_other", { name: titleOf2(stageInfo.effective) })}{/if}</p>
-                  </div>
-                  {#if pinnedHere}
-                    <button class="btn btn-sm" onclick={() => useForProject(false)}>{t("sk.u.unpin", { name: titleOf2(stageInfo.global) })}</button>
-                  {:else if !here}
-                    <button class="btn btn-sm btn-primary" onclick={() => useForProject(true)}>{t("sk.u.use_here")}</button>
-                  {/if}
-                </div>
-                <div class="u-row">
-                  <span class="u-dot" class:on={isDefault}></span>
-                  <div class="grow">
-                    <b>{t("sk.u.others")}</b>
-                    <p class="t3">{isDefault ? t("sk.u.is_default") : t("sk.u.default_is", { name: titleOf2(stageInfo.global) })}</p>
-                  </div>
-                  {#if !isDefault}<button class="btn btn-sm" onclick={useGlobally}>{t("sk.u.make_default")}</button>{/if}
-                </div>
-              </div>
-            {/if}
           </div>
 
           {#if editable && dirty}
-            <div class="savebar">
-              <span class="t2">{t("sk.unsaved")}</span><span class="kbd">⌘S</span>
-              <span class="spacer"></span>
-              <button class="btn btn-ghost" onclick={() => loadSkill(skill.name)}>{t("sk.revert")}</button>
-              <button class="btn btn-primary" disabled={saving} onclick={save}>{#if saving}<span class="spinner"></span>{/if}{t("sk.save")}</button>
+            <div class="pane-foot savebar">
+              <span class="t2">{t("sk.unsaved")}</span>
+              <span class="grow"></span>
+              <button class="btn ghost" onclick={() => loadSkill(skill.name)}>{t("sk.revert")}</button>
+              <button class="btn primary" disabled={saving} onclick={save}>{#if saving}<span class="spinner"></span>{/if}{t("sk.save")} <span class="kbd">⌘S</span></button>
             </div>
           {/if}
-          {/key}
+        </div>
+        {/key}
+      {/if}
+
+      {#snippet inspector()}
+        {#if skill && !skill.error}
+          <div class="pane-head"><h2 class="grow trunc">{t("sk.tab.usage")}</h2></div>
+          <div class="pane-body scroll"><div class="insp-body">
+            {@render usage()}
+            {#if editable}
+              <div class="insp-sec manage">
+                <p class="cap">{t("sk.files")}</p>
+                {#if desktop}<button class="btn sm" onclick={() => reveal("folder")}>{t("sk.folder")}</button>{/if}
+                <button class="btn sm ghost danger" onclick={remove}><Icon name="trash" size={14} /> {t("sk.delete")}…</button>
+              </div>
+            {/if}
+          </div></div>
         {/if}
-      </section>
+      {/snippet}
+    </Panes>
+  {/if}
+</Screen>
+
+{#snippet usage()}
+  {#if stageInfo && skill.stage === "frd"}
+    <div class="usage">
+      <p class="cap">{t("sk.u.doc_type")}</p>
+      <p class="t2">{t("sk.doc_type_hint")}</p>
+      <div><button class="btn primary" onclick={() => go(`/document/new/${skill.name}`)}>{t("sk.doc_type_create")}</button></div>
+    </div>
+  {:else if stageInfo}
+    {@const here = stageInfo.effective === skill.name}
+    {@const pinnedHere = stageInfo.project === skill.name}
+    {@const isDefault = stageInfo.global === skill.name}
+    <div class="usage">
+      <p class="cap">{t("sk.u.title", { stage: t("sk.stage." + skill.stage) })}</p>
+      <div class="u-row">
+        <span class="ring" class:done={here}></span>
+        <div class="grow">
+          <b>{t("sk.u.this_project", { name: currentProject()?.name || "" })}</b>
+          <p class="t3">{#if here && pinnedHere}{t("sk.u.here_pinned")}{:else if here}{t("sk.u.here_default")}{:else}{t("sk.u.here_other", { name: titleOf2(stageInfo.effective) })}{/if}</p>
+          {#if pinnedHere}
+            <button class="btn sm" onclick={() => useForProject(false)}>{t("sk.u.unpin", { name: titleOf2(stageInfo.global) })}</button>
+          {:else if !here}
+            <button class="btn sm primary" onclick={() => useForProject(true)}>{t("sk.u.use_here")}</button>
+          {/if}
+        </div>
+      </div>
+      <div class="u-row">
+        <span class="ring" class:done={isDefault}></span>
+        <div class="grow">
+          <b>{t("sk.u.others")}</b>
+          <p class="t3">{isDefault ? t("sk.u.is_default") : t("sk.u.default_is", { name: titleOf2(stageInfo.global) })}</p>
+          {#if !isDefault}<button class="btn sm" onclick={useGlobally}>{t("sk.u.make_default")}</button>{/if}
+        </div>
+      </div>
     </div>
   {/if}
-</div>
+{/snippet}
 
 <style>
-  .layout { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
-  .list { position: sticky; top: calc(var(--toolbar) + 8px); background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--e1);
-    padding: var(--sp-3); max-height: calc(100vh - var(--toolbar) - 24px); overflow: auto; }
-  .g-title { font-size: var(--fs-11); font-weight: 600; color: var(--text-3); padding: var(--sp-5) var(--sp-4) var(--sp-2); }
-  .g-title:first-child { padding-top: var(--sp-3); }
-  .item { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; column-gap: var(--sp-4); align-items: baseline; width: 100%;
-    border: 0; background: transparent; text-align: left; padding: 6px var(--sp-4); border-radius: var(--r-sm); cursor: pointer; }
-  .item:hover { background: var(--surface-2); }
-  .item.on { background: var(--accent-bg); }
-  .item .dot { background: var(--ok); align-self: center; }
-  .item .dot.none { visibility: hidden; }
-  .item .dot.off { background: transparent; box-shadow: inset 0 0 0 1px var(--line-control); }
-  .i-title { font-weight: 500; line-height: 17px; min-width: 0; }
-  .item.err .i-title { color: var(--danger); }
-  .own { font-size: var(--fs-11); color: var(--text-3); }
-  .in-use { grid-column: 2; font-size: var(--fs-11); color: var(--ok); line-height: 14px; }
+  .pad { padding: var(--s-5) var(--gutter); }
+  .list { padding: var(--s-4) var(--s-4) var(--s-9); display: grid; gap: 1px; align-content: start; grid-template-columns: minmax(0, 1fr); }
+  .g-title { padding: var(--s-6) var(--s-4) var(--s-3); }
+  .g-title:first-child { padding-top: var(--s-3); }
+  .item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 var(--s-4); min-height: 44px; padding: var(--s-3) var(--s-4);
+    border: 0; background: none; border-radius: var(--r-sm); text-align: left; width: 100%; cursor: pointer; }
+  .item:hover { background: var(--c-fill-1); } .item[aria-current="true"] { background: var(--c-fill-2); }
+  .item b { font-weight: var(--w-medium); }
+  .item .sub { grid-column: 1 / -1; font-size: var(--t-foot); color: var(--c-text-3); }
+  .item.err b { color: var(--c-danger); }
 
-  .editor { min-width: 0; padding-bottom: var(--sp-10); }
-  .sk-card { overflow: hidden; }
-  .head { display: flex; align-items: flex-start; gap: var(--sp-6); padding: var(--sp-6) var(--sp-7) var(--sp-5); flex-wrap: wrap; }
-  .e-title { flex: 1 1 320px; min-width: 0; }
-  .e-title h2, .title-input { font: 600 var(--fs-17)/24px var(--font-display); }
-  .title-input { height: 32px; }
-  .meta { font-size: var(--fs-12); color: var(--text-3); margin-top: 2px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-  .desc { margin-top: var(--sp-4); max-width: 72ch; }
-  .desc-input { margin-top: var(--sp-4); }
-  .danger-text { color: var(--danger); }
-  .pad { margin: 0 var(--sp-7) var(--sp-5); }
-  .tabs { display: flex; gap: var(--sp-7); overflow-x: auto; scrollbar-width: none; white-space: nowrap; padding: 0 var(--sp-7);
-    border-bottom: 1px solid var(--line); }
-  .tabs button { border: 0; background: transparent; padding: 10px 0; font-weight: 500; color: var(--text-2); border-bottom: 2px solid transparent;
-    margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
-  .tabs button:hover { color: var(--text); }
-  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
-  .tabs .n { color: var(--text-3); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
-  .pane { padding: var(--sp-6) var(--sp-7) var(--sp-7); }
-  .pane-hint { margin-bottom: var(--sp-5); max-width: 80ch; }
-  .field-l { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin-bottom: 6px; display: flex; justify-content: space-between; gap: 8px; }
-  .vars { font-weight: 400; }
-  .rules-t, .ph-t { margin-top: var(--sp-8); }
-  .vague { margin-bottom: var(--sp-2); }
-  .num-field { margin-top: var(--sp-6); max-width: 320px; }
+  .editor { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+  .editor-head { padding: var(--s-7) var(--gutter) var(--s-5); display: grid; gap: var(--s-5); flex: none; grid-template-columns: minmax(0, 1fr); }
+  .e-title { display: grid; gap: var(--s-3); grid-template-columns: minmax(0, 1fr); }
+  .e-title h2, .title-input { font: var(--w-semibold) var(--t-title-1)/var(--lh-title-1) var(--font-display); letter-spacing: -.016em; }
+  .title-input { height: 36px; max-width: 720px; }
+  .desc-input { max-width: 880px; }
+  .desc { max-width: var(--w-measure); }
+  .meta { font-size: var(--t-foot); }
+  .tab-pane { padding: var(--s-6) var(--gutter) var(--s-11); display: grid; gap: var(--s-5); align-content: start; grid-template-columns: minmax(0, 1fr); max-width: 1200px; }
+  @container ws (min-width: 1200px) { .narrow-tab { display: none !important; } }
+  .savebar { background: var(--c-toolbar); }
 
-  .code-area { font: 12.5px/20px var(--mono); padding: var(--sp-5) var(--sp-6); border-radius: var(--r-md); min-height: 320px; height: auto;
-    resize: vertical; tab-size: 2; }
-  .area { resize: vertical; }
-  textarea[readonly], input[readonly] { background: var(--surface-2); color: var(--text-2); border-color: transparent; }
-  .sections, .rules, .history, .try-atoms { list-style: none; margin: 0 0 var(--sp-5); padding: 0; }
-  .sec-row, .rule { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-5) 0; border-bottom: 1px solid var(--line); }
-  .sec-row:first-child, .rule:first-child { padding-top: 0; }
-  .sec-head { display: flex; align-items: center; gap: var(--sp-4); }
-  .sec-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--sp-4); align-items: center; }
-  .rule .sec-fields { grid-template-columns: 160px minmax(0, 1fr) auto; }
+  .tab-pane :global(.field-l) { font-weight: var(--w-semibold); display: flex; align-items: baseline; gap: var(--s-4); justify-content: space-between; }
+  .tab-pane :global(.vars) { font-weight: var(--w-regular); font-size: var(--t-foot); }
+  .tab-pane :global(.code-area) { font: var(--w-regular) 12.5px/20px var(--font-mono); padding: var(--s-6); border-radius: var(--r-md); background: var(--c-pane);
+    border-color: var(--c-line); max-width: 110ch; tab-size: 2; resize: vertical; }
+  .tab-pane :global(.code-area:focus) { border-color: var(--c-focus); background: var(--c-content); }
+  .sections, .rules, .history, .try-atoms { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; grid-template-columns: minmax(0, 1fr); }
+  .sec-row, .rule { display: grid; gap: var(--s-3); padding: var(--s-5) 0; border-bottom: 1px solid var(--c-line); grid-template-columns: minmax(0, 1fr); }
+  .sec-head { display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
   .spacer { flex: 1; }
-  .ph td { height: 36px; }
-  .ph td:first-child { white-space: nowrap; width: 1%; color: var(--accent); }
-  .contract { white-space: pre-wrap; font: 12px/19px var(--mono); background: var(--surface-2); padding: var(--sp-5) var(--sp-6);
-    border-radius: var(--r-md); margin: 0; color: var(--text-2); }
-  .history li { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) 0; border-bottom: 1px solid var(--line); }
-  .history .h-text { display: block; padding-top: 0; }
-  .result { margin-top: var(--sp-6); border-radius: var(--r-md); background: var(--surface-2); padding: var(--sp-5) var(--sp-6);
-    max-height: 560px; overflow-y: auto; }
-  .result h4 { font-size: var(--fs-13); font-weight: 600; margin: var(--sp-5) 0 var(--sp-2); }
-  .result h4:first-child { margin-top: 0; }
-  .result h5 { font-size: var(--fs-12); font-weight: 600; margin: var(--sp-4) 0 var(--sp-2); }
-  .result p { margin: var(--sp-2) 0; }
-  .result .tag { margin-left: var(--sp-2); }
-  .try-atoms li { padding: var(--sp-4) var(--sp-5); background: var(--surface); border-radius: var(--r-sm); margin-top: var(--sp-3); }
-  .try-atoms .st { font-weight: 500; }
-  .try-atoms .tag { margin: 0 var(--sp-2) 0 0; }
-  .quote { display: block; font-size: var(--fs-12); color: var(--text-2); margin-top: 2px; }
-  .skipped li { color: var(--text-3); }
-  .compare { background: var(--surface); border-radius: var(--r-sm); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5); }
-  .compare ul { margin: var(--sp-2) 0 var(--sp-4); padding-left: 18px; }
-  .cmp-h { font-weight: 600; font-size: var(--fs-12); margin-top: var(--sp-4); }
-  .cmp-h.ok { color: var(--ok); } .cmp-h.danger { color: var(--danger); }
-  .usage { padding: var(--sp-5) var(--sp-7); border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
-  .usage.doc-type { display: flex; align-items: center; gap: var(--sp-4); }
-  .u-title { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin-bottom: var(--sp-3); }
-  .u-row { display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-4) 0; }
-  .u-row + .u-row { border-top: 1px solid var(--line); }
-  .u-row b { font-weight: 500; }
-  .u-row p { font-size: var(--fs-12); }
-  .u-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line-control); flex: none; }
-  .u-dot.on { background: var(--ok); box-shadow: none; }
-  .savebar { position: sticky; bottom: var(--sp-5); display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-5);
-    padding: 6px 6px 6px var(--sp-6); border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--e3); z-index: 20;
-    animation: fadein var(--t-slow) var(--ease); }
-
-  @media (max-width: 1120px) { .layout { grid-template-columns: 220px minmax(0, 1fr); } }
-  @media (max-width: 840px) {
-    .layout { grid-template-columns: 1fr; }
-    .list { position: static; max-height: 240px; }
-    .rule .sec-fields { grid-template-columns: 1fr auto; }
-  }
+  .sec-fields { display: flex; gap: var(--s-4); flex-wrap: wrap; align-items: center; }
+  .sec-fields .input { flex: 1 1 220px; }
+  .cols { margin: 0; }
+  .vague { display: grid; gap: var(--s-5); grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+  .rules-t { margin-top: var(--s-5); }
+  .num-field { max-width: 320px; }
+  .ph-t { margin-top: var(--s-5); }
+  .ph { max-width: 880px; }
+  .ph :global(td) { height: 32px; }
+  .result { display: grid; gap: var(--s-4); grid-template-columns: minmax(0, 1fr); padding: var(--s-6); border-radius: var(--r-lg); background: var(--c-pane);
+    box-shadow: inset 0 0 0 1px var(--c-line); max-width: 110ch; }
+  .result h4 { font: var(--w-semibold) var(--t-title-3)/var(--lh-title-3) var(--font-display); margin-top: var(--s-4); }
+  .result h5 { font: var(--w-semibold) var(--t-body)/var(--lh-body) var(--font); margin: var(--s-3) 0 0; }
+  .result p { line-height: 20px; }
+  .try-atoms li { padding: var(--s-4) 0; border-bottom: 1px solid var(--c-line); line-height: 20px; }
+  .try-atoms .st { font-weight: var(--w-medium); }
+  .try-atoms .quote { display: block; color: var(--c-text-2); }
+  .skipped li { color: var(--c-text-2); }
+  .compare { padding: var(--s-5); border-radius: var(--r-md); background: var(--c-fill-1); display: grid; gap: var(--s-2); }
+  .compare ul { margin: 0; padding-left: var(--s-7); }
+  .cmp-h { font-weight: var(--w-semibold); }
+  .cmp-h.ok { color: var(--c-ok); } .cmp-h.danger { color: var(--c-danger); }
+  .contract { font: var(--w-regular) 12.5px/20px var(--font-mono); padding: var(--s-6); border-radius: var(--r-md); background: var(--c-pane);
+    box-shadow: inset 0 0 0 1px var(--c-line); white-space: pre-wrap; margin: 0; max-width: 110ch; overflow-x: auto; }
+  .history li { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4) 0; border-bottom: 1px solid var(--c-line); flex-wrap: wrap; }
+  .history .h-text { border-bottom: 0; }
+  .usage { display: grid; gap: var(--s-5); grid-template-columns: minmax(0, 1fr); }
+  .u-row { display: flex; gap: var(--s-5); align-items: flex-start; }
+  .u-row .ring { margin-top: 2px; }
+  .u-row b { font-weight: var(--w-medium); }
+  .u-row .btn { margin-top: var(--s-3); }
+  .manage { justify-items: start; }
 </style>
