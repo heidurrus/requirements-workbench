@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   import { untrack } from "svelte";
   import Icon from "../components/Icon.svelte";
   import Screen from "../components/Screen.svelte";
@@ -80,7 +81,8 @@
     finally { saving = false; }
   }
   function onKey(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && app.route.name === "skills") { e.preventDefault(); save(); }
+    const key = keyOf(e);
+    if ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "s" && app.route.name === "skills") { e.preventDefault(); save(); }
   }
 
   async function copy() {

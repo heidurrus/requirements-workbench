@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   // ⌘K: every screen, source, document, requirement and command, by name (redesign §5.15).
   import Icon from "./Icon.svelte";
   import { api } from "../lib/api.js";
@@ -55,14 +56,15 @@
 
   function run(item) { app.palette = false; item?.run(); }
   function onKey(e) {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "k" || e.key === "K" || e.key === "л" || e.key === "Л")) {
+    const key = keyOf(e);
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (key === "k" || key === "K")) {
       e.preventDefault(); app.palette = !app.palette; return;
     }
     if (!app.palette) return;
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); app.palette = false; }
-    else if (e.key === "ArrowDown") { e.preventDefault(); index = Math.min(flat.length - 1, index + 1); scroll(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); index = Math.max(0, index - 1); scroll(); }
-    else if (e.key === "Enter") { e.preventDefault(); run(flat[index]); }
+    if (key === "Escape") { e.preventDefault(); e.stopPropagation(); app.palette = false; }
+    else if (key === "ArrowDown") { e.preventDefault(); index = Math.min(flat.length - 1, index + 1); scroll(); }
+    else if (key === "ArrowUp") { e.preventDefault(); index = Math.max(0, index - 1); scroll(); }
+    else if (key === "Enter") { e.preventDefault(); run(flat[index]); }
   }
   function scroll() { requestAnimationFrame(() => list?.querySelector(".pl.on")?.scrollIntoView({ block: "nearest" })); }
 </script>

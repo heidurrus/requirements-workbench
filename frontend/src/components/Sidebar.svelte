@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   // Sidebar (redesign §3, §5.17): the project, the pipeline with its state in words, the project's
   // sources and documents one click away, running jobs, tools. A 60-px rail below 1180 px (⌘\).
   import Icon from "./Icon.svelte";
@@ -84,13 +85,14 @@
   });
 
   function onKey(e) {
-    if (e.key === "Escape" && menuOpen) { menuOpen = false; return; }
+    const key = keyOf(e);
+    if (key === "Escape" && menuOpen) { menuOpen = false; return; }
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-    if (e.key === "\\") { e.preventDefault(); toggleSidebar(); return; }
-    if (e.key === ",") { e.preventDefault(); go("/settings"); return; }
-    if (e.shiftKey && (e.key === "p" || e.key === "P")) { e.preventDefault(); menuOpen = !menuOpen; return; }
-    if (e.key === "0" && !e.shiftKey) { e.preventDefault(); go("/overview"); return; }
-    const n = Number(e.key);
+    if (key === "\\") { e.preventDefault(); toggleSidebar(); return; }
+    if (key === ",") { e.preventDefault(); go("/settings"); return; }
+    if (e.shiftKey && (key === "p" || key === "P")) { e.preventDefault(); menuOpen = !menuOpen; return; }
+    if (key === "0" && !e.shiftKey) { e.preventDefault(); go("/overview"); return; }
+    const n = Number(key);
     if (n >= 1 && n <= steps.length && !e.shiftKey) { e.preventDefault(); go(steps[n - 1].path); }
   }
   function onDoc(e) { if (menuOpen && wrap && !wrap.contains(e.target)) menuOpen = false; }

@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   // Sources (redesign §8.2): a table of everything the project was given, a preview of the selected
   // source, and two ways in: record a call or import files (the whole window takes a drop).
   import Icon from "../components/Icon.svelte";
@@ -73,14 +74,15 @@
   }
 
   function onKey(e) {
+    const key = keyOf(e);
     if (app.route.name !== "sources" || app.palette || e.target.closest("input, textarea, select, [contenteditable], .menu")) return;
-    if ((e.metaKey || e.ctrlKey) && (e.key === "o" || e.key === "O")) { e.preventDefault(); fileInput?.click(); return; }
+    if ((e.metaKey || e.ctrlKey) && (key === "o" || key === "O")) { e.preventDefault(); fileInput?.click(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const i = rows.findIndex(s => s.id === selectedId);
-    if (e.key === "ArrowDown" || e.key === "j") { if (rows[i + 1]) selectedId = rows[i + 1].id; }
-    else if (e.key === "ArrowUp" || e.key === "k") { if (i > 0) selectedId = rows[i - 1].id; }
-    else if (e.key === "Enter" && selected) open(selected.id);
-    else if (e.key === "Escape") recOpen = false;
+    if (key === "ArrowDown" || key === "j") { if (rows[i + 1]) selectedId = rows[i + 1].id; }
+    else if (key === "ArrowUp" || key === "k") { if (i > 0) selectedId = rows[i - 1].id; }
+    else if (key === "Enter" && selected) open(selected.id);
+    else if (key === "Escape") recOpen = false;
     else return;
     e.preventDefault();
     requestAnimationFrame(() => document.getElementById(`src-${selectedId}`)?.scrollIntoView({ block: "nearest" }));

@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "./lib/keys.js";
   import Sidebar from "./components/Sidebar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
   import RecordingHud from "./components/RecordingHud.svelte";
@@ -25,12 +26,13 @@
   // Screens rebuilt on panes; the others still scroll as one page inside the main area.
   const INSPECTOR = { transcript: "source", atoms: "atoms", document: "document", backlog: "backlog", skills: "skills", sources: "sources" };
   function onKey(e) {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")
+    const key = keyOf(e);
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (key === "z" || key === "Z")
         && !e.target.closest?.("input:not([type=checkbox]), textarea, [contenteditable]")) {
       if (undoLast()) e.preventDefault();
       return;
     }
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "l" || e.key === "L")) {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (key === "l" || key === "L")) {
       e.preventDefault();
       setTheme(isDark() ? "light" : "dark");
       return;

@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   import Icon from "../components/Icon.svelte";
   import Screen from "../components/Screen.svelte";
   import Panes from "../components/Panes.svelte";
@@ -228,18 +229,19 @@
   // Neighbouring sources: ⌥↑ / ⌥↓.
   const ordered = $derived([...app.sources].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)));
   function onKey(e) {
+    const key = keyOf(e);
     if (app.route.name !== "transcript" || app.palette) return;
-    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    if (e.altKey && (key === "ArrowUp" || key === "ArrowDown")) {
       const i = ordered.findIndex(s => s.id === id);
-      const next = ordered[i + (e.key === "ArrowDown" ? 1 : -1)];
+      const next = ordered[i + (key === "ArrowDown" ? 1 : -1)];
       if (next) { e.preventDefault(); go(`/source/${next.id}`); }
       return;
     }
     if (e.target.closest("input, textarea, select, [contenteditable], .menu")) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === " " && source?.audio_url) { e.preventDefault(); togglePlay(); }
-    else if (e.key === "/") { e.preventDefault(); document.getElementById("tr-find")?.focus(); }
-    else if (e.key === "Escape" && refine) refine = null;
+    if (key === " " && source?.audio_url) { e.preventDefault(); togglePlay(); }
+    else if (key === "/") { e.preventDefault(); document.getElementById("tr-find")?.focus(); }
+    else if (key === "Escape" && refine) refine = null;
   }
   function more(v) {
     if (v === "copy") copyText();

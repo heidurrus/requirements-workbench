@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   import Icon from "../components/Icon.svelte";
   import Screen from "../components/Screen.svelte";
   import Panes from "../components/Panes.svelte";
@@ -330,11 +331,12 @@
   }
   // [ and ] walk the findings.
   function onKey(e) {
+    const key = keyOf(e);
     if (app.route.name !== "document" || app.palette || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target.closest("input, textarea, select, [contenteditable], .menu")) return;
-    if ((e.key === "[" || e.key === "]") && findings.length) {
+    if ((key === "[" || key === "]") && findings.length) {
       const i = findings.findIndex(f => f.block.id === selected);
-      const next = findings[(i + (e.key === "]" ? 1 : -1) + findings.length) % findings.length] || findings[0];
+      const next = findings[(i + (key === "]" ? 1 : -1) + findings.length) % findings.length] || findings[0];
       side = "quality";
       selectBlock(next.block, true);
       e.preventDefault();

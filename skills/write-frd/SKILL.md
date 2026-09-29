@@ -2,7 +2,7 @@
 name: write-frd
 title: {ru: "SRS — спецификация требований", en: "SRS — software requirements specification"}
 description:
-  ru: "Функциональные и нефункциональные требования из принятых атомов — назначение, контекст, требования по разделам, вопросы."
+  ru: "Функциональные и нефункциональные требования из принятых требований: назначение, контекст, требования по разделам, вопросы."
   en: "Functional and non-functional requirements from accepted atoms: purpose, context, requirements by section, questions."
 stage: frd
 atom_types: [functional, nfr, question]

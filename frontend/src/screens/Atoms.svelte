@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   import Icon from "../components/Icon.svelte";
   import Screen from "../components/Screen.svelte";
   import Panes from "../components/Panes.svelte";
@@ -331,10 +332,11 @@
   const shownSuggestions = $derived(suggestions.filter(s => !dismissedRules.has(s.id)));
 
   function onKey(e) {
+    const key = keyOf(e);
     if (app.route.name !== "atoms" || tab !== "atoms" || app.palette
         || e.target.closest("textarea, select, [contenteditable], input:not([type=checkbox]), .menu")) return;
     const onCheckbox = e.target.matches?.("input[type=checkbox]");     // shortcuts still work after ticking a box
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {   // select every atom under the filters
+    if ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "a") {   // select every atom under the filters
       e.preventDefault();
       for (const a of visible) checked.add(a.id);
       return;
@@ -342,21 +344,21 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const i = visible.findIndex(a => a.id === selectedId);
     const atom = visible[i];
-    if (e.key === " " && onCheckbox) return;                          // Space toggles the focused box itself
-    if (e.key === " " && atom) toggleCheck(atom, e.shiftKey);
-    else if (e.key === "Escape" && checked.size) checked.clear();
-    else if (e.key === "j" || e.key === "ArrowDown") { if (visible[i + 1]) select(visible[i + 1].id); }
-    else if (e.key === "k" || e.key === "ArrowUp") { if (i > 0) select(visible[i - 1].id); }
-    else if (e.key === "a" && atom) decide(atom, "accepted", { toggle: false });
-    else if (e.key === "x" && atom) decide(atom, "rejected", { toggle: false });
-    else if (e.key === "e" && atom) startEdit(atom);
-    else if (e.key === "/") document.getElementById("at-search")?.focus();
-    else if (["1", "2", "3", "4", "0"].includes(e.key) && (checkedVisible.length || atom)) {
-      const p = { 1: "must", 2: "should", 3: "could", 4: "wont", 0: "" }[e.key];
+    if (key === " " && onCheckbox) return;                          // Space toggles the focused box itself
+    if (key === " " && atom) toggleCheck(atom, e.shiftKey);
+    else if (key === "Escape" && checked.size) checked.clear();
+    else if (key === "j" || key === "ArrowDown") { if (visible[i + 1]) select(visible[i + 1].id); }
+    else if (key === "k" || key === "ArrowUp") { if (i > 0) select(visible[i - 1].id); }
+    else if (key === "a" && atom) decide(atom, "accepted", { toggle: false });
+    else if (key === "x" && atom) decide(atom, "rejected", { toggle: false });
+    else if (key === "e" && atom) startEdit(atom);
+    else if (key === "/") document.getElementById("at-search")?.focus();
+    else if (["1", "2", "3", "4", "0"].includes(key) && (checkedVisible.length || atom)) {
+      const p = { 1: "must", 2: "should", 3: "could", 4: "wont", 0: "" }[key];
       if (checkedVisible.length) bulk({ priority: p || null });
       else setPriority(atom, p);
     }
-    else if ((e.key === "Delete" || e.key === "Backspace") && (checkedVisible.length || atom))
+    else if ((key === "Delete" || key === "Backspace") && (checkedVisible.length || atom))
       removeAtoms(checkedVisible.length ? checkedVisible : [atom]);
     else return;
     e.preventDefault();

@@ -1,4 +1,5 @@
 <script>
+  import { keyOf } from "../lib/keys.js";
   import Icon from "../components/Icon.svelte";
   import Screen from "../components/Screen.svelte";
   import Panes from "../components/Panes.svelte";
@@ -179,16 +180,17 @@
   });
 
   function onKey(e) {
+    const key = keyOf(e);
     if (app.route.name !== "backlog" || app.palette || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target.closest("textarea, select, [contenteditable], input:not([type=checkbox]), .menu")) return;
     const i = order.findIndex(x => x.id === selectedId);
     const it = order[i];
-    if (e.key === "ArrowDown" || e.key === "j") { if (order[i + 1]) pick(order[i + 1].id); }
-    else if (e.key === "ArrowUp" || e.key === "k") { if (i > 0) pick(order[i - 1].id); }
-    else if (e.key === "ArrowLeft" && it && !collapsed.has(it.id) && children(it.id).length) collapsed.add(it.id);
-    else if (e.key === "ArrowRight" && it) collapsed.delete(it.id);
-    else if (e.key === " " && it && !e.target.matches?.("input[type=checkbox]")) include(it, !it.included);
-    else if (e.key === "e" && it) startEdit(it);
+    if (key === "ArrowDown" || key === "j") { if (order[i + 1]) pick(order[i + 1].id); }
+    else if (key === "ArrowUp" || key === "k") { if (i > 0) pick(order[i - 1].id); }
+    else if (key === "ArrowLeft" && it && !collapsed.has(it.id) && children(it.id).length) collapsed.add(it.id);
+    else if (key === "ArrowRight" && it) collapsed.delete(it.id);
+    else if (key === " " && it && !e.target.matches?.("input[type=checkbox]")) include(it, !it.included);
+    else if (key === "e" && it) startEdit(it);
     else return;
     e.preventDefault();
     requestAnimationFrame(() => document.getElementById(`bl-${selectedId}`)?.scrollIntoView({ block: "nearest" }));
