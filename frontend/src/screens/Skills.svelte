@@ -297,8 +297,8 @@
               </div>
               <div class="actions">
                 <button class="btn" onclick={copy}><Icon name="copy" size={14} /> {t("sk.copy")}</button>
-                <button class="btn btn-ghost icon-btn" aria-label={t("sk.export_zip")} title={t("sk.export_zip")}
-                        onclick={() => saveUrl(`/api/skills/${skill.name}/export.zip`, `${skill.name}.zip`)}><Icon name="download" size={14} /></button>
+                <button class="btn" title={t("sk.export_zip_hint")}
+                        onclick={() => saveUrl(`/api/skills/${skill.name}/export.zip`, `${skill.name}.zip`)}><Icon name="download" size={14} /> {t("sk.export_zip")}</button>
                 {#if editable && desktop}<button class="btn btn-ghost" onclick={() => reveal("folder")}>{t("sk.folder")}</button>{/if}
                 {#if editable}<button class="btn btn-ghost icon-btn danger-text" aria-label={t("sk.delete")} title={t("sk.delete")} onclick={remove}><Icon name="trash" size={14} /></button>{/if}
               </div>
