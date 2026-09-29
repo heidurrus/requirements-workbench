@@ -472,14 +472,14 @@ class Store:
     def atom_marks(self, source_id):
         """Which lines of a source became atoms (FR-TR-03): segment idx → [{atom_id, status, type}]."""
         with self._conn() as c:
-            rows = c.execute("""SELECT e.segment_idx, a.id, a.status, a.type, a.statement FROM evidence e JOIN atoms a ON a.id = e.atom_id
+            rows = c.execute("""SELECT e.segment_idx, e.quote, a.id, a.status, a.type, a.statement FROM evidence e JOIN atoms a ON a.id = e.atom_id
                                 WHERE e.source_id = ? AND a.deleted_at IS NULL AND a.status != 'merged'""", (source_id,)).fetchall()
         out = {}
         for r in rows:
             if r["segment_idx"] is None:
                 continue
             out.setdefault(r["segment_idx"], []).append({"atom_id": r["id"], "status": r["status"], "type": r["type"],
-                                                         "statement": r["statement"]})
+                                                         "statement": r["statement"], "quote": r["quote"]})
         return out
 
     def fail_source(self, source_id, error):

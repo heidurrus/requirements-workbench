@@ -26,15 +26,14 @@ const sub = page.locator(".screen-sub");
 // Source → atoms → document → backlog.
 await page.goto(base + "/#/sources");
 await page.locator('input[type=file]').setInputFiles(vttPath);
-await page.getByRole("button", { name: "Импортировать и суммировать" }).click();
 await page.locator(".seg-row").first().waitFor();
 await page.getByRole("button", { name: "Извлечь требования" }).click();
-await page.getByRole("button", { name: "3 атома" }).waitFor({ timeout: 15000 });
+await page.getByRole("button", { name: "Требования из источника · 3" }).waitFor({ timeout: 15000 });
 await page.goto(base + "/#/atoms");
 await sub.filter({ hasText: "на ревью" }).waitFor();
 await page.locator(".check-all input").check();
 await page.locator(".bulkbar").getByRole("button", { name: /конфликтные/ }).click();   // all, conflicts included
-await page.getByText("Все атомы разобраны").waitFor();
+await page.getByText("Все требования разобраны").waitFor();
 await page.goto(base + "/#/document");
 await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();
 await sub.filter({ hasText: "версия 1" }).waitFor({ timeout: 15000 });

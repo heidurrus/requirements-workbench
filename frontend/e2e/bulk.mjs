@@ -31,10 +31,9 @@ const selected = page.locator(".bulkbar b");
 async function importAndExtract(path, n) {
   await page.goto(base + "/#/sources");
   await page.locator('input[type=file]').setInputFiles(path);
-  await page.getByRole("button", { name: "Импортировать и суммировать" }).click();
   await page.locator(".seg-row").first().waitFor();
   await page.getByRole("button", { name: "Извлечь требования" }).click();
-  await page.getByRole("button", { name: new RegExp(`^${n} атом`) }).waitFor({ timeout: 15000 });
+  await page.getByRole("button", { name: new RegExp(`Требования из источника · ${n}`) }).waitFor({ timeout: 15000 });
 }
 await importAndExtract(call, 4);
 await importAndExtract(mail, 2);
@@ -60,7 +59,7 @@ await checks.nth(2).click({ modifiers: ["Shift"] });
 await selected.filter({ hasText: "Выбрано: 3" }).waitFor();
 await page.locator(".bulkbar").getByRole("button", { name: "Сменить тип…" }).click();
 await page.locator(".bulkbar").getByRole("menuitem", { name: "Вопрос" }).click();
-await page.getByText("Изменено 3 атома").waitFor();
+await page.getByText("Изменено 3 требования").waitFor();
 await page.locator(".scope").getByRole("button", { name: "Тип", exact: true }).click();
 await page.getByRole("menuitem", { name: /^Вопрос/ }).filter({ hasText: "3" }).waitFor();
 await page.keyboard.press("Escape");
@@ -95,14 +94,14 @@ await page.locator(".scope .seg").getByRole("button", { name: /^Все/ }).click
 await sub.filter({ hasText: "принято 0 из 6" }).waitFor();
 await page.locator(".atom .type").first().click();
 await page.locator(".inspector").getByRole("button", { name: "Удалить требование" }).click();
-await page.getByRole("status").getByText("Удалён 1 атом").waitFor();
+await page.getByRole("status").getByText("Удалено 1 требование").waitFor();
 await sub.filter({ hasText: "из 5" }).waitFor();
 await page.getByRole("status").getByRole("button", { name: "Отменить" }).click();
 await sub.filter({ hasText: "из 6" }).waitFor();
 await page.locator(".check-all input").check();
 await page.keyboard.press("Delete");
-await page.getByRole("status").getByText("Удалено 6 атомов").waitFor();
-await page.getByText("Атомов пока нет").waitFor();
+await page.getByRole("status").getByText("Удалено 6 требований").waitFor();
+await page.getByText("Требований пока нет").waitFor();
 await page.getByRole("status").getByRole("button", { name: "Отменить" }).click();
 await sub.filter({ hasText: "из 6" }).waitFor();
 step("delete one, delete all selected with the Delete key, undo");

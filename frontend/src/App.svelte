@@ -1,6 +1,7 @@
 <script>
   import Sidebar from "./components/Sidebar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
+  import RecordingHud from "./components/RecordingHud.svelte";
   import Overview from "./screens/Overview.svelte";
   import Toast from "./components/Toast.svelte";
   import Sources from "./screens/Sources.svelte";
@@ -78,11 +79,13 @@
         <Overview />
       {:else if app.route.name === "atoms"}
         <Atoms />
+      {:else if app.route.name === "sources"}
+        <Sources />
+      {:else if app.route.name === "transcript"}
+        {#key app.route.id}<Transcript id={app.route.id} autoSummarize={app.route.summarize} focusSeg={app.route.seg} />{/key}
       {:else}
         <div class="legacy scroll">
-          {#if app.route.name === "transcript"}
-            {#key app.route.id}<Transcript id={app.route.id} autoSummarize={app.route.summarize} focusSeg={app.route.seg} />{/key}
-          {:else if app.route.name === "document"}
+          {#if app.route.name === "document"}
             <DocumentScreen />
           {:else if app.route.name === "backlog"}
             <Backlog />
@@ -92,14 +95,13 @@
             <Skills />
           {:else if app.route.name === "settings"}
             <Settings />
-          {:else if app.route.name === "sources"}
-            <Sources />
           {/if}
         </div>
       {/if}
     </main>
   </div>
   <CommandPalette />
+  <RecordingHud />
   <Toast />
 {/if}
 

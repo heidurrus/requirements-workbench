@@ -1,206 +1,46 @@
 <script>
-  import Block from "../components/Block.svelte";
+  // Sources (redesign §8.2): a table of everything the project was given, a preview of the selected
+  // source, and two ways in: record a call or import files (the whole window takes a drop).
   import Icon from "../components/Icon.svelte";
-  import { api, pollJob } from "../lib/api.js";
-  import { DesktopRecorder, BrowserRecorder, listMicrophones } from "../lib/recorder.js";
-  import { fmtDate, fmtDuration, isTranscriptFile } from "../lib/format.js";
-  import { app, t, go, loadSources, saveOptions, toast, rememberSource } from "../lib/state.svelte.js";
-  import { followExtraction, notify } from "../lib/atoms.js";
-  import ProjectHome from "../components/ProjectHome.svelte";
+  import Screen from "../components/Screen.svelte";
+  import Panes from "../components/Panes.svelte";
+  import FirstRun from "../components/FirstRun.svelte";
+  import AsrOptions from "../components/AsrOptions.svelte";
+  import { api } from "../lib/api.js";
+  import { cap, importFiles, transcribeSaved, loadMics, askThenRecord, confirmConsent, stopRecording } from "../lib/capture.svelte.js";
+  import { extractAtoms } from "../lib/atoms.js";
+  import { fmtDate, fmtDuration, renderMarkdown } from "../lib/format.js";
+  import { app, t, go, loadSources, toast, rememberSource } from "../lib/state.svelte.js";
 
-  // ── upload ────────────────────────────────────────────────────────────────
-  let file = $state(null);
-  let more = $state([]);                 // extra files of a multi-file drop (PM-14)
-  let dragging = $state(false);
-  let uploading = $state(false);
-  let uploadError = $state("");
-  const fileIsTranscript = $derived(file ? isTranscriptFile(file.name) : false);
-
-  function pickFiles(list) {
-    const files = [...(list || [])];
-    if (!files.length) return;
-    file = files[0];
-    more = files.slice(1);
-    uploadError = "";
-  }
-
-  // Several files: import them one after another into the queue; nothing opens by itself.
-  async function submitMany() {
-    const all = [file, ...more];
-    uploading = true;
-    uploadError = "";
-    let ok = 0;
-    const failed = [];
-    for (const f of all) {
-      try {
-        const form = new FormData();
-        form.append("audio", f);
-        form.append("project_id", app.currentProjectId);
-        Object.entries(optionsPayload()).forEach(([k, v]) => form.append(k, v));
-        const res = await api("/transcribe", { method: "POST", form });
-        ok++;
-        if (!isTranscriptFile(f.name)) track(res.source_id, res.job_id);
-      } catch (err) { failed.push(`${f.name}: ${err.message}`); }
-    }
-    file = null;
-    more = [];
-    uploading = false;
-    await loadSources();
-    toast(t("sources.imported_n", { n: ok }) + (failed.length ? " · " + t("sources.failed_n", { n: failed.length }) : ""));
-    if (failed.length) uploadError = failed.join("; ");
-  }
-
-  function optionsPayload() {
-    const o = app.options;
-    return { model: o.model, device: o.device, diarize: String(o.diarize),
-             word_timestamps: String(!o.diarize && o.word_timestamps) };
-  }
-
-  async function submitUpload(f = file, kind = null) {
-    uploading = true;
-    uploadError = "";
-    try {
-      const form = new FormData();
-      form.append("audio", f);
-      form.append("project_id", app.currentProjectId);
-      Object.entries(optionsPayload()).forEach(([k, v]) => form.append(k, v));
-      if (kind) form.append("kind", kind);
-      const res = await api("/transcribe", { method: "POST", form });
-      file = null;
-      await loadSources();
-      if (isTranscriptFile(f.name)) {
-        rememberSource(res.source_id);
-        go(`/source/${res.source_id}/summarize`);   // imported: go straight to the summary
-      } else {
-        track(res.source_id, res.job_id);
-      }
-    } catch (err) {
-      uploadError = err.message;
-    } finally {
-      uploading = false;
-    }
-  }
-
-  // Follow a transcription job; the list row shows its progress.
-  // ETA from the rate so far (PM-30): shown once the job has made some progress.
-  function eta(started, progress) {
-    if (!progress || progress < 5) return "";
-    const left = (Date.now() - started) / progress * (100 - progress) / 1000;
-    return left < 60 ? t("sources.eta_s") : t("sources.eta_min", { n: Math.round(left / 60) });
-  }
-  async function track(sourceId, jobId) {
-    const started = Date.now();
-    app.jobs[sourceId] = { jobId, progress: 0, message: "" };
-    try {
-      const job = await pollJob(jobId, j => {
-        app.jobs[sourceId] = { jobId, progress: j.progress || 0, message: j.progress_msg || "", eta: eta(started, j.progress) };
-      });
-      delete app.jobs[sourceId];
-      await loadSources();
-      const s = app.sources.find(x => x.id === sourceId);
-      const title = s ? s.title : "";
-      if (job.result?.extract_job) {        // the project goes straight on to requirements (PM-13)
-        toast(`${title} · ${t("sources.extracting")}`);
-        followExtraction(sourceId, job.result.extract_job, { notifyTitle: title }).catch(() => {});
-      } else {
-        toast(`${title} · ${t("status.ready")}`, { action: t("nav.transcript"), onAction: () => open(sourceId) });
-        notify(title, t("status.ready"));
-      }
-    } catch (err) {
-      delete app.jobs[sourceId];
-      await loadSources();
-      toast(err.message, { kind: "danger" });
-    }
-  }
-
-  async function transcribeSaved(sourceId) {
-    try {
-      const res = await api(`/api/sources/${sourceId}/transcribe`, { method: "POST", body: optionsPayload() });
-      await loadSources();
-      track(sourceId, res.job_id);
-    } catch (err) { toast(err.message, { kind: "danger" }); }
-  }
-
-  // ── recording ─────────────────────────────────────────────────────────────
-  let mics = $state([]);
-  let mic = $state("");
-  let recorder = null;
-  let recording = $state(false);
-  let recStarted = $state(0);
-  let elapsed = $state(0);
-  let recProblems = $state([]);
-  let recError = $state("");
-  let timer = null;
-
-  $effect(() => { listMicrophones(app.device.desktop).then(m => (mics = m)); });
-
-  const channelName = c => t(c === "mic" ? "channel.mic" : "channel.sys");
-
-  // FR-SRC-02 / PM-05: remind about consent once per session, and log the confirmation.
-  let consentAsk = $state(false);
-  function consented() { try { return sessionStorage.getItem("wb.consent") === "1"; } catch (_) { return false; } }
-  function askThenRecord() {
-    if (consented()) startRecording();
-    else consentAsk = true;
-  }
-  async function confirmConsent() {
-    consentAsk = false;
-    try { sessionStorage.setItem("wb.consent", "1"); } catch (_) { /* private mode */ }
-    api("/api/consent", { method: "POST", body: { project_id: app.currentProjectId } }).catch(() => {});
-    startRecording();
-  }
-
-  async function startRecording() {
-    recError = "";
-    recProblems = [];
-    try {
-      if (app.device.desktop) {
-        recorder = new DesktopRecorder();
-        await recorder.start(mic === "" ? null : Number(mic), st => {
-          recProblems = Object.entries(st.channels || {}).filter(([, c]) => c.error)
-            .map(([n, c]) => `${channelName(n)}: ${c.error}`);
-        });
-      } else {
-        recorder = new BrowserRecorder();
-        await recorder.start(mic, which => recProblems = [...recProblems, `${channelName(which)}: —`]);
-      }
-      recording = true;
-      recStarted = Date.now();
-      elapsed = 0;
-      timer = setInterval(() => (elapsed = Math.floor((Date.now() - recStarted) / 1000)), 500);
-    } catch (err) {
-      recError = err.message;
-    }
-  }
-
-  async function stopRecording() {
-    clearInterval(timer);
-    recording = false;
-    try {
-      if (recorder instanceof DesktopRecorder) {
-        const { sourceId, errors } = await recorder.stop(`${t("rec.title")} ${fmtDate(Date.now() / 1000, app.lang)}`);
-        const missing = Object.entries(errors).map(([n, e]) => `${channelName(n)}: ${e}`);
-        recProblems = missing;
-        if (sourceId) { await loadSources(); transcribeSaved(sourceId); }
-      } else {
-        const blob = await recorder.stop();
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        await submitUpload(new File([blob], `recording_${ts}.webm`, { type: "audio/webm" }), "recording");
-      }
-    } catch (err) {
-      recError = err.message;
-      recProblems = Object.entries(err.errors || {}).map(([n, e]) => `${channelName(n)}: ${e}`);
-    }
-  }
-
-  const clock = s => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-
-  // ── list ──────────────────────────────────────────────────────────────────
+  let selectedId = $state(null);
   let editingId = $state(null);
   let editTitle = $state("");
+  let recOpen = $state(false);
+  let recWrap = $state(null);
+  let fileInput = $state(null);
+  let dragging = $state(0);
+  let preview = $state(null);            // the selected source in full (summary)
+
+  $effect(() => { app.device.desktop; loadMics(); });
+  $effect(() => { app.currentProjectId; selectedId = null; });
+  const rows = $derived([...app.sources].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)));
+  const selected = $derived(rows.find(s => s.id === selectedId) || null);
+  $effect(() => { if (!selected && rows.length) selectedId = rows[0].id; });
+  $effect(() => {
+    const id = selectedId;
+    const s = selected;
+    preview = null;
+    if (!id || !s || s.status !== "ready") return;
+    s.has_summary;
+    api(`/api/sources/${id}`).then(b => { if (selectedId === id) preview = b; }).catch(() => {});
+  });
 
   function open(id) { rememberSource(id); go(`/source/${id}`); }
-
+  function pick(id) {
+    selectedId = id;
+    const ws = document.querySelector(".workspace");
+    if (ws && ws.clientWidth < 900) app.inspectorOverlay = true;
+  }
   function startRename(s) { editingId = s.id; editTitle = s.title; }
   async function saveRename(s) {
     const title = editTitle.trim();
@@ -209,7 +49,6 @@
     try { await api(`/api/sources/${s.id}`, { method: "PATCH", body: { title } }); await loadSources(); }
     catch (err) { toast(err.message, { kind: "danger" }); }
   }
-
   async function remove(s) {
     await api(`/api/sources/${s.id}`, { method: "DELETE" });
     await loadSources();
@@ -220,263 +59,254 @@
   }
 
   const busy = $derived(app.sources.filter(s => s.status === "processing").length);
-  const optionsMeta = $derived([app.options.model, app.options.device === "cpu" ? "CPU" : "GPU",
-    app.options.diarize ? t("opt.diarize").toLowerCase() : null].filter(Boolean).join(" · "));
   const kindIcon = { audio: "wave", video: "wave", recording: "mic", transcript: "transcript", email: "mail", document: "file" };
+  const review = $derived(app.status?.atoms?.review || 0);
 
-  function sourceMeta(s) {
-    return [fmtDate(s.created_at, app.lang), t("kind." + s.kind), fmtDuration(s.duration, app.lang),
-      s.speakers && !["email", "document"].includes(s.kind) ? t("meta.speakers", { n: s.speakers }) : null]
-      .filter(Boolean).join(" · ");
+  function stateOf(s) {
+    if (app.extracting[s.id]) return { cls: "accent", spin: true, text: t("src.st.extracting") };
+    if (app.jobs[s.id]) return { cls: "accent", spin: true, text: t("src.st.transcribing", { p: Math.round(app.jobs[s.id].progress || 0) }) };
+    if (s.status === "processing") return { cls: "accent", spin: true, text: t("src.st.queued") };
+    if (s.status === "failed") return { cls: "danger", icon: "warn", text: t("src.st.failed") };
+    if (s.status === "recorded") return { cls: "warn", icon: "clock", text: t("src.st.recorded") };
+    if (!s.atom_count) return { cls: "", icon: "clock", text: t("src.st.no_atoms") };
+    return { cls: "ok", icon: "check", text: t("src.st.ready") };
   }
+
+  function onKey(e) {
+    if (app.route.name !== "sources" || app.palette || e.target.closest("input, textarea, select, [contenteditable], .menu")) return;
+    if ((e.metaKey || e.ctrlKey) && (e.key === "o" || e.key === "O")) { e.preventDefault(); fileInput?.click(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const i = rows.findIndex(s => s.id === selectedId);
+    if (e.key === "ArrowDown" || e.key === "j") { if (rows[i + 1]) selectedId = rows[i + 1].id; }
+    else if (e.key === "ArrowUp" || e.key === "k") { if (i > 0) selectedId = rows[i - 1].id; }
+    else if (e.key === "Enter" && selected) open(selected.id);
+    else if (e.key === "Escape") recOpen = false;
+    else return;
+    e.preventDefault();
+    requestAnimationFrame(() => document.getElementById(`src-${selectedId}`)?.scrollIntoView({ block: "nearest" }));
+  }
+  function onDoc(e) { if (recOpen && recWrap && !recWrap.contains(e.target)) recOpen = false; }
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+  function record() { recOpen = false; askThenRecord(); }
 </script>
 
-<div class="screen-inner">
-  <header class="screen-head">
-    <div>
-      <h1 class="screen-title">{t("sources.title")}</h1>
-      <p class="screen-sub">{t("sources.count", { n: app.sources.length }) + (busy ? " · " + t("sources.busy", { busy }) : "")}</p>
-    </div>
-  </header>
+<svelte:window onkeydown={onKey}
+  ondragenter={e => { if (hasFiles(e)) { e.preventDefault(); dragging++; } }}
+  ondragover={e => { if (hasFiles(e)) e.preventDefault(); }}
+  ondragleave={e => { if (hasFiles(e)) dragging = Math.max(0, dragging - 1); }}
+  ondrop={e => { if (hasFiles(e)) { e.preventDefault(); dragging = 0; importFiles(e.dataTransfer.files); } }} />
+<svelte:document onmousedown={onDoc} />
 
-  <ProjectHome />
+<!-- no accept filter: the macOS desktop picker ignores extensions; the server validates -->
+<input type="file" multiple class="hidden" bind:this={fileInput} aria-label={t("src.import")}
+       onchange={e => { importFiles(e.currentTarget.files); e.currentTarget.value = ""; }} />
 
-  <div class="capture">
-    <section class="card rec-card" class:live={recording}>
-      <button class="rec-btn" class:on={recording} onclick={recording ? stopRecording : askThenRecord}
-              aria-label={recording ? t("rec.stop") : t("rec.start")} title={recording ? t("rec.stop") : t("rec.start")}>
-        <i></i>
-      </button>
-      <div class="rec-meta">
-        <h2>{t("sources.record.title")}</h2>
-        {#if recording}
-          <p class="rec-live"><span class="pulse"></span>{t("rec.recording")} <span class="num">{clock(elapsed)}</span></p>
-        {:else}
-          <p>{app.device.desktop ? t("sources.record.desc") : t("sources.record.desc_browser")}</p>
-        {/if}
-        <label class="mic-pick" title={t("rec.mic")}>
-          <Icon name="mic" size={14} />
-          <select class="select" bind:value={mic} disabled={recording} aria-label={t("rec.mic")}>
-            <option value="">{t("rec.mic_default")}</option>
-            {#each mics as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
-          </select>
-        </label>
-        {#if recProblems.length}
-          <p class="note warn below">{recording ? t("rec.problems") : t("rec.saved_partial")}: {recProblems.join(" · ")}</p>
-        {/if}
-        {#if recError}<p class="note danger below">{recError}</p>{/if}
-      </div>
-    </section>
-
-    <section class="drop-card" class:dragging class:has-file={file} role="group" aria-label={t("sources.upload.title")}
-             ondragover={e => { e.preventDefault(); dragging = true; }}
-             ondragleave={() => (dragging = false)}
-             ondrop={e => { e.preventDefault(); dragging = false; pickFiles(e.dataTransfer.files); }}>
-      <label class="drop">
-        <!-- no accept filter: the macOS desktop picker ignores extensions; the server validates -->
-        <input type="file" multiple onchange={e => pickFiles(e.currentTarget.files)} aria-label={t("sources.upload.title")} />
-        <span class="ico"><Icon name="upload" /></span>
-        <span class="drop-txt">
-          <h2>{t("sources.upload.drop")} <span class="link">{t("sources.upload.browse")}</span></h2>
-          <span class="desc">{t("sources.upload.desc")}</span>
-          <span class="fmts">{#each t("sources.upload.formats").split(" · ") as f (f)}<span class="tag outline">{f}</span>{/each}</span>
-        </span>
-      </label>
-      {#if file}
-        <div class="file-row">
-          <Icon name={fileIsTranscript ? "transcript" : "wave"} size={14} />
-          {#if more.length}
-            <span class="file" title={[file, ...more].map(f => f.name).join(", ")}>{t("sources.files_n", { n: more.length + 1 })}
-              <span class="t3"> · {[file, ...more].map(f => f.name).join(", ")}</span></span>
-          {:else}
-            <span class="file">{file.name}{#if fileIsTranscript}<span class="t3"> · {t("sources.upload.is_transcript")}</span>{/if}</span>
-          {/if}
-          <button class="btn btn-ghost btn-sm icon-btn" aria-label={t("at.cancel")} title={t("at.cancel")}
-                  onclick={() => { file = null; more = []; }}><Icon name="close" size={14} /></button>
-          {#if more.length}
-            <button class="btn btn-primary" disabled={uploading} onclick={submitMany}>
-              {#if uploading}<span class="spinner"></span>{/if}{t("sources.import_all", { n: more.length + 1 })}</button>
-          {:else}
-            <button class="btn btn-primary" disabled={uploading} onclick={() => submitUpload()}>
-              {#if uploading}<span class="spinner"></span>{/if}
-              {fileIsTranscript ? t("sources.upload.summarize") : t("sources.upload.transcribe")}
-            </button>
-          {/if}
-        </div>
-      {/if}
-      {#if uploadError}<p class="note danger below">{uploadError}</p>{/if}
-    </section>
-  </div>
-
-  <div class="stack">
-    <Block id="sources-options" title={t("sources.options")} meta={optionsMeta} open={false}>
-      <div class="row">
-        <div class="field grow">
-          <label class="label" for="model">{t("opt.model")}</label>
-          <select class="select" id="model" bind:value={app.options.model} onchange={saveOptions}>
-            {#each app.models as m (m)}<option value={m}>{m}</option>{/each}
-          </select>
-        </div>
-        <div class="field">
-          <span class="label">{t("opt.device")}</span>
-          <div class="seg" role="group" aria-label={t("opt.device")}>
-            <button aria-pressed={app.options.device === "cpu"} onclick={() => { app.options.device = "cpu"; saveOptions(); }}>CPU</button>
-            <button aria-pressed={app.options.device !== "cpu"} disabled={!app.device.cuda && !app.device.mps}
-                    onclick={() => { app.options.device = app.device.cuda ? "cuda" : "mps"; saveOptions(); }}>GPU</button>
-          </div>
-        </div>
-      </div>
-      <div class="row" style="margin-top: var(--sp-5)">
-        <label class="check"><input type="checkbox" class="switch" bind:checked={app.options.diarize} onchange={saveOptions} />
-          {t("opt.diarize")} <span class="hint">{t("opt.diarize_hint")}</span></label>
-        {#if !app.options.diarize}
-          <label class="check"><input type="checkbox" class="switch" bind:checked={app.options.word_timestamps} onchange={saveOptions} />
-            {t("opt.words")}</label>
-        {/if}
-      </div>
-    </Block>
-
-    <div>
-      <div class="section-h"><h2>{t("sources.list")}</h2><span class="t3 num">{app.sources.length}</span></div>
-      {#if !app.sources.length}
-        <div class="card empty">
-          <div class="glyph"><Icon name="sources" /></div>
-          <p class="panel-title">{t("sources.empty.title")}</p>
-          <p>{t("sources.empty.desc")}</p>
-        </div>
+<Screen title={t("sources.title")} inspector={rows.length ? "sources" : ""}
+        sub={t("sources.count", { n: app.sources.length }) + (busy ? " · " + t("sources.busy", { busy }) : "")}>
+  {#snippet actions()}
+    <span class="rec-wrap" bind:this={recWrap}>
+      {#if cap.recording}
+        <button class="btn" onclick={stopRecording}><i class="recdot sq"></i> {t("rec.stop_save")}</button>
       {:else}
-        <ul class="card list">
-          {#each app.sources as s (s.id)}
-            <li class="item">
-              <span class="src-ico"><Icon name={kindIcon[s.kind] || "file"} /></span>
-              <div class="item-main">
-                {#if editingId === s.id}
-                  <!-- svelte-ignore a11y_autofocus -->
-                  <input class="input" bind:value={editTitle} autofocus aria-label={t("sources.rename")}
-                         onkeydown={e => { if (e.key === "Enter") saveRename(s); if (e.key === "Escape") editingId = null; }}
-                         onblur={() => saveRename(s)} />
-                {:else}
-                  <button class="title-btn" onclick={() => open(s.id)} disabled={s.status === "processing" && !s.duration}
-                          title={s.title}>{s.title}</button>
-                {/if}
-                <p class="meta">{sourceMeta(s)}</p>
-                {#if app.jobs[s.id]}
-                  <div class="job">
-                    <div class="bar"><i style="width: {app.jobs[s.id].progress}%"></i></div>
-                    <span class="t3 num">{app.jobs[s.id].message}{#if app.jobs[s.id].eta} · {app.jobs[s.id].eta}{/if}</span>
-                  </div>
-                {/if}
-                {#if s.status === "failed" && s.error}<p class="hint err">{s.error}</p>{/if}
-              </div>
-              <div class="item-side">
-                {#if app.extracting[s.id]}
-                  <span class="status run"><span class="spinner"></span>{t("sources.extracting")}</span>
-                {:else if s.status === "processing"}
-                  <span class="status run"><span class="spinner"></span>{t("status.processing")}</span>
-                {:else if s.status === "ready"}
-                  <span class="status ok"><Icon name="check" size={14} />{t("status.ready")}</span>
-                {:else if s.status === "failed"}
-                  <span class="status danger"><Icon name="warn" size={14} />{t("status.failed")}</span>
-                {:else}
-                  <span class="status warn"><Icon name="clock" size={14} />{t("status." + s.status)}</span>
-                {/if}
-                {#if s.has_summary}<span class="tag outline">{t("status.summary")}</span>{/if}
-                {#if s.status === "recorded" || (s.status === "failed" && s.audio_file)}
-                  <button class="btn btn-sm" onclick={() => transcribeSaved(s.id)}>{t("sources.transcribe_now")}</button>
-                {/if}
-                <span class="row-actions">
-                  <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.rename")} aria-label={t("sources.rename")}
-                          onclick={() => startRename(s)}><Icon name="pencil" size={14} /></button>
-                  <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.delete")} aria-label={t("sources.delete")}
-                          onclick={() => remove(s)}><Icon name="trash" size={14} /></button>
-                </span>
-              </div>
-            </li>
-          {/each}
-        </ul>
+        <button class="btn" onclick={() => (recOpen = !recOpen)} aria-expanded={recOpen} aria-haspopup="dialog">
+          <i class="recdot"></i> {t("sources.record.title")}</button>
       {/if}
-    </div>
-  </div>
-</div>
+      {#if recOpen}
+        <div class="menu right rec-pop" role="dialog" aria-label={t("sources.record.title")}>
+          <p class="t2">{app.device.desktop ? t("sources.record.desc") : t("sources.record.desc_browser")}</p>
+          <div class="field">
+            <label class="label" for="rec-mic">{t("rec.mic")}</label>
+            <select class="select" id="rec-mic" bind:value={cap.mic}>
+              <option value="">{t("rec.mic_default")}</option>
+              {#each cap.mics as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+            </select>
+          </div>
+          <details>
+            <summary>{t("sources.options")}</summary>
+            <AsrOptions />
+          </details>
+          <button class="btn lg primary" onclick={record}><i class="recdot"></i> {t("rec.start")}</button>
+        </div>
+      {/if}
+    </span>
+    <button class="btn" onclick={() => fileInput.click()} disabled={cap.uploading} title="⌘O">
+      {#if cap.uploading}<span class="spinner"></span>{:else}<Icon name="upload" size={14} />{/if} {t("src.import")}</button>
+    {#if app.status?.atoms?.total}
+      <button class="btn primary" onclick={() => go("/atoms")}>
+        {review ? t("src.to_review", { n: review }) : t("src.to_atoms")} <Icon name="arrow" size={14} /></button>
+    {/if}
+  {/snippet}
 
-{#if consentAsk}
+  {#if !rows.length}
+    <div class="page scroll">
+      {#if cap.error}<div class="banner danger top"><Icon name="warn" /><span class="grow">{cap.error}</span></div>{/if}
+      <FirstRun onRecord={askThenRecord} onImport={() => fileInput.click()} />
+    </div>
+  {:else}
+    <Panes screen="sources">
+      {#if cap.error}<div class="notices"><div class="banner danger"><Icon name="warn" /><span class="grow">{cap.error}</span>
+        <button class="btn sm ghost" onclick={() => (cap.error = "")}>{t("src.dismiss")}</button></div></div>{/if}
+      <div class="pane-body scroll">
+        <table class="table">
+          <thead><tr>
+            <th>{t("at.source")}</th><th class="c-wide">{t("src.col.people")}</th><th>{t("src.col.date")}</th>
+            <th class="c-wide">{t("src.col.size")}</th><th>{t("nav.atoms")}</th><th>{t("at.col.status")}</th>
+          </tr></thead>
+          <tbody>
+            {#each rows as s (s.id)}
+              {@const st = stateOf(s)}
+              <tr id="src-{s.id}" class="item" aria-selected={s.id === selectedId} onclick={() => pick(s.id)} ondblclick={() => open(s.id)}>
+                <td>
+                  <div class="name">
+                    <span class="kind"><Icon name={kindIcon[s.kind] || "file"} /></span>
+                    <div class="grow">
+                      {#if editingId === s.id}
+                        <!-- svelte-ignore a11y_autofocus -->
+                        <input class="input" bind:value={editTitle} autofocus aria-label={t("sources.rename")}
+                               onclick={e => e.stopPropagation()}
+                               onkeydown={e => { e.stopPropagation(); if (e.key === "Enter") saveRename(s); if (e.key === "Escape") editingId = null; }}
+                               onblur={() => saveRename(s)} />
+                      {:else}
+                        <button class="title-btn trunc" onclick={e => { e.stopPropagation(); open(s.id); }}
+                                disabled={s.status === "processing" && !s.duration} title={s.title}>{s.title}</button>
+                      {/if}
+                      <span class="sub trunc">{t("kind." + s.kind)}{#if s.status === "failed" && s.error} · <span class="err">{s.error}</span>{/if}</span>
+                    </div>
+                  </div>
+                </td>
+                <td class="c-wide t2 num">{s.speakers && !["email", "document"].includes(s.kind) ? s.speakers : ""}</td>
+                <td class="t2 num nowrap">{fmtDate(s.created_at, app.lang)}</td>
+                <td class="c-wide t2 num nowrap">{fmtDuration(s.duration, app.lang) || ""}</td>
+                <td class="num">{#if s.atom_count}<button class="link" onclick={e => { e.stopPropagation(); go(`/atoms/source/${s.id}`); }}>{s.atom_count}</button>{:else}<span class="t3">—</span>{/if}</td>
+                <td>
+                  <span class="status {st.cls}">{#if st.spin}<span class="spinner"></span>{:else}<Icon name={st.icon} size={12} />{/if} {st.text}</span>
+                  {#if app.jobs[s.id]}<span class="progress"><i style="width: {app.jobs[s.id].progress}%"></i></span>{/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <button class="drop" onclick={() => fileInput.click()}>
+          <Icon name="upload" /><span><b>{t("src.drop")}</b> {t("src.drop_d")}</span>
+        </button>
+      </div>
+
+      {#snippet inspector()}
+        {#if selected}
+          {@const st = stateOf(selected)}
+          <div class="pane-head"><span class="kind sm"><Icon name={kindIcon[selected.kind] || "file"} size={14} /></span>
+            <h2 class="trunc grow">{t("kind." + selected.kind)}</h2>
+            <span class="status {st.cls}">{st.text}</span></div>
+          <div class="pane-body scroll">
+            <div class="insp-body">
+              <div class="insp-sec">
+                <p class="insp-statement">{selected.title}</p>
+                <div class="actions">
+                  <button class="btn primary" onclick={() => open(selected.id)} disabled={selected.status === "processing" && !selected.duration}>
+                    {t("src.open")} <span class="kbd">↵</span></button>
+                  {#if selected.status === "recorded" || (selected.status === "failed" && selected.audio_file)}
+                    <button class="btn" onclick={() => transcribeSaved(selected.id)}>{t("sources.transcribe_now")}</button>
+                  {/if}
+                  {#if selected.status === "ready" && !selected.atom_count && !app.extracting[selected.id]}
+                    <button class="btn" onclick={() => extractAtoms(selected.id)}>{t("at.extract")}</button>
+                  {/if}
+                </div>
+                {#if app.jobs[selected.id]}
+                  <div class="banner info"><span class="spinner"></span>
+                    <span class="grow">{app.jobs[selected.id].message || t("src.st.queued")}{#if app.jobs[selected.id].eta} · {app.jobs[selected.id].eta}{/if}</span></div>
+                {:else if app.extracting[selected.id]}
+                  <div class="banner info"><span class="spinner"></span><span class="grow">{app.extracting[selected.id].message}</span></div>
+                {:else if selected.status === "failed" && selected.error}
+                  <div class="banner danger"><Icon name="warn" /><span class="grow">{selected.error}</span></div>
+                {/if}
+              </div>
+              <div class="insp-sec">
+                <p class="cap">{t("src.facts")}</p>
+                <dl class="kv">
+                  <dt>{t("src.col.date")}</dt><dd class="num">{fmtDate(selected.created_at, app.lang)}</dd>
+                  {#if selected.duration}<dt>{t("src.col.size")}</dt><dd class="num">{fmtDuration(selected.duration, app.lang)}</dd>{/if}
+                  {#if selected.speakers && !["email", "document"].includes(selected.kind)}<dt>{t("src.col.people")}</dt><dd class="num">{selected.speakers}</dd>{/if}
+                  <dt>{t("nav.atoms")}</dt>
+                  <dd>{#if selected.atom_count}<button class="link" onclick={() => go(`/atoms/source/${selected.id}`)}>{t("src.atoms_n", { n: selected.atom_count })}</button>
+                      {:else}<span class="t3">{t("src.atoms_none")}</span>{/if}</dd>
+                </dl>
+              </div>
+              {#if preview?.summary}
+                <div class="insp-sec">
+                  <p class="cap">{t("tr.summary")}</p>
+                  <div class="md clamp">{@html renderMarkdown(preview.summary)}</div>
+                </div>
+              {/if}
+              <div class="insp-sec manage">
+                <button class="btn sm ghost" onclick={() => startRename(selected)}><Icon name="pencil" size={14} /> {t("sources.rename")}</button>
+                <button class="btn sm ghost danger" onclick={() => remove(selected)}><Icon name="trash" size={14} /> {t("src.delete")}</button>
+              </div>
+            </div>
+          </div>
+        {/if}
+      {/snippet}
+    </Panes>
+  {/if}
+</Screen>
+
+{#if dragging}
+  <div class="dropzone"><div><Icon name="upload" size={20} /><h3>{t("src.drop_now")}</h3><p>{t("sources.upload.formats")}</p></div></div>
+{/if}
+
+{#if cap.consentAsk}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="scrim" onclick={e => e.target === e.currentTarget && (consentAsk = false)} onkeydown={e => e.key === "Escape" && (consentAsk = false)}>
+  <div class="scrim" onclick={e => e.target === e.currentTarget && (cap.consentAsk = false)} onkeydown={e => e.key === "Escape" && (cap.consentAsk = false)}>
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="consent-h">
       <h2 id="consent-h">{t("rec.consent_q")}</h2>
-      <p class="t2">{t("rec.consent_body")}</p>
+      <p>{t("rec.consent_body")}</p>
       <div class="acts">
-        <button class="btn" onclick={() => (consentAsk = false)}>{t("at.cancel")}</button>
+        <button class="btn" onclick={() => (cap.consentAsk = false)}>{t("at.cancel")}</button>
         <!-- svelte-ignore a11y_autofocus -->
-        <button class="btn btn-primary" autofocus onclick={confirmConsent}>{t("rec.consent_yes")}</button>
+        <button class="btn primary" autofocus onclick={confirmConsent}>{t("rec.consent_yes")}</button>
       </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .capture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--sp-6); margin-bottom: var(--sp-6); }
-  @media (max-width: 1120px) { .capture { grid-template-columns: 1fr; } }
+  .page { height: 100%; }
+  .top { margin: var(--s-5) var(--gutter) 0; }
+  .notices { padding: var(--s-4) var(--gutter) 0; }
+  .recdot { width: 10px; height: 10px; border-radius: 50%; background: var(--c-rec); flex: none; }
+  .recdot.sq { border-radius: 2px; width: 9px; height: 9px; }
+  .rec-wrap { position: relative; display: inline-flex; }
+  .rec-pop { top: calc(100% + 6px); width: 320px; max-width: none; padding: var(--s-6); display: grid; gap: var(--s-5); grid-template-columns: minmax(0, 1fr); }
+  .rec-pop details summary { cursor: pointer; color: var(--c-text-2); font-size: var(--t-foot); }
+  .rec-pop details[open] summary { margin-bottom: var(--s-5); }
 
-  .rec-card { display: flex; align-items: center; gap: var(--sp-7); padding: var(--sp-7) var(--sp-8); transition: box-shadow var(--t-med) var(--ease); }
-  .rec-card.live { box-shadow: 0 0 0 1px var(--rec), 0 0 0 4px color-mix(in srgb, var(--rec) 15%, transparent); }
-  .rec-btn { width: 64px; height: 64px; border-radius: 50%; border: 0; background: var(--surface); cursor: pointer;
-    box-shadow: 0 0 0 1px var(--line-strong), 0 2px 6px rgba(0,0,0,.08); display: grid; place-items: center; flex: none;
-    transition: transform var(--t-fast) var(--ease); }
-  .rec-btn:hover { transform: scale(1.04); }
-  .rec-btn:active { transform: scale(.97); }
-  .rec-btn i { width: 28px; height: 28px; border-radius: 50%; background: var(--rec);
-    transition: border-radius var(--t-med) var(--ease), width var(--t-med) var(--ease), height var(--t-med) var(--ease); }
-  .rec-btn.on { animation: ring 1.6s ease-out infinite; }
-  .rec-btn.on i { width: 20px; height: 20px; border-radius: 5px; }
-  @keyframes ring { 0% { box-shadow: 0 0 0 1px var(--rec), 0 0 0 0 color-mix(in srgb, var(--rec) 35%, transparent); }
-                    100% { box-shadow: 0 0 0 1px var(--rec), 0 0 0 14px transparent; } }
-  .rec-meta { min-width: 0; flex: 1; }
-  .rec-meta h2, .drop h2 { font: 600 var(--fs-15)/20px var(--font-display); letter-spacing: -.005em; }
-  .rec-meta > p { color: var(--text-2); margin: 2px 0 var(--sp-5); max-width: 48ch; }
-  .rec-live { display: flex; align-items: center; gap: var(--sp-4); color: var(--rec) !important; font-weight: 500; }
-  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); animation: pulse 1.4s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .35; } }
-  .mic-pick { position: relative; display: flex; align-items: center; color: var(--text-3); max-width: 300px; }
-  .mic-pick :global(.icon) { position: absolute; left: var(--sp-4); pointer-events: none; }
-  .mic-pick .select { color: var(--text); padding-left: 28px; }
-  .below { margin-top: var(--sp-4); }
-
-  .drop-card { display: flex; flex-direction: column; border: 1.5px dashed var(--line-control); border-radius: var(--r-lg);
-    transition: background var(--t-fast), border-color var(--t-fast); min-width: 0; }
-  .drop-card:hover, .drop-card.dragging { background: var(--surface); border-color: var(--accent); }
-  .drop-card.dragging { background: var(--accent-bg); }
-  .drop-card.has-file { border-style: solid; border-color: var(--line-strong); background: var(--surface); }
-  .drop { position: relative; flex: 1; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-7) var(--sp-8); cursor: pointer; }
-  .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
-  .ico { width: 44px; height: 44px; border-radius: 12px; background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); flex: none; }
-  .drop-txt { min-width: 0; display: block; }
-  .link { color: var(--accent); }
-  .desc { display: block; color: var(--text-3); font-size: var(--fs-12); margin-top: 2px; }
-  .fmts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: var(--sp-4); }
-  .file-row { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5) var(--sp-4) var(--sp-8);
-    border-top: 1px solid var(--line); color: var(--text-2); }
-  .file { flex: 1; min-width: 0; color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .drop-card > .note { margin: 0 var(--sp-5) var(--sp-5); }
-
-  .list { list-style: none; margin: 0; padding: 0; overflow: hidden; }
-  .item { display: flex; gap: var(--sp-5); align-items: center; padding: var(--sp-4) var(--sp-6); min-height: 52px; border-bottom: 1px solid var(--line); }
-  .item:last-child { border-bottom: 0; }
-  .item:hover { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
-  .src-ico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; }
-  .item-main { flex: 1; min-width: 0; }
-  .item-main .input { height: 26px; }
-  .title-btn { border: 0; background: none; padding: 0; font-weight: 500; text-align: left; cursor: pointer; color: var(--text);
-    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
-  .title-btn:hover:not(:disabled) { color: var(--accent); }
-  .meta { font-size: var(--fs-12); color: var(--text-3); font-variant-numeric: tabular-nums; }
-  .item-side { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; justify-content: flex-end; }
-  .job { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); font-size: var(--fs-12); }
-  .job .bar { flex: 0 0 160px; }
-  .err { color: var(--danger); margin-top: var(--sp-2); }
-  @media (max-width: 600px) {
-    .item { flex-wrap: wrap; }
-    .item-side { justify-content: flex-start; width: 100%; padding-left: 40px; }
-    .rec-card, .drop { padding: var(--sp-6); }
-  }
+  .table th:first-child, .table td:first-child { padding-left: var(--gutter); }
+  .table th:last-child, .table td:last-child { padding-right: var(--gutter); }
+  .table tr { cursor: default; }
+  .name { display: flex; align-items: center; gap: var(--s-5); min-width: 0; }
+  .name .grow { display: grid; min-width: 0; }
+  .kind { width: 28px; height: 28px; border-radius: 7px; background: var(--c-fill-2); color: var(--c-text-2); display: grid; place-items: center; flex: none; }
+  .kind.sm { width: 22px; height: 22px; border-radius: 6px; }
+  .title-btn { border: 0; background: none; padding: 0; font: var(--w-medium) var(--t-item)/var(--lh-item) var(--font); text-align: left; cursor: pointer;
+    color: var(--c-text); max-width: 100%; justify-self: start; }
+  .title-btn:hover:not(:disabled) { color: var(--c-accent-text); }
+  .sub { font-size: var(--t-foot); color: var(--c-text-3); }
+  .err { color: var(--c-danger); }
+  .nowrap { white-space: nowrap; }
+  .link { border: 0; background: none; padding: 0; font: inherit; color: var(--c-accent-text); cursor: pointer; }
+  .link:hover { text-decoration: underline; }
+  td .progress { display: block; width: 96px; margin-top: var(--s-2); }
+  .table td { max-width: 0; }
+  .table td:first-child { width: 50%; }
+  .drop { margin: var(--s-6) var(--gutter); padding: var(--s-6); border-radius: var(--r-lg); border: 1px dashed var(--c-line-control); display: flex;
+    align-items: center; gap: var(--s-5); color: var(--c-text-2); background: none; width: calc(100% - 2 * var(--gutter)); text-align: left; cursor: pointer; }
+  .drop:hover { background: var(--c-fill-1); }
+  .drop b { color: var(--c-text); font-weight: var(--w-medium); }
+  .clamp { max-height: 340px; overflow: hidden; -webkit-mask: linear-gradient(#000 80%, transparent); mask: linear-gradient(#000 80%, transparent); }
+  .manage { display: flex; gap: var(--s-3); flex-wrap: wrap; }
+  .dropzone { position: fixed; inset: 0; z-index: 140; background: color-mix(in srgb, var(--c-accent) 14%, var(--c-scrim)); display: grid; place-items: center;
+    pointer-events: none; animation: fade var(--d-fast) var(--ease-out); }
+  .dropzone div { background: var(--c-raised); border-radius: var(--r-xl); box-shadow: var(--e-4); padding: var(--s-9) var(--s-10); text-align: center;
+    display: grid; justify-items: center; gap: var(--s-3); max-width: 480px; color: var(--c-accent-text); }
+  .dropzone h3 { font: var(--w-semibold) var(--t-title-2)/var(--lh-title-2) var(--font-display); color: var(--c-text); }
+  .dropzone p { color: var(--c-text-3); font-size: var(--t-foot); }
 </style>

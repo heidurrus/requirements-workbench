@@ -26,14 +26,13 @@ const list = page.locator(".list");
 // A source with accepted atoms, so "try" has something to work with.
 await page.goto(base + "/#/sources");
 await page.locator('input[type=file]').setInputFiles(vttPath);
-await page.getByRole("button", { name: "Импортировать и суммировать" }).click();
 await page.getByText("Оператор видит историю заказов").waitFor();
 await page.getByRole("button", { name: "Извлечь требования" }).click();
-await page.getByRole("button", { name: "2 атома" }).waitFor({ timeout: 15000 });
+await page.getByRole("button", { name: "Требования из источника · 2" }).waitFor({ timeout: 15000 });
 await page.goto(base + "/#/atoms");
 await page.locator(".screen-sub", { hasText: "на ревью" }).waitFor();
 for (let i = 0; i < 2; i++) await page.keyboard.press("a");
-await page.getByText("Все атомы разобраны").waitFor();
+await page.getByText("Все требования разобраны").waitFor();
 
 await page.locator(".rail").getByRole("button", { name: "Скиллы" }).click();
 await list.getByText("Типы документов").waitFor();
