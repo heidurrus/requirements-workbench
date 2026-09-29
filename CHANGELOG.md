@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.3.2 (2026-09-29): Skill download button
+
+- The skill header's download control was a bare icon next to the "Make a copy" button, with no label. It is now a labelled "Export .zip" button, and its tooltip says what the file contains.
+
 ## 3.3.1 (2026-09-29): Re-type old atoms
 
 - **"Уточнить типы" / "Refine types" on the Atoms screen.** Atoms extracted before 3.3 could only be functional, NFR or question, so every ID came out as FR, NFR or Q. The button re-reads accepted and pending atoms and moves the ones that fit to business (BR), risk (RSK) or as-is (AS). Wording is not changed, and one Undo reverts the whole pass. When a project has no atoms of the new types, a banner suggests the button.
