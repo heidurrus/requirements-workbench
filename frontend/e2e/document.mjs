@@ -37,7 +37,7 @@ await page.goto(base + "/#/atoms");
 await page.locator(".screen-sub", { hasText: "на ревью" }).waitFor();
 for (let i = 0; i < 3; i++) await page.keyboard.press("a");
 await page.getByText("Все требования разобраны").waitFor();
-await page.getByRole("button", { name: "Собрать документ" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();
 await page.getByText("Можно собирать: 3 принятых требования").waitFor();
 step("atoms accepted, the document offers to build");
 
@@ -68,12 +68,13 @@ step("rebuild (changed only) and the quality check flags the vague word");
 await finding.getByRole("button", { name: "Починить" }).click();
 await finding.locator("textarea").waitFor();
 await finding.getByRole("button", { name: "Принять в требование" }).click();
-await page.getByText("Атом обновлён — пересоберите документ").waitFor();
+await page.getByText("Требование обновлено. Обновите документ").waitFor();
 step("fix proposal applied to the atom");
 
-await page.getByRole("button", { name: "Сравнить с v1" }).click();
+await page.locator(".inspector").getByRole("tab", { name: /^Изменения/ }).click();
+await page.locator(".inspector").getByRole("button", { name: "Сравнить с v1" }).click();
 await page.locator(".change", { hasText: "FR-1" }).getByText("изменено").waitFor();
-await page.getByRole("button", { name: "Скрыть сравнение" }).click();
+await page.locator(".inspector").getByRole("button", { name: "Скрыть сравнение" }).click();
 step("diff with the previous version");
 
 await page.locator("#sec-purpose").getByRole("button", { name: "Свой текст" }).click();
@@ -82,9 +83,10 @@ await page.locator("#sec-purpose").getByRole("button", { name: "Сохранит
 await page.locator("#sec-purpose .blk.free", { hasText: "Согласовано с заказчиком 12.03." }).waitFor();
 step("pinned free text");
 
-await page.locator("select.tpl").selectOption({ label: "Word — ГОСТ" });
+await page.getByRole("button", { name: "Другие форматы" }).click();
+await page.getByRole("menuitem", { name: "Word — ГОСТ" }).click();
 const [download] = await Promise.all([page.waitForEvent("download"),
-  page.getByRole("button", { name: "Экспорт DOCX" }).click()]);
+  page.getByRole("button", { name: "Экспорт в Word" }).click()]);
 const saved = join(dir, download.suggestedFilename());
 await download.saveAs(saved);
 if (!saved.endsWith("v2.docx") || statSync(saved).size < 10000) throw new Error("bad export " + saved);

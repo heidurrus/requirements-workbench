@@ -16,7 +16,7 @@
   <div class="tb-title">
     {#if heading}{@render heading()}
     {:else}
-      <h1 class="screen-title">{#if crumb}<button class="tb-crumb" onclick={() => go(crumbPath)}>{crumb}</button><span class="tb-crumb"> › </span>{/if}{title}</h1>
+      <h1 class="screen-title">{#if crumb}<button class="tb-crumb" onclick={() => go(crumbPath)}>{crumb}</button><span class="tb-crumb">{" › "}</span>{/if}{title}</h1>
     {/if}
     {#if sub}<p class="screen-sub">{sub}</p>{/if}
   </div>

@@ -115,7 +115,7 @@ await page.getByRole("button", { name: "Собрать документ" }).clic
 await page.locator(".screen-sub", { hasText: "версия 1" }).waitFor({ timeout: 15000 });
 await page.locator(".sec h2", { hasText: "Глоссарий" }).waitFor();
 await page.locator("select.tpl").selectOption({ label: "Word — ГОСТ (копия)" });
-const [doc] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Экспорт DOCX" }).click()]);
+const [doc] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Экспорт в Word" }).click()]);
 if (!doc.suggestedFilename().endsWith(".docx")) throw new Error("no docx");
 step("document uses the default FRD skill and exports with the custom template");
 

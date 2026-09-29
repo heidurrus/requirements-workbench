@@ -231,10 +231,10 @@
                       {:else}<span class="t3">{t("src.atoms_none")}</span>{/if}</dd>
                 </dl>
               </div>
-              {#if preview?.summary}
+              {#if preview?.summary?.text}
                 <div class="insp-sec">
                   <p class="cap">{t("tr.summary")}</p>
-                  <div class="md clamp">{@html renderMarkdown(preview.summary)}</div>
+                  <div class="md clamp">{@html renderMarkdown(preview.summary.text)}</div>
                 </div>
               {/if}
               <div class="insp-sec manage">
@@ -289,7 +289,8 @@
   .title-btn { border: 0; background: none; padding: 0; font: var(--w-medium) var(--t-item)/var(--lh-item) var(--font); text-align: left; cursor: pointer;
     color: var(--c-text); max-width: 100%; justify-self: start; }
   .title-btn:hover:not(:disabled) { color: var(--c-accent-text); }
-  .sub { font-size: var(--t-foot); color: var(--c-text-3); }
+  .sub { font-size: var(--t-foot); color: var(--c-text-3); display: block; }
+  .sub::first-letter, .pane-head h2::first-letter { text-transform: uppercase; }
   .err { color: var(--c-danger); }
   .nowrap { white-space: nowrap; }
   .link { border: 0; background: none; padding: 0; font: inherit; color: var(--c-accent-text); cursor: pointer; }
