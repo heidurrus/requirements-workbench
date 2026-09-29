@@ -5,6 +5,9 @@ description:
   ru: "Видение и границы (по Вигерсу): предпосылки, бизнес-возможность, видение решения, цели, основные возможности, рамки релизов, ограничения."
   en: "Vision and scope (Wiegers style): background, business opportunity, solution vision, objectives, major features, release scope, constraints."
 stage: frd
+atom_types: [business, functional, nfr, question]
+context_types: [risk]
+decompose: false
 short: {ru: Vision & Scope, en: Vision & Scope}
 version: 1
 use_summaries: true
@@ -17,7 +20,9 @@ sections:
     instructions: 'A concise vision statement in the form "Для <кого>, кому <нужно…>, <продукт> — это <что>, который <ключевая ценность>. В отличие от <альтернатива>, наш продукт <отличие>." / "For <target>, who <need>, the <product> is a <category> that <key benefit>. Unlike <alternative>, our product <differentiator>." Then 2–4 sentences expanding it. Leave parts as [уточнить]/[to confirm] if the sources are silent.'
   - key: objectives
     title: {ru: Бизнес-цели и критерии успеха, en: Business objectives and success criteria}
-    instructions: Objectives with measurable success criteria where the sources give them.
+    instructions: Objectives with measurable success criteria where the sources give them, drawn from the business requirements (BR-n).
+  - key: business
+    title: {ru: Бизнес-требования, en: Business requirements}
   - key: stakeholders
     title: {ru: Заинтересованные стороны, en: Stakeholders}
     format: table

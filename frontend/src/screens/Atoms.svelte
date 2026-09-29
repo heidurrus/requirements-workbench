@@ -355,8 +355,11 @@
   }
 
   const statusPills = ["all", "pending", "accepted", "rejected"];
-  const typePills = ["all", "functional", "nfr", "question"];
-  const typeClass = { functional: "fr", nfr: "nfr", question: "q" };
+  // business → BRD, functional/nfr → SRS, risk → risk register, current → As-Is, questions everywhere
+  const ALL_TYPES = ["business", "functional", "nfr", "risk", "current", "question"];
+  const CORE_TYPES = ["functional", "nfr", "question"];
+  const typePills = $derived(["all", ...ALL_TYPES.filter(ty => CORE_TYPES.includes(ty) || atoms.some(a => a.type === ty))]);
+  const typeClass = { functional: "fr", nfr: "nfr", question: "q", business: "br", risk: "rsk", current: "as" };
   const REASONS = ["not_requirement", "duplicate", "out_of_scope", "wrong", "other"];
   const PRIOS = ["must", "should", "could", "wont"];
   const openQuestions = $derived(atoms.filter(a => a.type === "question" && a.status !== "rejected" && a.q_state !== "answered").length);
@@ -496,7 +499,7 @@
   {#if adding}
     <section class="card add-card">
       <div class="seg" role="group" aria-label={t("at.bulk_type")}>
-        {#each ["functional", "nfr", "question"] as ty (ty)}
+        {#each ALL_TYPES as ty (ty)}
           <button aria-pressed={adding.type === ty} onclick={() => (adding.type = ty)}>{t("at.type." + ty)}</button>
         {/each}
       </div>
@@ -590,7 +593,7 @@
                                             if (e.key === "Escape") editingId = null; }}></textarea>
                 <div class="actions edit-row">
                   <div class="seg">
-                    {#each ["functional", "nfr", "question"] as ty (ty)}
+                    {#each ALL_TYPES as ty (ty)}
                       <button aria-pressed={draft.type === ty} onclick={() => (draft.type = ty)}>{t("at.type." + ty)}</button>
                     {/each}
                   </div>
@@ -705,7 +708,7 @@
       <select class="select type-select" disabled={bulkBusy} aria-label={t("at.bulk_type")} value=""
               onchange={e => { const v = e.currentTarget.value; e.currentTarget.value = ""; if (v) bulk({ type: v }); }}>
         <option value="" disabled>{t("at.bulk_type")}</option>
-        {#each ["functional", "nfr", "question"] as ty (ty)}<option value={ty}>{t("at.f." + ty)}</option>{/each}
+        {#each ALL_TYPES as ty (ty)}<option value={ty}>{t("at.f." + ty)}</option>{/each}
       </select>
       <button class="btn btn-sm danger-text" disabled={bulkBusy} onclick={() => removeAtoms(checkedVisible)}>
         <Icon name="trash" size={14} /> {t("at.delete")}</button>

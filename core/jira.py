@@ -11,7 +11,7 @@ import datetime
 import hashlib
 import json
 
-from core.frd import req_blocks, requirements_document
+from core.frd import decompose_documents, req_blocks, requirements_document
 from core.llm import output_language
 
 APP_LABEL = "requirements-workbench"
@@ -86,8 +86,9 @@ def quote_policy(project):
     return p
 
 
-def description(item, doc_title, version, lang="ru", quotes="full"):
-    """Markdown description with the FRD reference and (policy allowing) a verbatim quote (FR-JIRA-05)."""
+def description(item, doc_title, version, lang="ru", quotes="full", docs=None):
+    """Markdown description with the document reference and (policy allowing) a verbatim quote (FR-JIRA-05).
+    docs: {document id: (document, version)} when requirements come from several documents."""
     t = TEXT.get(lang, TEXT["ru"])
     parts = []
     if item["kind"] == "epic" and item.get("goal"):
@@ -105,9 +106,16 @@ def description(item, doc_title, version, lang="ru", quotes="full"):
         parts.append(f"**{t['ac']}**\n" + "\n".join(lines))
     refs = item.get("refs") or []
     if refs and version:
-        srcs = _sources(version)
-        lines = [f"**{t['source']}:** {doc_title} v{version['number']} · " +
-                 ", ".join(f"{t['section']} {r['section']} · {r['id']}" for r in refs)]
+        by_doc = {}
+        for r in refs:
+            d, v = (docs or {}).get(r.get("doc_id")) or ({"title": doc_title}, version)
+            by_doc.setdefault((d["title"], v["number"]), (v, []))[1].append(r)
+        srcs = {}
+        for v, _rs in by_doc.values():
+            srcs.update(_sources(v))
+        lines = [f"**{t['source']}:** " + "; ".join(
+            f"{title} v{num} · " + ", ".join(f"{t['section']} {r['section']} · {r['id']}" for r in rs)
+            for (title, num), (_v, rs) in by_doc.items())]
         for r in (refs[:3] if quotes != "none" else []):
             for s in (srcs.get(r["id"]) or [])[:1]:
                 when = []
@@ -127,12 +135,12 @@ def description(item, doc_title, version, lang="ru", quotes="full"):
     return "\n\n".join(parts)
 
 
-def payload(item, target, doc_title, version, lang, parent_key=None, quotes="full"):
+def payload(item, target, doc_title, version, lang, parent_key=None, quotes="full", docs=None):
     """The fields the workbench owns, exactly as they will be sent."""
     kind_type = (target.get("types") or {}).get(item["kind"])
     labels = [APP_LABEL, label(item)] + ([f"moscow-{item['priority']}"] if item.get("priority") else [])
     return {"issueTypeName": kind_type, "summary": item["title"][:250],
-            "description": description(item, doc_title, version, lang, quotes),
+            "description": description(item, doc_title, version, lang, quotes, docs),
             "labels": labels, "parent": parent_key}
 
 
@@ -145,6 +153,7 @@ def local_status(store, project_id):
         return {"pushed": len(pushed), "pending": None}
     doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
+    docs = {d["id"]: (d, v) for d, v in decompose_documents(store, project_id)}
     project = store.get_project(project_id)
     lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
     by_id = {i["id"]: i for i in items}
@@ -154,7 +163,7 @@ def local_status(store, project_id):
             continue
         parent = by_id.get(item.get("parent_id"))
         p = payload(item, target, doc["title"], version, lang, parent.get("jira_key") if parent else None,
-                    quote_policy(project))
+                    quote_policy(project), docs)
         if not item.get("jira_key") or fingerprint(p) != item.get("jira_hash"):
             pending += 1
     return {"pushed": len(pushed), "pending": pending}
@@ -193,6 +202,7 @@ def plan(store, project_id, session):
     types = target.get("types") or {}
     doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
+    docs = {d["id"]: (d, v) for d, v in decompose_documents(store, project_id)}
     project = store.get_project(project_id)
     quotes = quote_policy(project)
     lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
@@ -232,7 +242,7 @@ def plan(store, project_id, session):
             row["action"], row["reason"] = "blocked", "no_parent"
         else:
             parent_key = parent.get("jira_key") if parent else None
-            p = payload(item, target, doc["title"], version, lang, parent_key, quotes)
+            p = payload(item, target, doc["title"], version, lang, parent_key, quotes, docs)
             fp = fingerprint(p)
             if not row["key"]:
                 row["action"] = "create"
@@ -284,6 +294,7 @@ def push(store, project_id, session, item_ids, progress=None):
         raise JiraError("Nothing to push: tick at least one row to create or update.")
     doc = requirements_document(store, project_id)
     version = store.version(doc["id"])
+    docs = {d["id"]: (d, v) for d, v in decompose_documents(store, project_id)}
     project = store.get_project(project_id)
     quotes = quote_policy(project)
     lang = output_language(project) or (version or {}).get("content", {}).get("language", "ru")
@@ -299,7 +310,7 @@ def push(store, project_id, session, item_ids, progress=None):
         if item["kind"] == "subtask" and not parent_key:
             failed.append({"item_id": item["id"], "title": item["title"], "error": "the parent story isn't in Jira yet"})
             continue
-        p = payload(item, target, doc["title"], version, lang, parent_key, quotes)
+        p = payload(item, target, doc["title"], version, lang, parent_key, quotes, docs)
         try:
             key = keys.get(item["id"])
             if key:

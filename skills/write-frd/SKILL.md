@@ -5,6 +5,9 @@ description:
   ru: "Функциональные и нефункциональные требования из принятых атомов — назначение, контекст, требования по разделам, вопросы."
   en: "Functional and non-functional requirements from accepted atoms: purpose, context, requirements by section, questions."
 stage: frd
+atom_types: [functional, nfr, question]
+context_types: [business]
+decompose: true
 short: {ru: SRS, en: SRS}
 version: 1
 sections:

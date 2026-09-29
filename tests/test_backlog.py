@@ -49,7 +49,8 @@ def test_build_tree_links_defaults_and_coverage(store):
     epics, stories, subtasks, nfrs = (by_kind(items, k) for k in ("epic", "story", "subtask", "nfr"))
     assert (len(epics), r["frd_version"]) == (2, 1)                       # + "Прочее" for the uncovered FR-2
     first = stories[0]
-    assert first["refs"] == [{"id": "FR-1", "section": "3.1", "atom_id": first["refs"][0]["atom_id"]}], "unknown refs dropped"
+    assert first["refs"] == [{"id": "FR-1", "section": "3.1", "atom_id": first["refs"][0]["atom_id"],
+                              "doc_id": store.document(pid)["id"]}], "unknown refs dropped"
     assert len(first["acceptance"]) == 2 and epics[0]["goal"] == "Сократить время обработки звонка"
     assert all(s["generated"] and not s["included"] for s in subtasks), "generated sub-tasks start unticked"
     assert not any(s["title"] == "Выдуманная" for s in stories), "a story with no real requirement is dropped"
@@ -57,7 +58,7 @@ def test_build_tree_links_defaults_and_coverage(store):
     nfr = nfrs[0]
     assert not nfr["included"] and nfr["invest"][0]["letter"] == "V" and nfr["invest"][0]["move_to"] == [first["id"]]
     assert [i["kind"] for i in items][:4] == ["epic", "story", "subtask", "subtask"], "tree order"
-    assert "Every FR ID must appear" in fake.calls[0]["system"] and "FR-1 (section 3.1)" in fake.calls[0]["user"]
+    assert "Every FR and BR ID must appear" in fake.calls[0]["system"] and "FR-1 (section 3.1)" in fake.calls[0]["user"]
 
 
 def test_rebuild_keeps_pinned_items(store):
@@ -76,7 +77,7 @@ def test_rebuild_keeps_pinned_items(store):
 
 def test_build_needs_a_document(store):
     pid, *_ = seed(store)
-    with pytest.raises(backlog.BacklogError, match="document first"):
+    with pytest.raises(backlog.BacklogError, match="marked for decomposition"):
         backlog.build(store, pid, PREFS, "k", "", complete=llm())
 
 

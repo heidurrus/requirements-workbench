@@ -173,7 +173,9 @@ def test_documents_api_lists_types_creates_and_switches_type(client, lib):
     names = {t["name"] for t in body["types"]}
     assert {"write-frd", "write-brd", "write-vision-scope", "write-risk-register", "write-as-is-to-be"} <= names
     assert next(t for t in body["types"] if t["name"] == "write-brd")["title"] == "BRD — business requirements"
-    assert not next(t for t in body["types"] if t["name"] == "write-risk-register")["requirements"]
+    risk = next(t for t in body["types"] if t["name"] == "write-risk-register")
+    assert risk["atom_types"] == ["risk", "question"] and not risk["decomposes"]
+    assert next(t for t in body["types"] if t["name"] == "write-frd")["decomposes"]
     d = client.post(f"/api/projects/{pid}/documents?lang=ru", json={"kind": "write-vision-scope"}).get_json()
     assert d["short"] == "Vision & Scope" and d["title"].startswith("Vision & Scope — ")
     assert client.post(f"/api/projects/{pid}/documents", json={"kind": "extract-requirements"}).status_code == 400
@@ -183,8 +185,9 @@ def test_documents_api_lists_types_creates_and_switches_type(client, lib):
     client.patch(f"/api/documents/{d['id']}", json={"kind": "write-brd"})
     assert client.get(f"/api/projects/{pid}/document?document={d['id']}").get_json()["document"]["kind"] == "write-brd"
     first = client.get(f"/api/projects/{pid}/documents").get_json()["documents"][0]
-    assert client.delete(f"/api/documents/{first['id']}").status_code == 400, "the first document stays"
-    assert client.delete(f"/api/documents/{d['id']}").status_code == 200
+    assert client.delete(f"/api/documents/{first['id']}").status_code == 200, "any document can go…"
+    assert client.delete(f"/api/documents/{d['id']}").status_code == 400, "…as long as one stays"
+    assert client.patch(f"/api/documents/{d['id']}", json={"decompose": True}).get_json()["decompose"] == 1
 
 
 def test_skills_come_in_the_interface_language(client, lib):

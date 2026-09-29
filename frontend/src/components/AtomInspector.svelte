@@ -33,7 +33,7 @@
     if (!quote || i < 0) return [{ t: text }];
     return [{ t: text.slice(0, i) }, { t: text.slice(i, i + quote.length), m: true }, { t: text.slice(i + quote.length) }];
   }
-  const typeClass = { functional: "fr", nfr: "nfr", question: "q" };
+  const typeClass = { functional: "fr", nfr: "nfr", question: "q", business: "br", risk: "rsk", current: "as" };
   const hText = e => (t("at.h." + e.action) === "at.h." + e.action ? e.action : t("at.h." + e.action));
 </script>
 

@@ -19,7 +19,7 @@ MAX_EXISTING_FOR_DEDUP = 400
 # The guidance lives in the extract / dedup skills (skills/…/SKILL.md, editable by the user);
 # the app adds these contracts, which keep the pipeline working whatever the skill says.
 EXTRACT_CONTRACT = """- Every atom cites evidence: the number from the [S…] label of the line it came from, and a quote copied character for character from that line (a short contiguous fragment, not a paraphrase, no ellipses). Atoms without such a quote are discarded.
-- type is one of: functional, nfr, question — or action_item / other for things that are not requirements.
+- type is one of: business, functional, nfr, risk, current, question — or action_item / other for things that are none of these.
 - action_item: a task for people rather than a property of the system ("send the email", "schedule a call", "prepare the estimate", "Иван пришлёт письмо"). other: anything else that is not a requirement (small talk, project process, opinions without a need). Label them honestly instead of forcing them into functional: they are kept on a separate to-do list, never saved as requirements. For an action_item, also give owner (who will do it) and due (when), if they were said; otherwise leave them empty.
 - If nothing in the text is a requirement, return an empty list."""
 
@@ -33,7 +33,7 @@ EXTRACT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": ["functional", "nfr", "question", "action_item", "other"]},
+                    "type": {"type": "string", "enum": ["business", "functional", "nfr", "risk", "current", "question", "action_item", "other"]},
                     "statement": {"type": "string"},
                     "owner": {"type": "string"},
                     "due": {"type": "string"},
@@ -167,7 +167,7 @@ def extract_candidates(store, source_id, prefs, api_key, ollama_url, skillset=No
                     item.update(owner=(atom.get("owner") or "").strip(), due=(atom.get("due") or "").strip())
                 skipped.append(item)
                 continue
-            if atom.get("type") not in ("functional", "nfr", "question") or not statement:
+            if atom.get("type") not in ("functional", "nfr", "question", "business", "risk", "current") or not statement:
                 dropped += 1
                 continue
             evidence = verify_evidence(atom.get("evidence"), chunk, source_id)

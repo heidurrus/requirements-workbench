@@ -119,7 +119,7 @@
   async function moveInto(nfr, storyId) {
     try {
       await api(`/api/backlog/${nfr.id}/move-into/${storyId}`, { method: "POST" });
-      load();
+      await load();
       toast(t("bl.moved_into", { title: storyTitle[storyId] || "" }));
     } catch (err) { fail(err); }
   }
@@ -189,6 +189,10 @@
         {#if body.stale}
           <p class="banner warn row-note"><Icon name="warn" /><span class="grow">{t("bl.stale", { a: body.built_from, b: body.latest })}</span>
             <button class="btn btn-sm" disabled={!!job} onclick={() => run("build")}>{t("bl.rebuild")}</button></p>
+        {/if}
+        {#if body.sources?.length}
+          <p class="hint-line"><Icon name="doc" size={12} /> {t("bl.from_docs")}:
+            {#each body.sources as d, i (d.id)}<button class="link-inline" onclick={() => go(`/document/${d.id}`)}>{d.short} v{d.version}</button>{i < body.sources.length - 1 ? ", " : ""}{/each}</p>
         {/if}
         <p class="hint-line"><Icon name="info" size={12} /> {t("bl.hint")}{#if hasFindings}{" "}<b class="warn-t">{t("bl.findings_hint")}</b>{/if}</p>
 
@@ -356,6 +360,7 @@
   .row-line:not(:hover) .mini:not(.set) { opacity: 0; }
   @media (hover: none) { .mini { opacity: 1 !important; } }
   .running { align-items: center; }
+  .link-inline { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
   .warn-t { color: var(--warn); font-weight: 500; }
   .hint-line { font-size: var(--fs-12); color: var(--text-3); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .nfr-hint { margin: calc(-1 * var(--sp-2)) 0 var(--sp-4); max-width: 80ch; }

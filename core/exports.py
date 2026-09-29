@@ -17,14 +17,14 @@ from core.frd import req_blocks, requirements_document
 T = {
     "ru": {"id": "ID", "section": "Раздел", "req": "Требование", "type": "Тип", "status": "Статус атома",
            "priority": "Приоритет", "quote": "Цитата", "source": "Источник", "when": "Время", "speaker": "Спикер",
-           "stories": "Истории", "jira": "Jira", "fr": "функц.", "nfr": "нефункц.", "question": "вопрос",
+           "stories": "Истории", "jira": "Jira", "doc": "Документ", "fr": "функц.", "nfr": "нефункц.", "question": "вопрос",
            "hello": "Добрый день!", "intro": "По итогам наших встреч осталось несколько вопросов. Буду благодарен за ответы.",
            "questions": "Вопросы", "confirm": "Нужно выбрать один из вариантов", "or": "или",
            "actions": "Договорённости", "owner_none": "без исполнителя", "due": "срок",
            "bye": "Спасибо!", "nothing": "Открытых вопросов нет.", "said": "прозвучало"},
     "en": {"id": "ID", "section": "Section", "req": "Requirement", "type": "Type", "status": "Atom status",
            "priority": "Priority", "quote": "Quote", "source": "Source", "when": "Time", "speaker": "Speaker",
-           "stories": "Stories", "jira": "Jira", "fr": "functional", "nfr": "non-functional", "question": "question",
+           "stories": "Stories", "jira": "Jira", "doc": "Document", "fr": "functional", "nfr": "non-functional", "question": "question",
            "hello": "Hello,", "intro": "A few questions are still open after our meetings. I'd be grateful for your answers.",
            "questions": "Questions", "confirm": "Please choose one of the options", "or": "or",
            "actions": "Agreed next steps", "owner_none": "no owner", "due": "due",
@@ -48,30 +48,40 @@ def _clock(seconds):
 
 def traceability_rows(store, project_id, lang="ru"):
     t = _t(lang)
-    doc = requirements_document(store, project_id)
-    version = store.version(doc["id"])
-    if version is None:
+    built = [(d, store.version(d["id"])) for d in store.documents(project_id)]
+    built = [(d, v) for d, v in built if v]
+    if not built:
         return [], None
+    first = requirements_document(store, project_id)
+    built.sort(key=lambda dv: dv[0]["id"] != first["id"])      # the backlog's document first
+    version = built[0][1]
     atoms = {a["id"]: a for a in store.list_atoms(project_id)}
     stories = {}
     for item in store.backlog(project_id):
         for r in item.get("refs") or []:
             stories.setdefault(r["id"], []).append(item)
-    rows = []
-    for number, _key, b in req_blocks(version["content"]):
+    rows, seen = [], set()
+    blocks = []
+    for d, v in built:
+        for number, key, b in req_blocks(v["content"]):
+            if b["id"] not in seen:
+                seen.add(b["id"])
+                blocks.append((d, number, key, b))
+    for d, number, _key, b in blocks:
         atom = atoms.get(b["atom_id"]) or {}
         linked = stories.get(b["id"], [])
         srcs = b.get("sources") or [{}]
         for i, s in enumerate(srcs):
             rows.append([b["id"] if i == 0 else "", number if i == 0 else "", b["text"] if i == 0 else "",
-                         t.get({"functional": "fr"}.get(b.get("type"), b.get("type") or ""), "") if i == 0 else "",
+                         t.get({"functional": "fr"}.get(b.get("type"), b.get("type") or ""), b.get("type") or "") if i == 0 else "",
                          atom.get("status", "") if i == 0 else "", PRIO.get(atom.get("priority"), "") if i == 0 else "",
                          s.get("quote", ""), s.get("source_title", ""), _clock(s.get("start")),
                          s.get("speaker_name") or s.get("speaker") or "",
                          "; ".join(x["title"] for x in linked) if i == 0 else "",
-                         ", ".join(x["jira_key"] for x in linked if x.get("jira_key")) if i == 0 else ""])
+                         ", ".join(x["jira_key"] for x in linked if x.get("jira_key")) if i == 0 else "",
+                         d["title"] if i == 0 else ""])
     head = [t[k] for k in ("id", "section", "req", "type", "status", "priority", "quote", "source", "when",
-                           "speaker", "stories", "jira")]
+                           "speaker", "stories", "jira", "doc")]
     return [head] + rows, version
 
 
@@ -91,7 +101,7 @@ def xlsx(rows, sheet="Traceability"):
 
     body = "".join(f'<row r="{r}">' + "".join(cell(r, c, v) for c, v in enumerate(row, 1)) + "</row>"
                    for r, row in enumerate(rows, 1))
-    widths = [10, 8, 60, 12, 12, 10, 50, 28, 8, 16, 40, 16]
+    widths = [10, 8, 60, 12, 12, 10, 50, 28, 8, 16, 40, 16, 24]
     cols = "".join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i, w in enumerate(widths, 1))
     sheet_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                  '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'

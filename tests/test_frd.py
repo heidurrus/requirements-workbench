@@ -368,26 +368,55 @@ def test_atoms_rejected_as_out_of_scope_are_listed_in_that_section(store):
 def test_risk_register_document_has_a_table_with_ids_and_a_heat_map(store):
     from core import docx_export, exports, skills as sk
     pid, ids, sid = seed(store)
+    r1 = store.add_ba_atom(pid, "risk", "Заказчик может не согласовать сроки")
+    r2 = store.add_ba_atom(pid, "risk", "У CRM может не быть API")
     doc = store.create_document(pid, "write-risk-register", "Риски — проект")
+    rid = store.requirement_ids(pid, [store.get_atom(r1["id"]), store.get_atom(r2["id"])])
     reply = full_reply()
+    reply["items"] = []
     reply["tables"] = [{"key": "risks", "rows": [
-        ["Заказчик не согласует сроки", "конфликт требований", "высокая", "высокое", "снизить: созвон", "BA", "FR-1"],
-        ["Нет API CRM", "зависимость", "средняя", "высокое", "принять", "[уточнить]", "FR-2"]]}]
-    r = frd.build(store, pid, PREFS, "k", "", mode="full", complete=llm(reply), document_id=doc["id"])
+        [rid[r1["id"]], "Сроки не согласованы", "конфликт требований", "высокая", "высокое", "снизить: созвон", "BA", "FR-1"],
+        ["RSK-99", "выдуманный", "", "низкая", "низкое", "", "", ""]]}]
+    fake = llm(reply)
+    r = frd.build(store, pid, PREFS, "k", "", mode="full", complete=fake, document_id=doc["id"])
+    assert "RSK-" in fake.calls[0]["user"] and "Related atoms (context only" in fake.calls[0]["user"]
     content = store.version(doc["id"], r["version"])["content"]
     sec = next(s for s in content["sections"] if s["key"] == "risks")
     table, heat = sec["blocks"]
-    assert table["rows"][0][0] == "R-1" and table["rows"][1][1] == "Нет API CRM" and len(table["columns"]) == 8
-    assert heat["heatmap"] and heat["rows"][0] == ["Высокая", "", "", "R-1"] and heat["rows"][1][3] == "R-2"
+    assert [row[0] for row in table["rows"]] == [rid[r1["id"]], rid[r2["id"]]], "one row per risk atom, nothing invented"
+    assert table["rows"][1][1] == "У CRM может не быть API", "a risk the model skipped keeps its own wording"
+    assert heat["heatmap"] and heat["rows"][0][3] == rid[r1["id"]]
     assert not any(b["id"].startswith("FR-") for _n, _k, b in frd.req_blocks(content)), "a register places no FRs"
-    assert frd.requirements_document(store, pid)["id"] != doc["id"] or len(store.documents(pid)) == 1
     md = exports.markdown(store.get_document(doc["id"]), store.version(doc["id"]), [], "ru")
-    assert "| R-1 | Заказчик не согласует сроки |" in md
+    assert f"| {rid[r1['id']]} | Сроки не согласованы |" in md
     data = docx_export.render(store.get_document(doc["id"]), store.version(doc["id"]), [], template=None)
     import io, docx
     d = docx.Document(io.BytesIO(data))
-    assert any(t.rows[1].cells[0].text == "R-1" for t in d.tables)
-    assert sk.get("write-risk-register").meta["requirements"] == "none"
+    assert any(t.rows[1].cells[0].text == rid[r1["id"]] for t in d.tables)
+    assert sk.doc_atom_types(sk.get("write-risk-register").meta)[0] == ["risk", "question"]
+
+
+def test_each_document_takes_only_its_own_atom_types(store):
+    pid, ids, sid = seed(store)
+    br = store.add_ba_atom(pid, "business", "Сократить время обслуживания звонка на 20%")
+    srs = store.document(pid)                                  # the project's first document (SRS)
+    brd = store.create_document(pid, "write-brd", "BRD")
+    fake = llm(full_reply())
+    frd.build(store, pid, PREFS, "k", "", complete=fake, document_id=brd["id"])
+    content = store.version(brd["id"])["content"]
+    placed = {b["id"] for _n, _k, b in frd.req_blocks(content)}
+    assert any(x.startswith("BR-") for x in placed) and not any(x.startswith("FR-") for x in placed)
+    assert "BR-1 [business]" in fake.calls[0]["user"].split("Related atoms")[0]
+    assert "FR-1 [functional]" in fake.calls[0]["user"].split("Related atoms")[1], "FRs are context in a BRD"
+    frd.build(store, pid, PREFS, "k", "", complete=llm(full_reply()), document_id=srs["id"])
+    srs_ids = {b["id"] for _n, _k, b in frd.req_blocks(store.version(srs["id"])["content"])}
+    assert "BR-1" not in srs_ids and "FR-1" in srs_ids
+    store.update_atom(br["id"], statement="Сократить время обслуживания звонка на 30%")
+    assert frd.staleness(store, pid, store.version(brd["id"]))["stale"]
+    assert not frd.staleness(store, pid, store.version(srs["id"]))["stale"], "a BR change doesn't touch the SRS"
+    assert [d["id"] for d, _v in frd.decompose_documents(store, pid)] == [srs["id"]]
+    store.update_document(brd["id"], decompose=True)
+    assert [d["id"] for d, _v in frd.decompose_documents(store, pid)] == [srs["id"], brd["id"]]
 
 
 def test_each_document_keeps_its_own_type_and_versions(store):
@@ -402,4 +431,4 @@ def test_each_document_keeps_its_own_type_and_versions(store):
     assert content["skills"]["frd"] == "write-brd"
     assert next(s for s in content["sections"] if s["key"] == "business_context")["blocks"][0]["text"] == "Операторы теряют время."
     assert [d["id"] for d in store.documents(pid)] == [srs["id"], brd["id"]]
-    assert frd.requirements_document(store, pid)["id"] == brd["id"], "the only one with requirements so far"
+    assert frd.decompose_documents(store, pid) == [], "a BRD doesn't go into the backlog by default"

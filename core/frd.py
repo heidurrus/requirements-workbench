@@ -213,6 +213,12 @@ def _extra_contract(spec, tables=None):
     else:
         lines = []
         for k, t, i in tab:
+            if k == "risks":
+                cols = tables[k]["columns"]
+                lines.append(f"  - risks (“{t}”): {i} Exactly one row per RSK atom and no others; the first cell is the "
+                             f"atom's ID (RSK-n). Each row is an array of exactly {len(cols)} strings, in this order: "
+                             + " | ".join(cols) + ".")
+                continue
             cols = tables[k]["columns"][1:] if tables[k].get("id_prefix") else tables[k]["columns"]
             lines.append(f"  - {k} (“{t}”): {i} Each row is an array of exactly {len(cols)} strings, in this order: "
                          + " | ".join(cols) + (". Do not number the rows: IDs are added by the app." if tables[k].get("id_prefix") else "."))
@@ -290,6 +296,10 @@ def _open_conflicts(store, project_id):
     return out
 
 
+CHECKED = ("functional", "nfr", "business")          # quality rules apply to requirements, not risks or facts
+ORDER = {"FR": 0, "BR": 1, "NFR": 2, "AS": 3, "RSK": 4, "Q": 5}
+
+
 def _block(atom, rid, text, conflicts, issues):
     return {"id": rid, "kind": "req", "atom_id": atom["id"], "type": atom["type"], "text": text.strip(),
             "sources": _sources(atom["evidence"]), "conflict": conflicts.get(atom["id"]), "issues": issues}
@@ -327,6 +337,12 @@ def _assemble(spec, lang, parts):
             sec["blocks"] = [{"id": "out_of_scope", "kind": "list", "items": parts["out_of_scope"]}]
         elif key == "questions":
             sec["blocks"] = parts["questions"]
+        elif key == "business":
+            sec["blocks"] = parts.get("business", [])
+        elif key == "current":
+            sec["blocks"] = parts.get("current", [])
+        elif key == "risks":
+            sec["blocks"] = parts.get("risks", [])
         elif key in parts.get("formats", {}):
             sec["blocks"] = _table_blocks(key, parts["formats"][key], parts.get("tables", {}).get(key), lang)
         elif key not in skills.FRD_KINDS and (parts["extra"].get(key) or "").strip():
@@ -335,12 +351,36 @@ def _assemble(spec, lang, parts):
     return {"sections": _number(sections)}
 
 
+def decomposes(doc, skill):
+    """Does this document go into the backlog? The document's own setting, else its type's default
+    (types that hold functional requirements do)."""
+    if doc.get("decompose") is not None:
+        return bool(doc["decompose"])
+    if "decompose" in skill.meta:
+        return bool(skill.meta["decompose"])
+    return "functional" in skills.doc_atom_types(skill.meta)[0]
+
+
+def decompose_documents(store, project_id):
+    """[(document, latest version)] that feed the backlog, in the project's order; only built ones."""
+    skillset = skills.resolve(store.project_skills(project_id))
+    out = []
+    for d in store.documents(project_id):
+        v = store.version(d["id"])
+        if v and decomposes(d, document_skill(d, skillset)):
+            out.append((d, v))
+    return out
+
+
 def requirements_document(store, project_id):
-    """The document the backlog, Jira and traceability read requirements from: the primary document
-    when it holds FR/NFR requirements, otherwise the most recently built one that does."""
+    """The document the backlog, Jira and traceability read requirements from: the first document marked
+    for decomposition; failing that the primary one when it holds FR/NFR, else the newest one that does."""
     docs = store.documents(project_id)
     if not docs:
         return store.document(project_id)
+    dec = decompose_documents(store, project_id)
+    if dec:
+        return dec[0][0]
     best, best_at = None, -1
     for i, d in enumerate(docs):
         v = store.version(d["id"])
@@ -376,16 +416,23 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
     report = progress or (lambda pct, msg: None)
     project = store.get_project(project_id)
     doc = store.get_document(document_id) if document_id else store.document(project_id)
-    atoms = store.list_atoms(project_id, status="accepted")
-    if not atoms:
+    accepted = store.list_atoms(project_id, status="accepted")
+    if not accepted:
         raise BuildError("There are no accepted atoms yet. Review the atoms first.")
     prefs = for_project(prefs, project)
     skillset = dict(skillset or skills.resolve())
     doc_skill = document_skill(doc, skillset)
     skillset["frd"] = doc_skill
-    rids = store.requirement_ids(project_id, atoms)
-    order = {"FR": 0, "NFR": 1, "Q": 2}
-    atoms.sort(key=lambda a: (order[rids[a["id"]].split("-")[0]], int(rids[a["id"]].split("-")[1])))
+    # Each document takes the atoms of its own types (SRS: FR/NFR, BRD: BR, risks: RSK…), and may read others.
+    placed_types, context_types = skills.doc_atom_types(doc_skill.meta)
+    atoms = [a for a in accepted if a["type"] in placed_types]
+    context_atoms = [a for a in accepted if a["type"] in context_types and a["type"] not in placed_types]
+    if not atoms and not doc_skill.meta.get("use_summaries"):
+        raise BuildError("There are no accepted atoms of the types this document holds yet.")
+    rids = store.requirement_ids(project_id, atoms + context_atoms)
+    key = lambda a: (ORDER[rids[a["id"]].split("-")[0]], int(rids[a["id"]].split("-")[1]))  # noqa: E731
+    atoms.sort(key=key)
+    context_atoms.sort(key=key)
     by_rid = {rids[a["id"]]: a for a in atoms}
     conflicts = _open_conflicts(store, project_id)
     lang = output_language(project) or language_of([a["statement"] for a in atoms])
@@ -393,12 +440,15 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
            "lang": lang, "prefs": prefs, "api_key": api_key, "ollama_url": ollama_url, "report": report,
            "complete": complete, "skillset": skillset, "quality": Quality(skillset.get("quality")),
            "spec": section_spec(doc_skill, lang), "formats": section_formats(doc_skill, lang), "note": (note or "").strip(),
-           "summaries": _summaries(store, project_id) if doc_skill.meta.get("use_summaries") else ""}
+           "summaries": _summaries(store, project_id) if doc_skill.meta.get("use_summaries") else "",
+           "context_atoms": context_atoms, "placed_types": placed_types}
     previous = store.version(doc["id"])
     if previous is not None and previous["content"].get("language") != lang:
         mode = "full"                                   # a new output language means rewriting everything
     if previous is not None and (previous["content"].get("skills") or {}).get("frd") not in (None, doc_skill.name):
         mode = "full"                                   # the document changed type: its sections are different
+    if "risks" in ctx["formats"]:
+        mode = "full"                                   # the risk table is rewritten as a whole
     if previous is None or mode == "full":
         content = _build_full(ctx)
         mode = "full"
@@ -406,6 +456,7 @@ def build(store, project_id, prefs, api_key, ollama_url, mode="changed", progres
         content = _build_changed(ctx, previous)
     _add_scoped_out(content, store, project_id, ctx["spec"], lang)
     content["language"] = lang
+    content["atom_types"] = placed_types
     content["skills"] = {"frd": doc_skill.name, "quality": skillset["quality"].name}
     content["rule_titles"] = ctx["quality"].titles
     if not save:
@@ -482,6 +533,9 @@ def _build_full(ctx):
     contract = FULL_CONTRACT.replace("{extra}", _extra_contract(ctx["spec"], ctx["formats"])).replace("{rules}", q.prompt(_lang_name(lang)))
     user = (f"Project: {ctx['project']['name']}\n\nSources:\n{_sources_line(ctx['store'], ctx['project']['id'])}\n\n"
             "Accepted requirement atoms:\n" + "\n".join(_atom_lines(ctx["atoms"], ctx["rids"], ctx["conflicts"])))
+    if ctx.get("context_atoms"):
+        user += ("\n\nRelated atoms (context only: cite their IDs where useful, do not make items for them):\n"
+                 + "\n".join(_atom_lines(ctx["context_atoms"], ctx["rids"], ctx["conflicts"])))
     if ctx.get("summaries"):
         user += "\n\nSummaries of the sources (for the descriptive sections):\n" + ctx["summaries"]
     if ctx.get("note"):
@@ -499,7 +553,7 @@ def _build_full(ctx):
         atom = by_rid[rid]
         text = texts.get(rid) or atom["statement"]
         return _block(atom, rid, text, ctx["conflicts"], q.merge(
-            model_issues.get(rid), q.checks(text, atom["type"], lang) if atom["type"] != "question" else []))
+            model_issues.get(rid), q.checks(text, atom["type"], lang) if atom["type"] in CHECKED else []))
 
     frs = [r for r in by_rid if r.startswith("FR-")]
     placed, groups = set(), []
@@ -525,12 +579,39 @@ def _build_full(ctx):
         k = str(tb.get("key", "")).strip()
         if k in ctx["formats"]:
             tables[k] = tb.get("rows") or []
-    return _assemble(ctx["spec"], lang, {"formats": ctx["formats"], "tables": tables,
+    risks = _risk_blocks(ctx, tables.pop("risks", []), texts)
+    return _assemble(ctx["spec"], lang, {"formats": ctx["formats"], "tables": tables, "risks": risks,
+        "business": [block(r) for r in by_rid if r.startswith("BR-")],
+        "current": [block(r) for r in by_rid if r.startswith("AS-")],
         "purpose": reply.get("purpose") or "", "context": reply.get("context") or "",
         "assumptions": reply.get("assumptions") or [], "groups": groups,
         "nfr": [block(r) for r in by_rid if r.startswith("NFR-")],
         "out_of_scope": [x.strip() for x in reply.get("out_of_scope") or [] if str(x).strip()],
         "questions": [block(r) for r in by_rid if r.startswith("Q-")], "extra": extra})
+
+
+def _risk_blocks(ctx, ai_rows, texts):
+    """One row per accepted risk atom, whatever the model returned: its row when it wrote one (first cell =
+    the RSK ID), else the risk's own wording with the other columns left for the BA."""
+    fmt = ctx["formats"].get("risks")
+    if not fmt:
+        return []
+    width = len(fmt["columns"])
+    by_id = {}
+    for r in ai_rows or []:
+        if isinstance(r, list) and r and str(r[0]).strip() in ctx["by_rid"]:
+            by_id[str(r[0]).strip()] = [str(x).strip() for x in r]
+    rows = []
+    for rid, atom in ctx["by_rid"].items():
+        if not rid.startswith("RSK-"):
+            continue
+        row = (by_id.get(rid) or [rid])[:width]
+        row += [""] * (width - len(row))
+        row[0] = rid
+        if width > 1 and not row[1]:
+            row[1] = texts.get(rid) or atom["statement"]
+        rows.append(row)
+    return _table_blocks("risks", {**fmt, "id_prefix": None}, rows, ctx["lang"])
 
 
 def _build_changed(ctx, previous):
@@ -572,7 +653,7 @@ def _build_changed(ctx, previous):
             return prev
         text = str((written.get(rid) or {}).get("text", "")).strip() or atom["statement"]
         return _block(atom, rid, text, ctx["conflicts"], q.merge(
-            model_issues.get(rid), q.checks(text, atom["type"], lang) if atom["type"] != "question" else []))
+            model_issues.get(rid), q.checks(text, atom["type"], lang) if atom["type"] in CHECKED else []))
 
     groups = {t: [] for t in group_titles}
     for rid in (r for r in by_rid if r.startswith("FR-")):
@@ -597,8 +678,10 @@ def _build_changed(ctx, previous):
         if not b:
             return []
         return [r[1:] for r in b["rows"]] if ctx["formats"][key].get("id_prefix") else b["rows"]
-    tables = {k: rows_of(k) for k in ctx["formats"]}
+    tables = {k: rows_of(k) for k in ctx["formats"] if k != "risks"}
     return _assemble(ctx["spec"], lang, {"formats": ctx["formats"], "tables": tables,
+        "business": [block(r) for r in by_rid if r.startswith("BR-")],
+        "current": [block(r) for r in by_rid if r.startswith("AS-")],
         "purpose": text_of("purpose"), "context": text_of("context"), "assumptions": list_of("context"),
         "groups": list(groups.items()), "nfr": [block(r) for r in by_rid if r.startswith("NFR-")],
         "out_of_scope": list_of("out_of_scope"), "questions": [block(r) for r in by_rid if r.startswith("Q-")],
@@ -610,7 +693,8 @@ def staleness(store, project_id, version):
     if version is None:
         return None
     snap = version["snapshot"]
-    current = {a["id"]: a for a in store.list_atoms(project_id, status="accepted")}
+    types = version["content"].get("atom_types") or skills.DEFAULT_ATOM_TYPES
+    current = {a["id"]: a for a in store.list_atoms(project_id, status="accepted") if a["type"] in types}
     where = {b["atom_id"]: num for num, _key, b in req_blocks(version["content"])}
     changed = [aid for aid, s in snap.items() if aid in current and
                (current[aid]["statement"] != s["statement"] or current[aid]["type"] != s["type"])]

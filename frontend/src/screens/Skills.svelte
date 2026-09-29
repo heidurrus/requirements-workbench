@@ -215,7 +215,7 @@
   function addRule() {
     draft.meta.rules = [...(draft.meta.rules || []), { id: `rule_${(draft.meta.rules || []).length + 1}`, title: "", description: "" }];
   }
-  const typeClass = { functional: "fr", nfr: "nfr", question: "q" };
+  const typeClass = { functional: "fr", nfr: "nfr", question: "q", business: "br", risk: "rsk", current: "as" };
 
   // Editor tabs: what a stage has decides which appear.
   const tabs = $derived(!skill ? [] : [

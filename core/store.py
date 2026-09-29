@@ -23,7 +23,9 @@ from core.paths import app_data_dir
 
 SCHEMA_VERSION = 8
 BACKLOG_KINDS = {"epic", "story", "subtask", "nfr"}
-ATOM_TYPES = {"functional", "nfr", "question"}
+ATOM_TYPES = {"functional", "nfr", "question", "business", "risk", "current"}
+# Stable ID prefix per atom type: FR / NFR / Q, BR (business requirement), RSK (risk), AS (as-is: today's process).
+ATOM_PREFIX = {"functional": "FR", "nfr": "NFR", "question": "Q", "business": "BR", "risk": "RSK", "current": "AS"}
 ATOM_STATUSES = {"pending", "accepted", "rejected", "merged"}
 CONFLICT_ACTIONS = {"keep_a", "keep_b", "merge", "question"}
 REJECT_REASONS = {"not_requirement", "duplicate", "out_of_scope", "wrong", "other"}
@@ -180,7 +182,7 @@ class Store:
                             ("atoms", ("reject_reason TEXT", "priority TEXT", "q_state TEXT", "answer TEXT",
                                        "answer_source TEXT", "origin TEXT")),
                             ("doc_versions", ("status TEXT NOT NULL DEFAULT 'draft'", "status_at REAL", "status_by TEXT")),
-                            ("documents", ("kind TEXT", "deleted_at REAL")),
+                            ("documents", ("kind TEXT", "deleted_at REAL", "decompose INTEGER")),
                             ("segments", ("original_text TEXT",))):
             have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
             for col in cols:
@@ -1093,6 +1095,9 @@ class Store:
         return self.get_document(did)
 
     def delete_document(self, document_id):
+        doc = self.get_document(document_id)
+        if len(self.documents(doc["project_id"])) <= 1:
+            raise StoreError("a project keeps at least one document")
         with self._write() as c:
             now, by = self._stamp()
             c.execute("UPDATE documents SET deleted_at = ?, updated_at = ?, updated_by = ? WHERE id = ?", (now, now, by, document_id))
@@ -1111,8 +1116,10 @@ class Store:
         return d
 
     def update_document(self, document_id, **changes):
-        if set(changes) - {"title", "template", "kind"}:
-            raise StoreError("only the title, template and type can be changed")
+        if set(changes) - {"title", "template", "kind", "decompose"}:
+            raise StoreError("only the title, template, type and decomposition can be changed")
+        if "decompose" in changes and changes["decompose"] is not None:
+            changes["decompose"] = int(bool(changes["decompose"]))
         if "template" in changes and not re.match(r"^[a-z0-9][a-z0-9-]{1,62}$", str(changes["template"])):
             raise StoreError("template must be the name of an export skill")
         if "title" in changes:
@@ -1130,7 +1137,7 @@ class Store:
 
     def requirement_ids(self, project_id, atoms):
         """Stable IDs (FR-n, NFR-n, Q-n) per atom and type; numbers are never reused (BR-14)."""
-        prefix_of = {"functional": "FR", "nfr": "NFR", "question": "Q"}
+        prefix_of = ATOM_PREFIX
         out = {}
         with self._write() as c:
             for atom in atoms:
@@ -1385,7 +1392,7 @@ class Store:
                         used.add(o["id"])
         return match
 
-    def replace_backlog(self, project_id, tree, frd_version):
+    def replace_backlog(self, project_id, tree, frd_version, sources=None):
         """Regenerate from a new tree (FR-DEC-05). Pinned (BA-edited) items stay as they are; a new
         item that replaces an old one keeps its id, its Jira link and the BA's "in export" choice,
         so the next push updates the issue instead of creating a duplicate. Old items that were in
@@ -1448,7 +1455,7 @@ class Store:
                        if o.get("jira_key") and o["id"] not in alive]
             self._audit(c, "project", project_id, "backlog_build",
                         after={"frd_version": frd_version, "kept_pinned": len(pinned), "matched": len(kept),
-                               "orphaned_jira": [x["key"] for x in orphans]})
+                               "orphaned_jira": [x["key"] for x in orphans], "sources": sources})
         return {"matched": len(kept), "orphans": orphans}
 
     def jira_orphans(self, project_id):
