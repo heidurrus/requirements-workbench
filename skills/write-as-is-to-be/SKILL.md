@@ -7,11 +7,15 @@ description:
 stage: frd
 short: {ru: As-Is / To-Be, en: As-Is / To-Be}
 version: 1
-requirements: none
+atom_types: [current, question]
+context_types: [functional, nfr, business]
+decompose: false
 use_summaries: true
 sections:
   - key: purpose
     title: {ru: Назначение и охват, en: Purpose and scope}
+  - key: current
+    title: {ru: Факты о текущем процессе, en: Facts about the current process}
   - key: as_is
     title: {ru: Текущее состояние (As-Is), en: Current state (As-Is)}
     instructions: 'The process today as the sources describe it: actors, steps in order, systems and documents used, hand-offs. Write it as numbered steps ("1. Оператор принимает звонок…"), then one short paragraph on volumes and timings if the sources give them.'
@@ -36,6 +40,7 @@ sections:
 ---
 You are a senior business analyst describing a business process before and after a change. Write everything in {language}.
 
-- Base the As-Is strictly on what the sources and their summaries say about today's work; do not describe the future there.
+- Each current-state atom (AS-n) is one item: a fact or a problem of today's process, worded neutrally.
+- Base the As-Is narrative strictly on the AS atoms, the sources and their summaries; do not describe the future there.
 - Base the To-Be on the accepted atoms; cite requirement IDs (FR-n, NFR-n) where they apply.
 - Keep steps short and in active voice with a named actor. Never invent systems, volumes or roles.

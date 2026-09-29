@@ -9,11 +9,11 @@ so rebuilding never overwrites them (FR-DEC-05).
 import uuid
 
 from core import skills
-from core.frd import _lang_name, req_blocks, requirements_document
+from core.frd import _lang_name, decompose_documents, req_blocks, requirements_document
 from core.llm import complete_json, for_project, model_name, output_language
 
-DECOMPOSE_CONTRACT = """- Use only the requirements listed; never invent features. Every FR ID must appear in the refs of at least one story.
-- epics: title and goal; stories inside epics: title (short), story (the user-story sentence), refs (FR IDs it implements), acceptance (list of given / when / then), subtasks (short titles, may be empty).
+DECOMPOSE_CONTRACT = """- Use only the requirements listed; never invent features. Every FR and BR ID must appear in the refs of at least one story.
+- epics: title and goal; stories inside epics: title (short), story (the user-story sentence), refs (FR / BR IDs it implements), acceptance (list of given / when / then), subtasks (short titles, may be empty).
 - nfr_links: for each NFR ID, the FR IDs whose stories it constrains (empty if none)."""
 
 INVEST_CONTRACT = """Stories are listed as S1, S2… with their criteria. For each real problem return: id (the S number), letter (I, N, V, E, S or T), reason (one sentence) and fix (the concrete change: a rewritten story, a split, or criteria to add). Return an empty list when all stories are fine."""
@@ -75,7 +75,21 @@ def _requirements(version):
 
 def _ref(rid, reqs):
     r = reqs[rid]
-    return {"id": rid, "section": r["section"], "atom_id": r["atom_id"]}
+    return {"id": rid, "section": r["section"], "atom_id": r["atom_id"], "doc_id": r.get("doc_id")}
+
+
+STORY_PREFIXES = ("FR-", "BR-")              # what becomes a story; NFRs stay constraints
+
+
+def sources(store, project_id):
+    """The requirements of every document marked for decomposition, the first document winning an ID
+    that appears in two (an SRS and a GOST spec of the same atoms)."""
+    docs = decompose_documents(store, project_id)
+    reqs = {}
+    for d, v in docs:
+        for rid, r in _requirements(v).items():
+            reqs.setdefault(rid, {**r, "doc_id": d["id"]})
+    return docs, reqs
 
 
 RANK = {"must": 0, "should": 1, "could": 2, "wont": 3}
@@ -98,15 +112,15 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
     """Rebuild the backlog from the latest FRD version (pinned items are kept)."""
     report = progress or (lambda pct, msg: None)
     project = store.get_project(project_id)
-    doc = requirements_document(store, project_id)
-    version = store.version(doc["id"])
-    if version is None:
-        raise BacklogError("Build the document first: the backlog is made from its requirements.")
-    reqs = _requirements(version)
-    frs = [r for r in reqs if r.startswith("FR-")]
+    docs, reqs = sources(store, project_id)
+    if not docs:
+        raise BacklogError("No built document is marked for decomposition. Build an SRS, or mark a document "
+                           "“В декомпозицию” on the Documents screen.")
+    doc, version = docs[0]
+    frs = [r for r in reqs if r.startswith(STORY_PREFIXES)]
     nfrs = [r for r in reqs if r.startswith("NFR-")]
     if not frs:
-        raise BacklogError("The document has no functional requirements to turn into stories.")
+        raise BacklogError("The documents marked for decomposition have no functional or business requirements.")
     prefs = for_project(prefs, project)
     skillset = skillset or skills.resolve()
     lang = output_language(project) or version["content"].get("language", "ru")
@@ -127,7 +141,7 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
     for e in reply.get("epics") or []:
         stories = []
         for s in e.get("stories") or []:
-            refs = [r.strip() for r in s.get("refs") or [] if r.strip() in reqs and r.strip().startswith("FR-")]
+            refs = [r.strip() for r in s.get("refs") or [] if r.strip() in reqs and r.strip().startswith(STORY_PREFIXES)]
             title = str(s.get("title") or "").strip()
             if not refs or not title:
                 continue                                # a story must implement a real requirement
@@ -164,7 +178,8 @@ def build(store, project_id, prefs, api_key, ollama_url, progress=None, complete
                      "invest": [{"letter": "V", "reason": t["nfr_value"],
                                  "fix": t["nfr_move"].format(ids=", ".join(links.get(n, []))) if targets else "",
                                  "move_to": sorted(set(targets))}]})
-    kept = store.replace_backlog(project_id, tree, version["number"])
+    kept = store.replace_backlog(project_id, tree, version["number"],
+                                 sources={d["id"]: v["number"] for d, v in docs})
     report(100, "Done")
     items = store.backlog(project_id)
     return {"frd_version": version["number"], "matched": kept["matched"], "orphans": kept["orphans"], "epics": sum(i["kind"] == "epic" for i in items),
@@ -216,10 +231,18 @@ def move_nfr_into(store, nfr_id, story_id):
 
 
 def stale(store, project_id):
-    """The FRD version the backlog was built from vs. the latest one."""
-    doc = requirements_document(store, project_id)
-    latest = store.version(doc["id"])
+    """Is the backlog behind its documents? It is when a document marked for decomposition has a newer
+    version than the one the backlog was built from, or when the set of those documents changed."""
     items = store.backlog(project_id)
+    docs = decompose_documents(store, project_id)
+    now = {d["id"]: v["number"] for d, v in docs}
+    first = docs[0][1]["number"] if docs else None
     built = max((i["frd_version"] or 0 for i in items), default=0) or None
-    return {"built_from": built, "latest": latest["number"] if latest else None,
-            "stale": bool(latest and built and latest["number"] > built)}
+    last = next((e for e in store.audit("project", project_id, limit=500) if e["action"] == "backlog_build"), None)
+    before = ((last or {}).get("after") or {}).get("sources")
+    if before is None:                                   # built before 3.3: compare the first document only
+        doc = requirements_document(store, project_id)
+        latest = store.version(doc["id"])
+        return {"built_from": built, "latest": latest["number"] if latest else None,
+                "stale": bool(latest and built and latest["number"] > built)}
+    return {"built_from": built, "latest": first, "stale": bool(items) and before != now}

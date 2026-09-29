@@ -1344,9 +1344,11 @@ def _doc_summary(doc, project_id, lang):
     skill = frd.document_skill(doc, _skillset(project_id))
     latest = library.version(doc["id"])
     stale = frd.staleness(library, project_id, latest) if latest else None
+    placed, context = skills.doc_atom_types(skill.meta)
     return {**doc, "kind": skill.name, "type": skill.title_in(lang), "short": title_text_short(skill, lang),
             "version": latest["number"] if latest else None, "stale": bool(stale and stale["stale"]),
-            "status": latest.get("status") if latest else None}
+            "status": latest.get("status") if latest else None, "atom_types": placed, "context_types": context,
+            "decomposes": frd.decomposes(doc, skill), "decompose_default": frd.decomposes({}, skill)}
 
 
 def title_text_short(skill, lang):
@@ -1364,7 +1366,7 @@ def api_documents(project_id):
         return jsonify({"error": str(e)}), 404
     types = [{"name": sk.name, "title": sk.title_in(lang), "short": title_text_short(sk, lang),
               "description": sk.description_in(lang), "builtin": sk.builtin,
-              "requirements": sk.meta.get("requirements", "all") != "none"}
+              "atom_types": skills.doc_atom_types(sk.meta)[0], "decomposes": frd.decomposes({}, sk)}
              for sk in skills.all_skills() if sk.stage == "frd" and not sk.error]
     return jsonify({"documents": docs, "types": types,
                     "requirements_document": frd.requirements_document(library, project_id)["id"]})
@@ -1394,10 +1396,11 @@ def api_delete_document(document_id):
         doc = library.get_document(document_id)
     except StoreError as e:
         return jsonify({"error": str(e)}), 404
-    if library.documents(doc["project_id"])[0]["id"] == document_id:
-        return jsonify({"error": "The first document of a project can't be deleted; rename it or change its type."}), 400
-    library.delete_document(document_id)
-    return jsonify({"ok": True})
+    try:
+        library.delete_document(document_id)          # any document, as long as one stays
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "documents": [d["id"] for d in library.documents(doc["project_id"])]})
 
 
 @app.route("/api/projects/<project_id>/document")
@@ -1417,7 +1420,9 @@ def api_document(project_id):
         stale = None
     job = _building.get(doc["id"])
     doc = _doc_summary(doc, project_id, _lang())
+    relevant = sum(1 for a in library.list_atoms(project_id, status="accepted") if a["type"] in doc["atom_types"])
     return jsonify({"document": doc, "versions": library.versions(doc["id"]), "version": version, "stale": stale,
+                    "relevant": relevant,
                     "free_blocks": library.free_blocks(doc["id"]), "stats": stats,
                     "building": job if job and (jobs.get(job) or {}).get("status") == "processing" else None})
 
@@ -1663,7 +1668,11 @@ def _backlog_payload(project_id):
     items = library.backlog(project_id)
     count = lambda kind: sum(1 for i in items if i["kind"] == kind)  # noqa: E731
     job = _backlog_jobs.get(project_id)
-    return {"items": items, **backlog.stale(library, project_id),
+    lang = _lang()
+    skillset = _skillset(project_id)
+    srcs = [{"id": d["id"], "title": d["title"], "short": title_text_short(frd.document_skill(d, skillset), lang),
+             "version": v["number"]} for d, v in frd.decompose_documents(library, project_id)]
+    return {"items": items, **backlog.stale(library, project_id), "sources": srcs,
             "counts": {k: count(k) for k in ("epic", "story", "subtask", "nfr")},
             "included": sum(1 for i in items if i["included"]),
             "running": job if job and (jobs.get(job) or {}).get("status") == "processing" else None}

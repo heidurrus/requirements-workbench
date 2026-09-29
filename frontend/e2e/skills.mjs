@@ -84,6 +84,7 @@ await list.getByRole("button", { name: /Проверка качества/ }).cl
 await page.locator(".e-title h2", { hasText: "Проверка качества" }).waitFor();
 await page.getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
+await page.locator(".title-input").waitFor();                  // the editable copy is open
 await page.getByRole("tab", { name: "Правила" }).click();
 await page.getByRole("button", { name: "Добавить правило" }).click();
 await page.locator(".rule").last().getByPlaceholder("Название").fill("Нет роли");

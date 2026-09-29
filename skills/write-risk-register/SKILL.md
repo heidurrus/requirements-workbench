@@ -7,7 +7,9 @@ description:
 stage: frd
 short: {ru: Риски, en: Risks}
 version: 1
-requirements: none
+atom_types: [risk, question]
+context_types: [functional, nfr, business]
+decompose: false
 use_summaries: true
 sections:
   - key: purpose
@@ -15,10 +17,9 @@ sections:
   - key: risks
     title: {ru: Реестр рисков, en: Risk register}
     format: table
-    id_prefix: R
     columns: [{ru: ID, en: ID}, {ru: Риск, en: Risk}, {ru: Причина и признаки, en: Cause and triggers}, {ru: Вероятность, en: Probability}, {ru: Влияние, en: Impact}, {ru: Меры реагирования, en: Response}, {ru: Владелец, en: Owner}, {ru: Связанные требования, en: Related requirements}]
     heatmap: {probability: 3, impact: 4}
-    instructions: 'Every risk the sources and atoms reveal: unclear or conflicting requirements, dependencies on other teams or systems, deadlines, data quality, integrations, compliance, adoption. Probability and impact are exactly one of "низкая/средняя/высокая" or "low/medium/high" (impact: "низкое/среднее/высокое"). Response: avoid, reduce, transfer or accept, with a concrete action. Owner: a role or name from the sources, else "[уточнить]"/"[to confirm]". Related requirements: the FR/NFR/Q IDs involved, comma-separated.'
+    instructions: 'One row per risk atom (RSK-n). Rewrite each risk as a clear cause → event → effect statement. Typical areas: unclear or conflicting requirements, dependencies on other teams or systems, deadlines, data quality, integrations, compliance, adoption. Probability and impact are exactly one of "низкая/средняя/высокая" or "low/medium/high" (impact: "низкое/среднее/высокое"). Response: avoid, reduce, transfer or accept, with a concrete action. Owner: a role or name from the sources, else "[уточнить]"/"[to confirm]". Related requirements: the FR/NFR/Q IDs involved, comma-separated.'
   - key: questions
     title: {ru: Вопросы, снижающие неопределённость, en: Questions that reduce uncertainty}
 ---

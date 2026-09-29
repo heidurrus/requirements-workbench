@@ -42,11 +42,12 @@
     const kind = app.route.newKind;
     if (kind && docList && createdFor !== kind) { createdFor = kind; createDoc(kind); }
   });
-  async function deleteDoc() {
+  async function deleteDoc() { return deleteDocById(doc); }
+  async function deleteDocById(d) {
     exportMenu = false;
-    if (!confirm(t("doc.delete_q", { title: doc.title }))) return;
+    if (!confirm(t("doc.delete_q", { title: d.title }))) return;
     try {
-      await api(`/api/documents/${doc.id}`, { method: "DELETE" });
+      await api(`/api/documents/${d.id}`, { method: "DELETE" });
       await loadDocs();
       go("/document");
     } catch (err) { toast(err.message, { kind: "danger" }); }
@@ -61,7 +62,16 @@
       toast(t("doc.type_changed"));
     } catch (err) { toast(err.message, { kind: "danger" }); }
   }
-  const hasRequirements = $derived(docList?.types?.find(x => x.name === body?.document?.kind)?.requirements !== false);
+  const hasRequirements = $derived(!!body?.document?.decomposes);
+  const typeTag = { functional: "fr", nfr: "nfr", question: "q", business: "br", risk: "rsk", current: "as" };
+  async function setDecompose(on) {
+    try {
+      await api(`/api/documents/${doc.id}`, { method: "PATCH", body: { decompose: on } });
+      await loadDocs();
+      await load();
+      toast(on ? t("doc.decompose_on") : t("doc.decompose_off"));
+    } catch (err) { toast(err.message, { kind: "danger" }); }
+  }
 
   async function load() {
     const pid = app.currentProjectId;
@@ -375,7 +385,7 @@
                       <Icon name={ty.name === doc.kind ? "check" : "doc"} size={14} /> {ty.title}</button>
                   {/each}
                 {/if}
-                {#if docList && docList.documents[0]?.id !== doc.id}
+                {#if docList && docList.documents.length > 1}
                   <button role="menuitem" class="danger-item" onclick={deleteDoc}><Icon name="trash" size={14} /> {t("doc.delete")}</button>
                 {/if}
               </div>
@@ -391,11 +401,18 @@
   {#if docList}
     <div class="doc-tabs" role="tablist" aria-label={t("nav.document")}>
       {#each docList.documents as d (d.id)}
-        <button role="tab" aria-selected={d.id === docId} onclick={() => go(`/document/${d.id}`)} title={d.title}>
-          <b>{d.short}</b>{#if d.version}<span class="n">v{d.version}</span>{/if}
-          {#if d.stale}<span class="dot warn" title={t("nav.badge_stale")}></span>{/if}
-          {#if d.status === "approved"}<Icon name="check" size={12} />{/if}
-        </button>
+        <span class="tab-wrap" class:on={d.id === docId}>
+          <button role="tab" aria-selected={d.id === docId} onclick={() => go(`/document/${d.id}`)} title={d.title}>
+            <b>{d.short}</b>{#if d.version}<span class="n">v{d.version}</span>{/if}
+            {#if d.stale}<span class="dot warn" title={t("nav.badge_stale")}></span>{/if}
+            {#if d.status === "approved"}<Icon name="check" size={12} />{/if}
+            {#if d.decomposes}<span class="dec" title={t("doc.decomposes")}><Icon name="tree" size={11} /></span>{/if}
+          </button>
+          {#if docList.documents.length > 1}
+            <button class="tab-x" aria-label={t("doc.delete") + ": " + d.title} title={t("doc.delete")}
+                    onclick={() => deleteDocById(d)}><Icon name="close" size={11} /></button>
+          {/if}
+        </span>
       {/each}
       <div class="add-wrap">
         <button class="btn btn-ghost btn-sm" onclick={() => (addMenu = !addMenu)} aria-expanded={addMenu}><Icon name="plus" size={14} /> {t("doc.add")}</button>
@@ -410,6 +427,22 @@
           </div>
         {/if}
       </div>
+    </div>
+  {/if}
+
+  {#if doc && docList}
+    <div class="doc-meta">
+      <span class="t3">{t("doc.takes")}:</span>
+      {#each doc.atom_types || [] as ty (ty)}<span class="tag {typeTag[ty]}">{t("at.f." + ty)}</span>{/each}
+      {#if doc.context_types?.length}
+        <span class="t3">· {t("doc.reads")}:</span>
+        {#each doc.context_types as ty (ty)}<span class="tag outline">{t("at.f." + ty)}</span>{/each}
+      {/if}
+      <span class="spacer"></span>
+      <label class="check dec-switch" title={t("doc.decompose_hint")}>
+        <input type="checkbox" class="switch" checked={doc.decomposes} onchange={e => setDecompose(e.currentTarget.checked)} />
+        {t("doc.decompose")}{#if doc.decomposes !== doc.decompose_default}<span class="t3"> · {t("doc.changed_from_type")}</span>{/if}
+      </label>
     </div>
   {/if}
 
@@ -434,8 +467,14 @@
     {:else if !version}
       <div class="card empty narrow-card">
         <div class="glyph"><Icon name="doc" /></div>
-        <p class="panel-title">{t("doc.ready_title", { n: stats.accepted })}</p>
-        <p>{t("doc.ready")}</p>
+        {#if body.relevant}
+          <p class="panel-title">{t("doc.ready_title", { n: body.relevant })}</p>
+          <p>{t("doc.ready")}</p>
+        {:else}
+          <p class="panel-title">{t("doc.no_relevant_title")}</p>
+          <p>{t("doc.no_relevant", { types: (doc.atom_types || []).map(ty => t("at.f." + ty)).join(", ") })}</p>
+          <button class="btn btn-lg" onclick={() => go("/atoms")}>{t("doc.to_atoms")}</button>
+        {/if}
         {#if stats.pending}<p class="hint">{t("doc.pending", { n: stats.pending })}</p>{/if}
       </div>
     {:else}
@@ -750,6 +789,15 @@
   .doc-tabs .n { color: var(--text-3); font-size: var(--fs-12); }
   .doc-tabs .dot.warn { background: var(--warn); }
   .add-wrap { position: relative; margin-left: var(--sp-2); }
+  .tab-wrap { position: relative; display: inline-flex; align-items: center; }
+  .tab-x { width: 18px; height: 18px; border: 0; border-radius: 4px; background: none; color: var(--text-3); cursor: pointer;
+    display: grid; place-items: center; margin-left: -6px; opacity: 0; transition: opacity var(--t-fast); }
+  .tab-wrap:hover .tab-x, .tab-wrap.on .tab-x, .tab-x:focus-visible { opacity: 1; }
+  .tab-x:hover { background: var(--danger-bg); color: var(--danger); }
+  .dec { color: var(--accent); display: inline-grid; }
+  .doc-meta { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin: calc(-1 * var(--sp-3)) 0 var(--sp-6);
+    font-size: var(--fs-12); }
+  .dec-switch { min-height: 24px; font-size: var(--fs-13); }
   .menu.types { left: 0; right: auto; width: min(420px, 90vw); max-height: 70vh; overflow: auto; }
   .menu.types button { flex-direction: column; align-items: flex-start; gap: 2px; }
   .menu.types button span { font-size: var(--fs-12); line-height: 16px; }

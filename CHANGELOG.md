@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.3.0 (2026-09-29): Each document takes its own requirements
+
+- **Requirements go to the document that needs them.** Atoms have three more types, and extraction finds them:
+  - **бизнес** (business requirement, BR-n)
+  - **риск** (risk, RSK-n)
+  - **как есть** (a fact or problem of today's process, AS-n)
+
+  Each document type declares which atom types it holds and which it only reads for context:
+
+  | Document | Holds | Reads for context |
+  |---|---|---|
+  | SRS | FR, NFR, questions | BR |
+  | BRD | BR, NFR (constraints), questions | FR, risks |
+  | Vision & Scope | BR, FR, NFR, questions | risks |
+  | Risk register | risks: one table row per risk, nothing invented; questions | requirements |
+  | As-Is / To-Be | AS facts, questions | FR/NFR/BR, cited in the To-Be |
+
+  A change to a BR marks only the BRD out of date, not the SRS. The document's tab shows what it takes and reads.
+- **"В декомпозицию"** (into the backlog): a per-document switch; the type sets the default (SRS and GOST yes, the others no). The backlog is built from all documents marked this way and says which ones. Jira descriptions and the traceability matrix name each requirement's own document. Business requirements from a BRD marked for decomposition become stories too.
+- **Delete any document** with the × on its tab or from the "…" menu; a project keeps at least one.
+- The empty state of a document counts only the atoms it can use and says which types are missing.
+
 ## 3.2.0 (2026-09-29): Document types, skills in your language, wide screens
 
 - **Several documents per project, of real BA types.** "FRD" is gone as a concept. The **Документы** (documents) screen has one tab per document and **＋ Документ** to add one of these types:

@@ -5,6 +5,8 @@ description:
   ru: "Структура и стиль в духе ГОСТ 34.602 — «Общие сведения», «Назначение и цели», «Требования к системе» — официально-деловой стиль."
   en: "Structure and style after GOST 34.602: general information, purpose and goals, system requirements; formal style."
 stage: frd
+atom_types: [functional, nfr, question]
+decompose: true
 short: {ru: ТЗ ГОСТ 34, en: GOST 34 spec}
 version: 1
 sections:

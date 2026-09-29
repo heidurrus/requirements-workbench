@@ -31,8 +31,21 @@ DEFAULTS = {"global": "house-rules", "summary": "summarize-source", "extract": "
             "dedup": "find-duplicates", "frd": "write-frd", "quality": "quality-check",
             "fix": "fix-requirement", "export": "export-standard", "decompose": "split-into-stories",
             "invest": "invest-check"}
-FRD_KINDS = {"purpose", "context", "functional", "nfr", "out_of_scope", "questions"}
+FRD_KINDS = {"purpose", "context", "functional", "nfr", "out_of_scope", "questions", "business", "current", "risks"}
 FRD_REQUIRED = {"functional", "nfr", "questions"}            # requirements must always have a home
+ATOM_TYPES = ["functional", "nfr", "question", "business", "risk", "current"]
+# Where each atom type lives in a document: the section kind that places it.
+TYPE_SECTION = {"functional": "functional", "nfr": "nfr", "question": "questions", "business": "business",
+                "risk": "risks", "current": "current"}
+DEFAULT_ATOM_TYPES = ["functional", "nfr", "question"]
+
+
+def doc_atom_types(meta):
+    """Atom types a document type places (each gets exactly one block), and the ones it only reads."""
+    placed = meta.get("atom_types")
+    if placed is None:
+        placed = [] if meta.get("requirements") == "none" else list(DEFAULT_ATOM_TYPES)
+    return [t for t in placed if t in ATOM_TYPES], [t for t in meta.get("context_types") or [] if t in ATOM_TYPES]
 BUILTIN_RULES = ["not_measurable", "vague", "ambiguous", "compound", "untestable"]
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
@@ -140,7 +153,12 @@ def validate(meta, instructions, folder=None):
     if stage not in ("global", "export") and not instructions.strip():
         errors.append("the instructions must not be empty")
     if stage == "frd":
-        errors += _validate_sections(meta.get("sections"), meta.get("requirements", "all") != "none")
+        errors += _validate_sections(meta.get("sections"), doc_atom_types(meta)[0])
+        bad = [t for t in (meta.get("atom_types") or []) + (meta.get("context_types") or []) if t not in ATOM_TYPES]
+        if bad:
+            errors.append("atom_types / context_types: " + ", ".join(ATOM_TYPES))
+        if "decompose" in meta and not isinstance(meta["decompose"], bool):
+            errors.append("decompose: true or false")
     if stage == "quality":
         errors += _validate_quality(meta)
     if stage == "export":
@@ -154,7 +172,7 @@ def validate(meta, instructions, folder=None):
         raise SkillError("; ".join(errors))
 
 
-def _validate_sections(sections, place_all=True):
+def _validate_sections(sections, placed_types=None):
     if not isinstance(sections, list) or not sections:
         return ["sections: a list of document sections"]
     errors, keys = [], set()
@@ -177,13 +195,14 @@ def _validate_sections(sections, place_all=True):
             errors.append(f"section '{key}': format is text or table")
         if sec.get("format") == "table":
             cols = sec.get("columns")
-            if key in FRD_KINDS:
+            if key in FRD_KINDS and key != "risks":
                 errors.append(f"section '{key}': the built-in sections can't be tables")
             if not isinstance(cols, list) or len(cols) < 2 or any(not title_text(c, "ru").strip() for c in cols):
                 errors.append(f"section '{key}': a table needs at least two named columns")
-    missing = FRD_REQUIRED - keys if place_all else set()
+    placed_types = DEFAULT_ATOM_TYPES if placed_types is None else placed_types
+    missing = {TYPE_SECTION[t] for t in placed_types} - keys
     if missing:
-        errors.append("sections must include " + ", ".join(sorted(missing)) + " (requirements must have a place)")
+        errors.append("sections must include " + ", ".join(sorted(missing)) + " (every atom type the document places needs a section)")
     return errors
 
 
