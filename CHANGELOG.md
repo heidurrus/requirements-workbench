@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.3.3 (2026-09-29): Wide windows
+
+- **Source screen:** the summary panel was fixed at 340–500 px, and the transcript was capped at 72 characters per line inside a card that stretched across the window, which left a large empty area. From 1400 px up, the two panels now split the width about 55/45, and the transcript runs up to 100 characters per line.
+- **Atoms screen:** from 1800 px up, the inspector grows with the window instead of staying at 380–460 px.
+
 ## 3.3.2 (2026-09-29): Skill download button
 
 - The skill header's download control was a bare icon next to the "Make a copy" button, with no label. It is now a labelled "Export .zip" button, and its tooltip says what the file contains.

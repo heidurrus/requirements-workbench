@@ -357,9 +357,8 @@
     position: sticky; top: calc(var(--toolbar) + var(--sp-2)); z-index: 10; }
   .player .icon-btn { border-radius: 50%; width: 32px; height: 32px; }
   .scrub { flex: 1; min-width: 80px; accent-color: var(--accent); }
-  .layout { display: grid; gap: var(--sp-8); grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
-  @media (min-width: 1600px) { .layout { grid-template-columns: minmax(0, 1fr) 420px; } }
-  @media (min-width: 2000px) { .layout { grid-template-columns: minmax(0, 1fr) 500px; } }
+  .layout { display: grid; gap: var(--sp-8); grid-template-columns: minmax(0, 1fr) 380px; align-items: start; }
+  @media (min-width: 1400px) { .layout { grid-template-columns: minmax(0, 1.25fr) minmax(400px, 1fr); } }
   /* Sticky, but never taller than the window: a long summary scrolls inside its column. */
   .side-col { position: sticky; top: calc(var(--toolbar) + var(--sp-4));
     max-height: calc(100vh - var(--toolbar) - var(--sp-8)); overflow-y: auto; overscroll-behavior: contain;
@@ -399,6 +398,7 @@
   .time:disabled { cursor: default; }
   .seg-text { min-width: 0; grid-column: 3; }
   .prose { max-width: 72ch; margin: 0; }
+  @media (min-width: 1400px) { .prose { max-width: 100ch; } }
   .para { font-size: var(--fs-15); line-height: 24px; margin: 0 0 var(--sp-5); scroll-margin: 120px; border-radius: var(--r-sm); }
   .para:last-child { margin-bottom: 0; }
   .err-banner { align-items: center; flex-wrap: wrap; }

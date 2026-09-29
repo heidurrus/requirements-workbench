@@ -901,7 +901,7 @@
     .at-layout.has-insp { grid-template-columns: minmax(0, 1fr) 380px; }
     .at-layout.has-insp .insp-col { display: block; }
   }
-  @media (min-width: 2000px) { .at-layout.has-insp { grid-template-columns: minmax(0, 1fr) 460px; } }
+  @media (min-width: 1800px) { .at-layout.has-insp { grid-template-columns: minmax(0, 1.6fr) minmax(460px, 1fr); } }
   .tabs { display: flex; gap: var(--sp-7); border-bottom: 1px solid var(--line); margin: calc(-1 * var(--sp-2)) 0 var(--sp-6); }
   .tabs button { border: 0; background: transparent; padding: 8px 0; font-weight: 500; color: var(--text-2); border-bottom: 2px solid transparent;
     margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
