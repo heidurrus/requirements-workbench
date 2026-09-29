@@ -38,9 +38,9 @@ await page.goto(base + "/#/document");
 await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();
 await sub.filter({ hasText: "версия 1" }).waitFor({ timeout: 15000 });
 await page.goto(base + "/#/backlog");
-await page.getByRole("button", { name: "Собрать бэклог" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Собрать бэклог" }).click();
 await sub.filter({ hasText: "историй: 2" }).waitFor({ timeout: 15000 });
-await page.getByRole("button", { name: /К выгрузке в Jira/ }).click();
+await page.locator(".screen-head").getByRole("button", { name: /К выгрузке в Jira/ }).click();
 step("backlog → export screen");
 
 // Connect: the sign-in opens in a browser tab, the app notices.
@@ -67,7 +67,7 @@ if (shots) await page.screenshot({ path: join(shots, "export.png"), fullPage: tr
 step("preview: create 3, skip 5 (sub-tasks and NFR unticked)");
 
 // Push, with the explicit confirmation naming the project.
-await page.getByRole("button", { name: "Выгрузить 3 задачи" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Выгрузить 3 задачи" }).click();
 await page.getByText("Создать или обновить 3 задачи в проекте SBX (sandbox.atlassian.net)?").waitFor();
 await page.getByRole("button", { name: "Да, выгрузить в SBX" }).click();
 await page.getByText("Готово: 3 задачи").waitFor({ timeout: 15000 });
