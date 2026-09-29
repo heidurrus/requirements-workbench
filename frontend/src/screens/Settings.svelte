@@ -1,5 +1,7 @@
 <script>
-  import Block from "../components/Block.svelte";
+  import Screen from "../components/Screen.svelte";
+  import Panes from "../components/Panes.svelte";
+  import AsrOptions from "../components/AsrOptions.svelte";
   import LocalModel from "../components/LocalModel.svelte";
   import { api } from "../lib/api.js";
   import Icon from "../components/Icon.svelte";
@@ -73,23 +75,36 @@
     [t("env.ollama"), app.health.ollama ? t("env.running") : t("env.stopped"), app.health.ollama],
     [t("env.sysaudio"), app.health.system_audio_capture ? t("env.supported") : t("env.unsupported"), app.health.system_audio_capture],
   ] : []);
+  const CATS = ["project", "ai", "asr", "interface", "env"];
+  let cat = $state("project");
+  function show(id) {
+    cat = id;
+    document.getElementById("set-" + id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  const catIcon = { project: "cube", ai: "spark", asr: "wave", interface: "sun", env: "info" };
+  const back = $derived(app.returnTo && app.returnTo.name !== "settings" ? app.returnTo : null);
+  const backName = $derived(back ? t("nav." + ({ backlog: "decomposition", transcript: "sources", home: "overview" }[back.name] || back.name)) : "");
 </script>
 
-<div class="screen-inner narrow">
-  <header class="screen-head">
-    {#if app.returnTo}
-      <button class="btn btn-ghost back-to" onclick={() => { const r = app.returnTo; app.returnTo = null; go(r.hash); }}>
-        <Icon name="back" size={14} /> {t("set.back_to", { screen: t("nav." + ({ backlog: "decomposition", transcript: "transcript" }[app.returnTo.name] || app.returnTo.name)) })}</button>
-    {/if}
-    <div>
-      <h1 class="screen-title">{t("set.title")}</h1>
-      <p class="screen-sub">{t("set.sub")}</p>
-    </div>
-  </header>
-
+<Screen title={t("set.title")} sub={t("set.sub")} crumb={backName} crumbPath={back?.hash || ""}>
+  <Panes>
+    {#snippet outline()}
+      <div class="pane-body scroll">
+        <nav class="cats" aria-label={t("set.title")}>
+          {#each CATS as c (c)}
+            {#if c !== "project" || currentProject()}
+              <button class="cat" aria-current={cat === c} onclick={() => show(c)}><Icon name={catIcon[c]} /> <span class="trunc">{t("set.cat." + c)}</span></button>
+            {/if}
+          {/each}
+        </nav>
+      </div>
+    {/snippet}
+    <div class="pane-body scroll">
+    <div class="form">
   {#if currentProject()}
-    <h2 class="group-t">{t("set.project")}</h2>
-    <section class="card">
+    <section class="form-group" id="set-project">
+    <h3>{t("set.cat.project")}</h3>
+    <section class="form-card">
       <div class="form-row">
         <label class="l" for="pname"><b>{t("set.project_name")}</b></label>
         <div class="c grow-c">
@@ -153,11 +168,13 @@
         </div>
       {/if}
     </section>
+    </section>
   {/if}
 
   {#if s}
-    <h2 class="group-t">{t("set.ai")}</h2>
-    <section class="card">
+    <section class="form-group" id="set-ai">
+    <h3>{t("set.cat.ai")}</h3>
+    <section class="form-card">
       <div class="form-row">
         <span class="l"><b>{t("set.provider")}</b><span>{t("set.provider_hint." + s.llm_provider)}</span></span>
         <div class="c">
@@ -208,9 +225,12 @@
         <div class="form-row col"><p class="hint">{t("set.ollama_note")}</p></div>
       {/if}
     </section>
+    </section>
 
-    <h2 class="group-t">{t("set.hf")}</h2>
-    <section class="card">
+    <section class="form-group" id="set-asr">
+    <h3>{t("set.cat.asr")}</h3>
+    <section class="form-card">
+      <div class="form-row col"><AsrOptions /></div>
       <div class="form-row col">
         <label class="l" for="hf"><b>{t("set.hf_token")}</b>
           <span class:ok={s.hf_token_set} class:bad={!s.hf_token_set}>{s.hf_token_set ? t("set.hf_set") : t("set.hf_unset")}</span></label>
@@ -231,10 +251,12 @@
         </div>
       </div>
     </section>
+    </section>
   {/if}
 
-  <h2 class="group-t">{t("set.interface")}</h2>
-  <section class="card">
+  <section class="form-group" id="set-interface">
+  <h3>{t("set.cat.interface")}</h3>
+  <section class="form-card">
     <div class="form-row">
       <span class="l"><b>{t("set.language")}</b></span>
       <div class="c">
@@ -256,42 +278,55 @@
       </div>
     </div>
   </section>
+  </section>
 
-  <div class="env-block">
-    <Block id="set-env" title={t("set.env")} open={false}>
-      <div class="env">
-        {#each env as [name, value, ok] (name)}
-          <div class="env-cell"><span class="label">{name}</span><span class:ok class:bad={!ok}>{value}</span></div>
-        {/each}
-      </div>
-    </Block>
-  </div>
-</div>
+  <section class="form-group" id="set-env">
+    <h3>{t("set.cat.env")}</h3>
+    <section class="form-card">
+      {#each env as [name, value, ok] (name)}
+        <div class="form-row"><span class="l"><b>{name}</b></span>
+          <span class="c"><span class="status" class:ok class:danger={!ok}><Icon name={ok ? "check" : "warn"} size={12} /> {value}</span></span></div>
+      {/each}
+      {#if app.health?.version}
+        <div class="form-row"><span class="l"><b>{t("app.name")}</b></span><span class="c t2 num">v{app.health.version}</span></div>
+      {/if}
+    </section>
+  </section>
+    </div>
+    </div>
+  </Panes>
+</Screen>
 
 <style>
-  .screen-head > .back-to { flex: none; margin-left: -8px; }
-  .group-t { font-size: var(--fs-12); font-weight: 600; color: var(--text-2); margin: var(--sp-8) 0 var(--sp-4) var(--sp-5); }
-  .group-t:first-of-type { margin-top: var(--sp-4); }
-  .form-row { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-5) var(--sp-6); min-height: 48px; }
-  .form-row + .form-row { border-top: 1px solid var(--line); }
+  .cats { padding: var(--s-5) var(--s-4); display: grid; gap: 1px; }
+  .cat { display: flex; align-items: center; gap: var(--s-4); height: var(--h-row); padding: 0 var(--s-4); border: 0; background: none; border-radius: var(--r-sm);
+    text-align: left; cursor: pointer; color: var(--c-text); }
+  .cat :global(svg) { color: var(--c-text-2); }
+  .cat:hover { background: var(--c-fill-1); }
+  .cat[aria-current="true"] { background: var(--c-fill-2); font-weight: var(--w-semibold); }
+  .cat[aria-current="true"] :global(svg) { color: var(--c-accent-text); }
+  .form { padding: var(--s-8) var(--gutter) var(--s-11); display: grid; gap: var(--s-9); grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+    align-items: start; max-width: 1800px; }
+  .form-group { max-width: 880px; scroll-margin-top: var(--s-6); min-width: 0; }
+  .form-group h3 { font: var(--w-semibold) var(--t-title-3)/var(--lh-title-3) var(--font-display); margin-bottom: var(--s-4); }
+  .form-card { border-radius: var(--r-lg); background: var(--c-pane); box-shadow: inset 0 0 0 1px var(--c-line); }
+  .form-row { display: flex; align-items: center; gap: var(--s-8); padding: var(--s-5) var(--s-6); min-height: 52px; }
+  .form-row + .form-row { border-top: 1px solid var(--c-line); }
   label.form-row { cursor: pointer; }
-  .form-row.col { flex-direction: column; align-items: stretch; gap: var(--sp-4); }
+  .form-row.col { flex-direction: column; align-items: stretch; gap: var(--s-4); }
   .l { flex: 1; min-width: 0; }
-  .l b { display: block; font-weight: 500; }
-  .l span { display: block; font-size: var(--fs-12); color: var(--text-3); margin-top: 1px; line-height: 16px; }
-  .c { flex: none; display: flex; gap: var(--sp-4); align-items: center; max-width: 60%; }
+  .l b { display: block; font-weight: var(--w-medium); }
+  .l span { display: block; font-size: var(--t-foot); color: var(--c-text-3); margin-top: 1px; line-height: var(--lh-foot); max-width: 64ch; }
+  .c { flex: none; display: flex; gap: var(--s-4); align-items: center; max-width: 60%; }
   .grow-c { flex: 1; max-width: 320px; }
   .c .select, .c .input { width: auto; min-width: 200px; max-width: 100%; }
   .grow-c .input { width: 100%; }
-  .l .ok, .ok { color: var(--ok) !important; }
-  .l .bad, .bad { color: var(--danger) !important; }
-  .archived-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
-  .hf-note ul { margin: var(--sp-2) 0 0; padding-left: var(--sp-6); }
-  .env-block { margin-top: var(--sp-8); }
-  .env { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .env-cell { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-4) var(--sp-5); background: var(--surface-2); border-radius: var(--r-md); }
-  @media (max-width: 720px) {
-    .form-row:not(.col) { flex-direction: column; align-items: stretch; gap: var(--sp-4); }
+  .l .ok, .ok { color: var(--c-ok) !important; }
+  .l .bad, .bad { color: var(--c-danger) !important; }
+  .archived-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); }
+  .hf-note ul { margin: var(--s-2) 0 0; padding-left: var(--s-6); }
+  @container ws (max-width: 760px) {
+    .form-row:not(.col) { flex-direction: column; align-items: stretch; gap: var(--s-4); }
     .c { max-width: none; }
   }
 </style>

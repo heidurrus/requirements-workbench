@@ -1115,6 +1115,12 @@ const ru = {
   "sk.u.doc_type": "Тип документа",
   "sk.files": "Файлы скилла",
   "sk.rule.remove": "Убрать правило",
+  "set.cat.project": "Проект",
+  "set.cat.ai": "ИИ для требований",
+  "set.cat.asr": "Запись и распознавание",
+  "set.cat.interface": "Интерфейс",
+  "set.cat.env": "Система",
+  "llm.remove": "Удалить модель",
 };
 
 const en = {
@@ -2231,6 +2237,12 @@ const en = {
   "sk.u.doc_type": "Document type",
   "sk.files": "The skill's files",
   "sk.rule.remove": "Remove the rule",
+  "set.cat.project": "Project",
+  "set.cat.ai": "AI for requirements",
+  "set.cat.asr": "Recording and transcription",
+  "set.cat.interface": "Interface",
+  "set.cat.env": "System",
+  "llm.remove": "Delete the model",
 };
 
 export const DICTS = { ru, en };

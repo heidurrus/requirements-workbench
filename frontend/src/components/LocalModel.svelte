@@ -80,11 +80,10 @@
               <button class="btn btn-sm btn-ghost" onclick={cancel}>{t("at.cancel")}</button>
             {:else if m.installed}
               <span class="tag ok">{st.running === m.id ? t("llm.running") : t("llm.installed")}</span>
-              <button class="btn btn-ghost btn-sm icon-btn" title={t("sources.delete")} aria-label={t("sources.delete")}
-                      onclick={() => remove(m)}><Icon name="trash" /></button>
+              <button class="btn sm ghost danger" onclick={() => remove(m)}>{t("llm.remove")}</button>
             {:else}
               <button class="btn btn-sm" class:btn-primary={m.recommended} disabled={!!dl} onclick={() => download(m.id)}>
-                <Icon name="download" /> {t("llm.download", { size: gb(m.size) })}
+                <Icon name="download" size={14} /> {t("llm.download", { size: gb(m.size) })}
               </button>
             {/if}
           </div>

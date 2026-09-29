@@ -91,12 +91,8 @@
         <Skills />
       {:else if app.route.name === "transcript"}
         {#key app.route.id}<Transcript id={app.route.id} autoSummarize={app.route.summarize} focusSeg={app.route.seg} />{/key}
-      {:else}
-        <div class="legacy scroll">
-          {#if app.route.name === "settings"}
-            <Settings />
-          {/if}
-        </div>
+      {:else if app.route.name === "settings"}
+        <Settings />
       {/if}
     </main>
   </div>
