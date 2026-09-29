@@ -222,7 +222,7 @@ const ru = {
   "at.conflict_with": "Конфликт: {text}",
   "at.none_title": "Требований пока нет",
   "at.none": "Откройте источник и нажмите «Извлечь требования». ИИ найдёт требования и приложит к каждому точную цитату.",
-  "at.none_filtered": "Под этот фильтр ничего не попало.",
+  "at.none_filtered": "Под эти фильтры ничего не попало",
   "at.all_done": "Все требования разобраны. Можно собирать документ",
   "at.sources": "Источники",
   "at.sources_meta": ["{n} готов к извлечению", "{n} готовы к извлечению", "{n} готовы к извлечению"],
@@ -1121,6 +1121,11 @@ const ru = {
   "set.cat.interface": "Интерфейс",
   "set.cat.env": "Система",
   "llm.remove": "Удалить модель",
+  "at.nf.source": "Источник: {title}",
+  "at.nf.type": "Тип: {type}",
+  "at.nf.search": "Поиск: «{q}»",
+  "at.nf.status": "Состояние: {status}",
+  "at.show_all_n": ["Показать все: {n} требование", "Показать все: {n} требования", "Показать все: {n} требований"],
 };
 
 const en = {
@@ -1344,7 +1349,7 @@ const en = {
   "at.conflict_with": "Conflict: {text}",
   "at.none_title": "No requirements yet",
   "at.none": "Open a source and press “Extract requirements”. The AI finds the requirements and attaches an exact quote to each.",
-  "at.none_filtered": "Nothing matches this filter.",
+  "at.none_filtered": "Nothing matches these filters",
   "at.all_done": "All requirements are reviewed. The document can be built",
   "at.sources": "Sources",
   "at.sources_meta": ["{n} ready to extract", "{n} ready to extract"],
@@ -2243,6 +2248,11 @@ const en = {
   "set.cat.interface": "Interface",
   "set.cat.env": "System",
   "llm.remove": "Delete the model",
+  "at.nf.source": "Source: {title}",
+  "at.nf.type": "Type: {type}",
+  "at.nf.search": "Search: “{q}”",
+  "at.nf.status": "Status: {status}",
+  "at.show_all_n": ["Show all: {n} requirement", "Show all: {n} requirements"],
 };
 
 export const DICTS = { ru, en };

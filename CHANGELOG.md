@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0.1 (2026-09-30): Filter counts match the list
+
+- **Requirements:** the counts on "На ревью / Принятые / Отклонённые / Конфликты / Все" and in the type menu ignored the source filter and the search, so a tab could say 77 and show nothing. Each count is now the number of rows that choice shows.
+- When nothing matches, the empty state names the filters that are on (source, type, search, status) and one button clears them all.
+
 ## 4.0.0 (2026-09-29): New interface
 
 The whole interface is rebuilt from a new design (`docs/design/redesign.md`, prototype in `docs/design/prototype/`). The pipeline, the data and the API are the same.
