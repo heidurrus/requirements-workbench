@@ -2,7 +2,7 @@
 name: extract-requirements
 title: {ru: "Извлечение требований", en: "Requirement extraction"}
 description:
-  ru: "Находит в источнике атомы — бизнес- и функциональные требования, нефункциональные, риски, факты о текущем процессе и вопросы; поручения откладывает."
+  ru: "Находит в источнике бизнес- и функциональные требования, нефункциональные, риски, факты о текущем процессе и вопросы; поручения откладывает."
   en: "Finds atoms in a source: business and functional requirements, NFRs, risks, facts about today's process and questions; sets action items aside."
 stage: extract
 version: 3

@@ -36,7 +36,7 @@ from core.realtime import realtime
 from core.recorder import (SAMPLE_RATE as REC_SAMPLE_RATE, DualChannelRecorder, mix_wavs, speech_bounds,
                            wav_duration, wav_peak)
 from core.security import install_local_only_guard
-from core.store import Store, StoreError
+from core.store import ATOM_PREFIX, Store, StoreError
 from core.emails import EMAIL_EXTENSIONS, parse_email_file
 from core.transcripts import (MAX_BYTES as MAX_TRANSCRIPT_BYTES, TranscriptError,
                               is_transcript_file, parse_transcript)
@@ -1244,6 +1244,9 @@ def api_atoms(project_id):
     atoms = library.list_atoms(project_id, status=a.get("status"), type=a.get("type"), source_id=a.get("source_id"))
     if a.get("status") is None:
         atoms = [x for x in atoms if x["status"] != "merged"]
+    known = library.known_requirement_ids(project_id)
+    for x in atoms:                       # the ID the atom has in documents, if it has been given one
+        x["rid"] = known.get(x["id"], {}).get(ATOM_PREFIX[x["type"]])
     return jsonify({"atoms": atoms, "stats": library.atom_stats(project_id)})
 
 

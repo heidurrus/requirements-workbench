@@ -15,7 +15,7 @@ from xml.sax.saxutils import escape
 from core.frd import req_blocks, requirements_document
 
 T = {
-    "ru": {"id": "ID", "section": "Раздел", "req": "Требование", "type": "Тип", "status": "Статус атома",
+    "ru": {"id": "ID", "section": "Раздел", "req": "Требование", "type": "Тип", "status": "Статус требования",
            "priority": "Приоритет", "quote": "Цитата", "source": "Источник", "when": "Время", "speaker": "Спикер",
            "stories": "Истории", "jira": "Jira", "doc": "Документ", "fr": "функц.", "nfr": "нефункц.", "question": "вопрос",
            "hello": "Добрый день!", "intro": "По итогам наших встреч осталось несколько вопросов. Буду благодарен за ответы.",

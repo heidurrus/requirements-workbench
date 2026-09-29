@@ -23,7 +23,9 @@ export function parseRoute(hash = location.hash) {
                                     atom: parts[1] === "atom" ? parts[2] : null };
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "transcript") return { name: "transcript", id: null };
-  return { name: "sources" };
+  if (parts[0] === "overview") return { name: "overview" };
+  if (parts[0] === "sources") return { name: "sources" };
+  return { name: "home" };            // resolved by the app: the overview, or Sources for an empty project
 }
 
 export const app = $state({
@@ -33,6 +35,10 @@ export const app = $state({
   archivedProjects: [],
   currentProjectId: null,
   sources: [],
+  documents: [],            // the project's documents, for the sidebar
+  inspector: readPref("inspector", {}),     // screen → false when the BA closed its inspector
+  inspectorOverlay: false,  // narrow windows: the inspector slides over the content
+  palette: false,           // ⌘K
   lastSourceId: readPref("lastSource", null),
   device: { cuda: false, mps: false, gpu_name: null, desktop: false },
   health: null,
@@ -46,6 +52,7 @@ export const app = $state({
   jobs: {},
   // source id → { jobId, progress, message } for atom extraction
   extracting: {},
+  work: {},                 // other long jobs shown in the sidebar: key → { title, progress, message, path }
   atomsVersion: 0,
   returnTo: null,           // {hash, name}: where Settings was opened from          // bumped when atoms change elsewhere, so open screens reload
 });
@@ -63,7 +70,7 @@ window.addEventListener("hashchange", e => {
     app.returnTo = { hash: new URL(e.oldURL).hash.slice(1) || "/sources", name: prev };
   }
   app.route = parseRoute();
-  if (app.route.name !== prev) app.toasts = [];      // toasts belong to the screen that raised them
+  if (app.route.name !== prev) { app.toasts = []; app.inspectorOverlay = false; }   // toasts belong to the screen that raised them
   loadStatus();
 });
 
@@ -85,10 +92,36 @@ let statusTimer = null;
 export function loadStatus() {
   clearTimeout(statusTimer);            // coalesce bursts of changes
   statusTimer = setTimeout(async () => {
-    if (!app.currentProjectId) return;
-    try { app.status = await api(`/api/projects/${app.currentProjectId}/status`); }
-    catch (_) { /* badges are optional */ }
+    const pid = app.currentProjectId;
+    if (!pid) return;
+    try {
+      const [status, docs] = await Promise.all([api(`/api/projects/${pid}/status`),
+                                                api(`/api/projects/${pid}/documents`).catch(() => null)]);
+      if (pid !== app.currentProjectId) return;
+      app.status = status;
+      if (docs) app.documents = docs.documents;
+    } catch (_) { /* the sidebar state is optional */ }
   }, 150);
+}
+
+// Sidebar: a 60-px rail below 1180 px of window, unless the BA chose otherwise (⌘\).
+const narrowWindow = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 1179px)") : null;
+const win = $state({ narrow: narrowWindow ? narrowWindow.matches : false });
+narrowWindow && narrowWindow.addEventListener("change", e => { win.narrow = e.matches; });
+export function sidebarIsRail() {
+  return app.sidebarCollapsed === null ? win.narrow : app.sidebarCollapsed;
+}
+export function toggleSidebar() {
+  app.sidebarCollapsed = !sidebarIsRail();
+  writePref("sidebarCollapsed", app.sidebarCollapsed);
+}
+export function inspectorOn(screen) { return app.inspector[screen] !== false; }
+export function toggleInspector(screen) {
+  // Narrow workspace (< 900 px): the inspector is an overlay, so the button opens and closes that.
+  const ws = document.querySelector(".workspace");
+  if (ws && ws.clientWidth < 900) { app.inspectorOverlay = !app.inspectorOverlay; return; }
+  app.inspector = { ...app.inspector, [screen]: !inspectorOn(screen) };
+  writePref("inspector", app.inspector);
 }
 
 export function setLang(lang) {
@@ -120,10 +153,11 @@ export async function switchProject(id) {
   await api(`/api/projects/${id}/current`, { method: "POST" });
   app.currentProjectId = id;
   app.sources = [];
+  app.documents = [];
   await loadSources();
   app.status = null;
   loadStatus();
-  go("/sources");
+  go(app.sources.length ? "/overview" : "/sources");
 }
 
 let toastSeq = 0;

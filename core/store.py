@@ -472,14 +472,14 @@ class Store:
     def atom_marks(self, source_id):
         """Which lines of a source became atoms (FR-TR-03): segment idx → [{atom_id, status, type}]."""
         with self._conn() as c:
-            rows = c.execute("""SELECT e.segment_idx, a.id, a.status, a.type, a.statement FROM evidence e JOIN atoms a ON a.id = e.atom_id
+            rows = c.execute("""SELECT e.segment_idx, e.quote, a.id, a.status, a.type, a.statement FROM evidence e JOIN atoms a ON a.id = e.atom_id
                                 WHERE e.source_id = ? AND a.deleted_at IS NULL AND a.status != 'merged'""", (source_id,)).fetchall()
         out = {}
         for r in rows:
             if r["segment_idx"] is None:
                 continue
             out.setdefault(r["segment_idx"], []).append({"atom_id": r["id"], "status": r["status"], "type": r["type"],
-                                                         "statement": r["statement"]})
+                                                         "statement": r["statement"], "quote": r["quote"]})
         return out
 
     def fail_source(self, source_id, error):
@@ -1136,6 +1136,14 @@ class Store:
                       (*changes.values(), now, by, document_id))
             self._audit(c, "document", document_id, "edit", {k: before[k] for k in changes}, changes)
         return self.get_document(document_id)
+
+    def known_requirement_ids(self, project_id):
+        """IDs already given to atoms ({atom_id: {prefix: "FR-3"}}); gives out nothing new, so it is safe for lists."""
+        out = {}
+        with self._conn() as c:
+            for r in c.execute("SELECT atom_id, prefix, number FROM requirement_ids WHERE project_id = ?", (project_id,)):
+                out.setdefault(r["atom_id"], {})[r["prefix"]] = f"{r['prefix']}-{r['number']}"
+        return out
 
     def requirement_ids(self, project_id, atoms):
         """Stable IDs (FR-n, NFR-n, Q-n) per atom and type; numbers are never reused (BR-14)."""

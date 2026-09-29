@@ -26,14 +26,13 @@ const list = page.locator(".list");
 // A source with accepted atoms, so "try" has something to work with.
 await page.goto(base + "/#/sources");
 await page.locator('input[type=file]').setInputFiles(vttPath);
-await page.getByRole("button", { name: "Импортировать и суммировать" }).click();
 await page.getByText("Оператор видит историю заказов").waitFor();
 await page.getByRole("button", { name: "Извлечь требования" }).click();
-await page.getByRole("button", { name: "2 атома" }).waitFor({ timeout: 15000 });
+await page.getByRole("button", { name: "Требования из источника · 2" }).waitFor({ timeout: 15000 });
 await page.goto(base + "/#/atoms");
 await page.locator(".screen-sub", { hasText: "на ревью" }).waitFor();
 for (let i = 0; i < 2; i++) await page.keyboard.press("a");
-await page.getByText("Все атомы разобраны").waitFor();
+await page.getByText("Все требования разобраны").waitFor();
 
 await page.locator(".rail").getByRole("button", { name: "Скиллы" }).click();
 await list.getByText("Типы документов").waitFor();
@@ -42,7 +41,7 @@ await page.locator(".e-title h2", { hasText: "SRS" }).waitFor();
 await page.getByText("Встроенный скилл нельзя менять").waitFor();
 step("skills listed by stage; built-in is read-only");
 
-await page.getByRole("button", { name: "Сделать копию" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
 await page.locator(".title-input").fill("SRS для банка");
 await page.locator("#sk-instr").fill("Пиши сухо и коротко. Язык: {language}.");
@@ -57,11 +56,12 @@ await page.getByText("Сохранено (версия 2)").waitFor();
 await list.getByRole("button", { name: /SRS для банка/ }).waitFor();
 step("copy, edit instructions and sections, save with ⌘S");
 
+await page.getByRole("tab", { name: "Использование" }).click();
 await page.getByRole("button", { name: "Создать документ этого типа" }).waitFor();
 step("a document type is used by creating a document of that type");
 
 await page.getByRole("tab", { name: /История/ }).click();
-await page.getByRole("button", { name: "Показать" }).first().click();
+await page.locator(".history").getByRole("button", { name: "Показать" }).first().click();
 await page.locator(".h-text").getByText("You are a senior business analyst").waitFor();
 step("history shows the previous version");
 
@@ -82,21 +82,21 @@ step("export .zip and import it back");
 // Quality: your own rule.
 await list.getByRole("button", { name: /Проверка качества/ }).click();
 await page.locator(".e-title h2", { hasText: "Проверка качества" }).waitFor();
-await page.getByRole("button", { name: "Сделать копию" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
 await page.locator(".title-input").waitFor();                  // the editable copy is open
 await page.getByRole("tab", { name: "Правила" }).click();
 await page.getByRole("button", { name: "Добавить правило" }).click();
 await page.locator(".rule").last().getByPlaceholder("Название").fill("Нет роли");
 await page.locator(".rule").last().getByPlaceholder("Что проверять").fill("Требование не называет роль пользователя.");
-await page.getByRole("button", { name: "Сохранить" }).click();
+await page.getByRole("button", { name: /^Сохранить/ }).click();
 await page.getByText("Сохранено (версия 2)").waitFor();
 step("quality skill with a custom rule");
 
 // Word template: copy the GOST look, get the .docx, upload it back.
 await list.getByRole("button", { name: /Word — ГОСТ/ }).click();
 await page.locator(".e-title h2", { hasText: "Word — ГОСТ" }).waitFor();
-await page.getByRole("button", { name: "Сделать копию" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Сделать копию" }).click();
 await page.getByText("Копия создана").waitFor();
 try { await page.getByText("{{section:functional}}").waitFor({ timeout: 8000 }); }
 catch (e) { await page.screenshot({ path: join(shots || dir, "skills-fail.png"), fullPage: true }); console.log(page.url()); throw e; }
@@ -108,15 +108,18 @@ await page.getByText("Шаблон обновлён").waitFor();
 step("export skill: download and upload the Word template");
 
 await list.getByRole("button", { name: /SRS для банка/ }).first().click();
+await page.waitForFunction(() => document.querySelector(".title-input")?.value === "SRS для банка");
+await page.getByRole("tab", { name: "Использование" }).click();
 await page.getByRole("button", { name: "Создать документ этого типа" }).click();
 await page.waitForURL(/#\/document\/[0-9a-f-]{36}$/);
 await page.locator(".doc-tabs [role=tab]").nth(1).waitFor();                // the new document next to the first one
 await page.locator(".screen-title", { hasText: "SRS для банка" }).waitFor();
-await page.getByRole("button", { name: "Собрать документ" }).click();
+await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();
 await page.locator(".screen-sub", { hasText: "версия 1" }).waitFor({ timeout: 15000 });
 await page.locator(".sec h2", { hasText: "Глоссарий" }).waitFor();
-await page.locator("select.tpl").selectOption({ label: "Word — ГОСТ (копия)" });
-const [doc] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Экспорт DOCX" }).click()]);
+await page.getByRole("button", { name: "Другие форматы" }).click();
+await page.getByRole("menuitem", { name: "Word — ГОСТ (копия)" }).click();
+const [doc] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Экспорт в Word" }).click()]);
 if (!doc.suggestedFilename().endsWith(".docx")) throw new Error("no docx");
 step("document uses the default FRD skill and exports with the custom template");
 

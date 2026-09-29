@@ -1,16 +1,21 @@
 <script>
-  // The focused atom in full, next to the list on wide windows (design-system §7.10): the statement,
-  // the evidence in context (the lines around each quote), its facts, its history and the actions.
+  // The selected requirement (redesign §8.4): statement, conflict, evidence in context, properties,
+  // history, and the actions with their keys printed on them. Editing happens here.
   import Icon from "./Icon.svelte";
+  import PopMenu from "./PopMenu.svelte";
   import { api } from "../lib/api.js";
-  import { fmtTime, speakerDisplay } from "../lib/format.js";
+  import { fmtTime, fmtDate, speakerDisplay } from "../lib/format.js";
   import { app, t, go } from "../lib/state.svelte.js";
 
-  let { atom, statementOf = {}, onDecide, onEdit } = $props();
+  let { atom, code = "", conflicts = [], statementOf = {}, codeOf = {}, editing = false, busy = false, count = 0,
+        onDecide, onEdit, onSave, onCancel, onDelete, onResolve, onPatch } = $props();
 
   const cache = new Map();                // source id → segments
   let context = $state([]);               // [{ev, lines:[{idx, text, speaker, start, hit}]}]
   let history = $state([]);
+  let draft = $state("");
+  let merging = $state(null);             // conflict id
+  let mergeDraft = $state("");
 
   async function segmentsOf(sourceId) {
     if (!cache.has(sourceId)) cache.set(sourceId, api(`/api/sources/${sourceId}`).then(s => s.segments).catch(() => []));
@@ -19,6 +24,7 @@
   $effect(() => {
     const a = atom;
     if (!a) { context = []; history = []; return; }
+    a.status; a.statement; a.type; a.priority;
     Promise.all(a.evidence.map(async ev => {
       const segs = await segmentsOf(ev.source_id);
       const i = segs.findIndex(s => s.idx === ev.segment_idx);
@@ -27,86 +33,205 @@
     })).then(c => { if (atom?.id === a.id) context = c; });
     api(`/api/audit?entity=atom&entity_id=${a.id}&limit=20`).then(b => { if (atom?.id === a.id) history = b.entries; }).catch(() => {});
   });
+  $effect(() => { if (editing && atom) draft = atom.statement; });
+  $effect(() => { atom?.id; merging = null; });
 
+  // Long paragraphs (documents, letters) are cut to the words around the quote; the context pane has the rest.
+  const NEAR = 140;
+  const cut = (s, n, tail) => (s.length <= n ? s : tail ? "…" + s.slice(-n) : s.slice(0, n) + "…");
   function mark(text, quote) {
     const i = text.toLowerCase().indexOf((quote || "").toLowerCase());
-    if (!quote || i < 0) return [{ t: text }];
-    return [{ t: text.slice(0, i) }, { t: text.slice(i, i + quote.length), m: true }, { t: text.slice(i + quote.length) }];
+    if (!quote || i < 0) return [{ t: cut(text, NEAR * 2) }];
+    return [{ t: cut(text.slice(0, i), NEAR, true) }, { t: text.slice(i, i + quote.length), m: true }, { t: cut(text.slice(i + quote.length), NEAR) }];
   }
   const typeClass = { functional: "fr", nfr: "nfr", question: "q", business: "br", risk: "rsk", current: "as" };
-  const hText = e => (t("at.h." + e.action) === "at.h." + e.action ? e.action : t("at.h." + e.action));
+  const TYPES = ["business", "functional", "nfr", "risk", "current", "question"];
+  const PRIOS = ["must", "should", "could", "wont"];
+  const REASONS = ["not_requirement", "duplicate", "out_of_scope", "wrong", "other"];
+  const hText = e => {
+    const a = e.after || {};
+    const key = "at.h." + e.action;
+    const base = t(key) === key ? e.action : t(key);
+    if (["accepted", "rejected", "pending"].includes(e.action)) return base + (a.bulk ? " · " + t("at.h.bulk") : "") + (a.reject_reason ? " · " + t("at.reason." + a.reject_reason) : "");
+    if (e.action === "edit") return base + (a.statement ? `: «${a.statement}»` : a.priority ? ": " + t("at.prio." + a.priority) : a.type ? ": " + t("at.f." + a.type) : "");
+    return base;
+  };
+  function save() { if (draft.trim()) onSave(atom, draft); }
 </script>
 
-{#if atom}
-  <aside class="inspector card" aria-label={t("at.inspector")}>
-    <div class="head">
-      <span class="tag {typeClass[atom.type]}">{t("at.type." + atom.type)}</span>
-      {#if atom.status === "accepted"}<span class="status ok"><Icon name="check" size={12} /> {t("at.status.accepted")}</span>
-      {:else if atom.status === "rejected"}<span class="status">{t("at.status.rejected")}{#if atom.reject_reason} · {t("at.reason." + atom.reject_reason)}{/if}</span>
-      {:else}<span class="status run">{t("at.f.pending")}</span>{/if}
-    </div>
-    <p class="stmt">{atom.statement}</p>
-    {#if atom.statement !== atom.original_statement}<p class="hint">{t("at.was", { text: atom.original_statement })}</p>{/if}
+{#if !atom}
+  <div class="empty insp-empty">
+    {#if count > 1}<h3>{t("at.selected", { n: count })}</h3><p>{t("insp.many")}</p>
+    {:else}<p>{t("insp.none")}</p>{/if}
+  </div>
+{:else}
+  <div class="pane-head">
+    <span class="type {typeClass[atom.type]}">{code}</span>
+    <span class="t3 trunc grow">{t("at.full." + atom.type)}</span>
+    {#if atom.status === "accepted"}<span class="status ok"><Icon name="check" size={12} /> {t("at.st.accepted")}</span>
+    {:else if atom.status === "rejected"}<span class="status"><Icon name="close" size={12} /> {t("at.st.rejected")}</span>
+    {:else}<span class="status accent"><Icon name="clock" size={12} /> {t("at.st.pending")}</span>{/if}
+  </div>
 
-    {#each context as c (c.ev.id)}
-      <div class="ctx">
-        <p class="src">
-          <button class="link" onclick={() => go(`/source/${c.ev.source_id}/seg/${c.ev.segment_idx}`)}>{c.ev.source_title}</button>
-          {#if c.ev.start != null}<span class="t3 num"> · {fmtTime(c.ev.start)}</span>{/if}
-        </p>
-        {#each c.lines as l (l.idx)}
-          <p class:hit={l.hit}>
-            {#if l.start != null}<span class="time">{fmtTime(l.start)}</span>{/if}
-            {#if l.speaker}<b class="who">{speakerDisplay(l.speaker, l.speaker_name, t)}:</b>{/if}
-            {#if l.hit}{#each mark(l.text, c.ev.quote) as part, k (k)}{#if part.m}<mark>{part.t}</mark>{:else}{part.t}{/if}{/each}{:else}{l.text}{/if}
-          </p>
-        {:else}
-          <p class="hit">«{c.ev.quote}»</p>
-        {/each}
-      </div>
-    {/each}
-    {#if !atom.evidence.length}<p class="hint">{atom.origin === "ba" ? t("at.ba_origin") : ""}</p>{/if}
+  <div class="pane-body scroll">
+    <div class="insp-body inspector-body" aria-label={t("at.inspector")}>
+      {#if editing}
+        <div class="insp-sec">
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea class="input edit" rows="4" bind:value={draft} autofocus aria-label={t("at.edit")}
+                    onkeydown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
+                                      if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }}></textarea>
+          {#if atom.statement !== atom.original_statement}<p class="hint">{t("at.was", { text: atom.original_statement })}</p>{/if}
+          <div class="actions">
+            <button class="btn sm primary" disabled={!draft.trim()} onclick={save}>{t("at.save")} <span class="kbd">↵</span></button>
+            <button class="btn sm ghost" onclick={onCancel}>{t("at.cancel")} <span class="kbd">esc</span></button>
+          </div>
+        </div>
+      {:else}
+        <div class="insp-sec">
+          <p class="insp-statement">{atom.statement}</p>
+          {#if atom.statement !== atom.original_statement}<p class="hint">{t("at.was", { text: atom.original_statement })}</p>{/if}
+        </div>
+      {/if}
 
-    <dl class="kv">
-      {#if atom.priority}<dt>{t("at.priority")}</dt><dd>{t("at.prio." + atom.priority)}</dd>{/if}
-      {#if atom.type === "question"}<dt>{t("oi.questions")}</dt><dd>{t("oi.st." + (atom.q_state || "open"))}{#if atom.answer} — {atom.answer}{/if}</dd>{/if}
-      {#each atom.conflicts as c (c.id)}
-        <dt class="danger-t">{t("at.conflicts")}</dt><dd>{c.description}{#if statementOf[c.other]}<span class="t3"> — {statementOf[c.other]}</span>{/if}</dd>
+      {#each conflicts as c (c.id)}
+        <div class="conflict" class:waiting={c.status === "awaiting_answer"}>
+          <h4 class="cf-head"><Icon name="warn" size={14} /> {t("at.cf.title")}
+            {#if c.status === "awaiting_answer"}<span class="badge warn">{t("at.awaiting")}</span>{/if}</h4>
+          <p class="cf-desc">{c.description}</p>
+          <div class="conflict-sides">
+            {#each [["A", c.a], ["B", c.b]] as [side, a] (side)}
+              <div class="conflict-side">
+                <b>{side}</b>
+                <div>
+                  <p>{a.statement}</p>
+                  {#if a.evidence[0]}
+                    <p class="t3 meta">{a.evidence[0].speaker ? speakerDisplay(a.evidence[0].speaker, a.evidence[0].speaker_name, t) + " · " : ""}{a.evidence[0].source_title}{a.evidence[0].start != null ? " · " + fmtTime(a.evidence[0].start) : ""}</p>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+          {#if c.status === "open"}
+            {#if merging === c.id}
+              <label class="label" for="merge-{c.id}">{t("at.merge_hint")}</label>
+              <textarea class="input" id="merge-{c.id}" rows="3" bind:value={mergeDraft}></textarea>
+              <div class="conflict-actions">
+                <button class="btn sm primary" disabled={busy || !mergeDraft.trim()} onclick={() => onResolve(c, "merge", mergeDraft)}>{t("at.save")}</button>
+                <button class="btn sm ghost" onclick={() => (merging = null)}>{t("at.cancel")}</button>
+              </div>
+            {:else}
+              <div class="conflict-actions">
+                <button class="btn sm" disabled={busy} onclick={() => onResolve(c, "keep_a")}>{t("at.keep", { side: "A" })}</button>
+                <button class="btn sm" disabled={busy} onclick={() => onResolve(c, "keep_b")}>{t("at.keep", { side: "B" })}</button>
+                <button class="btn sm" disabled={busy} onclick={() => { merging = c.id; mergeDraft = c.a.statement; }}>{t("at.merge")}</button>
+                <button class="btn sm" disabled={busy} onclick={() => onResolve(c, "question")}>{t("at.to_question")}</button>
+              </div>
+            {/if}
+          {/if}
+        </div>
       {/each}
-      {#if atom.model}<dt>{t("at.model")}</dt><dd class="t3">{atom.model}</dd>{/if}
-    </dl>
 
-    <div class="acts">
-      <button class="btn btn-primary" onclick={() => onDecide(atom, "accepted")}><Icon name="check" size={14} /> {t("at.accept")} <span class="kbd">A</span></button>
-      <button class="btn" onclick={() => onDecide(atom, "rejected")}><Icon name="close" size={14} /> {t("at.reject")} <span class="kbd">X</span></button>
-      <button class="btn btn-ghost" onclick={() => onEdit(atom)}><Icon name="pencil" size={14} /> {t("at.edit")} <span class="kbd">E</span></button>
+      {#if context.length || atom.origin === "ba"}
+        <div class="insp-sec">
+          <p class="cap">{t("insp.evidence")}</p>
+          {#each context as c (c.ev.id)}
+            <div class="well evidence">
+              <button class="evidence-head" onclick={() => go(`/source/${c.ev.source_id}/seg/${c.ev.segment_idx}`)} title={t("at.jump")}>
+                <Icon name={c.ev.start != null ? "wave" : "file"} size={14} />
+                <b class="trunc grow">{c.ev.source_title}</b>
+                {#if c.ev.start != null}<span class="mono t3">{fmtTime(c.ev.start)}</span>{/if}
+              </button>
+              {#each c.lines as l (l.idx)}
+                <p class="ev-line" class:hit={l.hit}>
+                  <span class="mono t3">{l.hit && l.start != null ? fmtTime(l.start) : "…"}</span>
+                  <span>{#if l.speaker}<span class="who">{speakerDisplay(l.speaker, l.speaker_name, t)}.</span> {/if}{#if l.hit}{#each mark(l.text, c.ev.quote) as part, k (k)}{#if part.m}<mark>{part.t}</mark>{:else}{part.t}{/if}{/each}{:else}{cut(l.text, NEAR)}{/if}</span>
+                </p>
+              {:else}
+                <p class="ev-line hit"><span></span><span>«{c.ev.quote}»</span></p>
+              {/each}
+            </div>
+          {/each}
+          {#if !context.length && atom.origin === "ba"}<p class="hint">{t("at.ba_origin")}</p>{/if}
+        </div>
+      {/if}
+
+      <div class="insp-sec">
+        <p class="cap">{t("insp.props")}</p>
+        <dl class="kv">
+          <dt>{t("insp.type")}</dt>
+          <dd><PopMenu value={atom.type} items={TYPES.map(v => ({ value: v, label: t("at.full." + v) }))} ariaLabel={t("insp.type")}
+                       onpick={v => v !== atom.type && onPatch(atom, { type: v })} /></dd>
+          <dt title={t("at.prio_hint")}>{t("at.priority")}</dt>
+          <dd><PopMenu value={atom.priority || ""} ariaLabel={t("at.priority")}
+                       items={[...PRIOS.map(v => ({ value: v, label: t("at.prio." + v) })), { sep: true }, { value: "", label: t("at.prio.none") }]}
+                       onpick={v => onPatch(atom, { priority: v })} /></dd>
+          {#if atom.status === "rejected"}
+            <dt>{t("at.reason")}</dt>
+            <dd><PopMenu value={atom.reject_reason || ""} ariaLabel={t("at.reason")} text={atom.reject_reason ? "" : t("insp.pick")}
+                         items={REASONS.map(v => ({ value: v, label: t("at.reason." + v) }))}
+                         onpick={v => onPatch(atom, { reject_reason: v })} /></dd>
+          {/if}
+          {#if atom.type === "question"}
+            <dt>{t("oi.questions")}</dt><dd>{t("oi.st." + (atom.q_state || "open"))}{#if atom.answer} · {atom.answer}{/if}</dd>
+          {/if}
+          {#if atom.evidence[0]?.speaker}
+            <dt>{t("insp.speaker")}</dt><dd class="trunc">{speakerDisplay(atom.evidence[0].speaker, atom.evidence[0].speaker_name, t)}</dd>
+          {/if}
+          <dt>{t("insp.in_docs")}</dt>
+          <dd class="t2">{atom.rid ? atom.rid : atom.status === "accepted" ? t("insp.in_docs_next") : t("insp.in_docs_no")}</dd>
+          {#if atom.model}<dt>{t("at.model")}</dt><dd class="t2 trunc">{atom.model}</dd>{/if}
+        </dl>
+      </div>
+
+      <div class="insp-sec del">
+        <button class="btn sm ghost danger" onclick={() => onDelete(atom)} title="{t('at.delete')} · Delete">
+          <Icon name="trash" size={14} /> {t("at.delete_one")}</button>
+      </div>
+
+      {#if history.length}
+        <div class="insp-sec hist">
+          <p class="cap">{t("at.history")}</p>
+          <ol class="timeline">
+            {#each history as h, i (i)}<li><time>{fmtDate(h.at, app.lang)}</time><span>{hText(h)}</span></li>{/each}
+          </ol>
+        </div>
+      {/if}
     </div>
+  </div>
 
-    {#if history.length}
-      <p class="h-title">{t("at.history")}</p>
-      <ol class="hist">
-        {#each history as h, i (i)}<li><span class="t3 num">{new Date(h.at * 1000).toLocaleString(app.lang)}</span> {hText(h)}</li>{/each}
-      </ol>
-    {/if}
-  </aside>
+  <div class="pane-foot">
+    <button class="btn" class:primary={atom.status !== "accepted"} onclick={() => onDecide(atom, "accepted")} aria-pressed={atom.status === "accepted"}>
+      <Icon name="check" size={14} /> {atom.status === "accepted" ? t("at.accepted_btn") : t("at.accept")} <span class="kbd">A</span></button>
+    <button class="btn" onclick={() => onDecide(atom, "rejected")} aria-pressed={atom.status === "rejected"}>
+      <Icon name="close" size={14} /> {atom.status === "rejected" ? t("at.rejected_btn") : t("at.reject")} <span class="kbd">X</span></button>
+    <button class="btn ghost" onclick={() => onEdit(atom)}><Icon name="pencil" size={14} /> {t("at.edit")} <span class="kbd">E</span></button>
+  </div>
 {/if}
 
 <style>
-  .inspector { position: sticky; top: calc(var(--toolbar) + var(--sp-4)); padding: var(--sp-6); max-height: calc(100vh - var(--toolbar) - 32px);
-    overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-5); }
-  .head { display: flex; align-items: center; gap: var(--sp-4); }
-  .stmt { font: 600 var(--fs-15)/22px var(--font-display); }
-  .ctx { border-radius: var(--r-md); background: var(--surface-2); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-13); line-height: 19px; }
-  .ctx p { padding: 3px 0; color: var(--text-2); }
-  .ctx p.hit { color: var(--text); }
-  .ctx .src { font-size: var(--fs-12); padding-bottom: var(--sp-2); }
-  .time { font: 11px var(--mono); color: var(--text-3); margin-right: 6px; }
-  .who { font-weight: 600; margin-right: 4px; }
-  .link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-weight: 500; }
-  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px var(--sp-5); font-size: 12.5px; margin: 0; }
-  .kv dt { color: var(--text-3); } .kv dd { margin: 0; min-width: 0; }
-  .danger-t { color: var(--danger) !important; }
-  .acts { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
-  .h-title { font-size: var(--fs-11); font-weight: 600; color: var(--text-3); }
-  .hist { margin: 0; padding-left: 18px; font-size: var(--fs-12); line-height: 18px; }
+  .insp-empty { padding-top: 20vh; }
+  .del { justify-items: start; order: 9; }
+  .pane-foot { padding: var(--s-5); gap: var(--s-3); }
+  .insp-empty p { font-size: var(--t-body); color: var(--c-text-3); }
+  .edit { font: var(--w-medium) var(--t-item)/var(--lh-item) var(--font); resize: vertical; }
+  .conflict { border-radius: var(--r-md); background: var(--c-danger-tint); padding: var(--s-5); display: grid; gap: var(--s-4); grid-template-columns: minmax(0, 1fr); }
+  .conflict.waiting { background: var(--c-warn-tint); }
+  .conflict h4 { font-size: var(--t-body); font-weight: var(--w-semibold); color: var(--c-danger); display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+  .conflict.waiting h4 { color: var(--c-warn); }
+  .cf-desc { color: var(--c-text-2); }
+  .conflict-sides { display: grid; gap: var(--s-3); }
+  .conflict-side { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--s-3); padding: var(--s-4); border-radius: var(--r-sm); background: var(--c-content); }
+  .conflict-side b { font: var(--w-semibold) var(--t-mono)/var(--lh-body) var(--font-mono); color: var(--c-text-3); }
+  .conflict-side .meta { font-size: var(--t-foot); margin-top: 2px; }
+  .conflict-actions { display: flex; gap: var(--s-3); flex-wrap: wrap; }
+  .evidence + .evidence { margin-top: var(--s-2); }
+  .evidence-head { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-4) var(--s-5); border: 0; border-bottom: 1px solid var(--c-line);
+    background: none; width: 100%; text-align: left; font-size: var(--t-foot); color: var(--c-text-2); cursor: pointer; }
+  .evidence-head:hover { background: var(--c-fill-1); }
+  .evidence-head b { color: var(--c-text); font-weight: var(--w-medium); }
+  .ev-line { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: var(--s-4); padding: var(--s-3) var(--s-5); color: var(--c-text-3); }
+  .ev-line.hit { color: var(--c-text); }
+  .ev-line .who { font-weight: var(--w-medium); color: var(--c-text-2); }
+  .kv dd :global(.popbtn) { max-width: 100%; }
 </style>

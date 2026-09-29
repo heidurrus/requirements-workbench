@@ -1,0 +1,120 @@
+<script>
+  import { keyOf } from "../lib/keys.js";
+  // ⌘K: every screen, source, document, requirement and command, by name (redesign §5.15).
+  import Icon from "./Icon.svelte";
+  import { api } from "../lib/api.js";
+  import { app, t, go, setTheme, isDark, toggleSidebar, switchProject } from "../lib/state.svelte.js";
+
+  let query = $state("");
+  let index = $state(0);
+  let atoms = $state([]);
+  let list = $state(null);
+  const mod = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘" : "Ctrl+";
+  const PREFIX = { functional: "FR", nfr: "NFR", question: "Q", business: "BR", risk: "RSK", current: "AS" };
+
+  $effect(() => {
+    if (!app.palette) return;
+    query = ""; index = 0;
+    const pid = app.currentProjectId;
+    if (pid) api(`/api/projects/${pid}/atoms`).then(b => { atoms = (b.atoms || []).filter(a => a.status !== "rejected"); }).catch(() => { atoms = []; });
+  });
+
+  const screens = $derived([
+    { icon: "home", label: t("nav.overview"), keys: [mod + "0"], run: () => go("/overview") },
+    { icon: "sources", label: t("nav.sources"), keys: [mod + "1"], run: () => go("/sources") },
+    { icon: "atoms", label: t("nav.atoms"), keys: [mod + "2"], run: () => go("/atoms") },
+    { icon: "doc", label: t("nav.document"), keys: [mod + "3"], run: () => go("/document") },
+    { icon: "tree", label: t("nav.decomposition"), keys: [mod + "4"], run: () => go("/backlog") },
+    { icon: "export", label: t("nav.export"), keys: [mod + "5"], run: () => go("/export") },
+    { icon: "skills", label: t("nav.skills"), run: () => go("/skills") },
+    { icon: "gear", label: t("nav.settings"), keys: [mod + ","], run: () => go("/settings") },
+  ]);
+  const commands = $derived([
+    { icon: isDark() ? "sun" : "moon", label: t(isDark() ? "cmd.light" : "cmd.dark"), keys: [mod + "⇧L"], run: () => setTheme(isDark() ? "light" : "dark") },
+    { icon: "sidebar", label: t("nav.toggle"), keys: [mod + "\\"], run: toggleSidebar },
+  ]);
+
+  const groups = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    const hit = s => !q || (s || "").toLowerCase().includes(q);
+    const out = [];
+    const push = (title, items) => { if (items.length) out.push({ title, items }); };
+    push(t("cmd.g.go"), screens.filter(s => hit(s.label)));
+    push(t("nav.sources"), app.sources.filter(s => hit(s.title)).slice(0, q ? 8 : 4)
+      .map(s => ({ icon: s.kind === "audio" ? "wave" : "file", label: s.title, run: () => go(`/source/${s.id}`) })));
+    push(t("nav.document"), app.documents.filter(d => hit(d.title) || hit(d.short)).slice(0, 8)
+      .map(d => ({ icon: "doc", label: d.title, hint: d.version ? "v" + d.version : "", run: () => go(`/document/${d.id}`) })));
+    if (q) push(t("nav.atoms"), atoms.filter(a => hit(a.statement)).slice(0, 8)
+      .map(a => ({ icon: "atoms", label: a.statement, hint: PREFIX[a.type], run: () => go(`/atoms/atom/${a.id}`) })));
+    push(t("cmd.g.project"), app.projects.filter(p => p.id !== app.currentProjectId && hit(p.name)).slice(0, q ? 8 : 3)
+      .map(p => ({ icon: "cube", label: p.name, run: () => switchProject(p.id) })));
+    push(t("cmd.g.commands"), commands.filter(c => hit(c.label)));
+    return out;
+  });
+  const flat = $derived(groups.flatMap(g => g.items));
+  $effect(() => { query; index = 0; });
+
+  function run(item) { app.palette = false; item?.run(); }
+  function onKey(e) {
+    const key = keyOf(e);
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (key === "k" || key === "K")) {
+      e.preventDefault(); app.palette = !app.palette; return;
+    }
+    if (!app.palette) return;
+    if (key === "Escape") { e.preventDefault(); e.stopPropagation(); app.palette = false; }
+    else if (key === "ArrowDown") { e.preventDefault(); index = Math.min(flat.length - 1, index + 1); scroll(); }
+    else if (key === "ArrowUp") { e.preventDefault(); index = Math.max(0, index - 1); scroll(); }
+    else if (key === "Enter") { e.preventDefault(); run(flat[index]); }
+  }
+  function scroll() { requestAnimationFrame(() => list?.querySelector(".pl.on")?.scrollIntoView({ block: "nearest" })); }
+</script>
+
+<svelte:window onkeydowncapture={onKey} />
+
+{#if app.palette}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scrim" onclick={e => { if (e.target === e.currentTarget) app.palette = false; }}>
+    <div class="palette" role="dialog" aria-modal="true" aria-label={t("shell.search")}>
+      <div class="palette-input">
+        <Icon name="search" />
+        <!-- svelte-ignore a11y_autofocus -->
+        <input bind:value={query} placeholder={t("cmd.placeholder")} aria-label={t("shell.search")} autofocus />
+        <span class="kbd">esc</span>
+      </div>
+      <div class="palette-list scroll" bind:this={list}>
+        {#each groups as g (g.title)}
+          <p class="cap">{g.title}</p>
+          {#each g.items as item (item)}
+            {@const i = flat.indexOf(item)}
+            <button class="pl" class:on={i === index} onclick={() => run(item)} onmousemove={() => (index = i)}>
+              <Icon name={item.icon} />
+              <span class="grow trunc">{item.label}</span>
+              {#if item.hint}<span class="t3 mono">{item.hint}</span>{/if}
+              {#if item.keys}<span class="keys">{#each item.keys as k (k)}<span class="kbd">{k}</span>{/each}</span>{/if}
+            </button>
+          {/each}
+        {:else}
+          <p class="none">{t("cmd.none")}</p>
+        {/each}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .palette { width: min(640px, 92vw); border-radius: var(--r-xl); background: var(--c-raised); box-shadow: var(--e-4); overflow: hidden;
+    animation: drop var(--d-slow) var(--ease-out); }
+  .palette-input { display: flex; align-items: center; gap: var(--s-5); height: 52px; padding: 0 var(--s-7); border-bottom: 1px solid var(--c-line);
+    color: var(--c-text-3); }
+  .palette-input input { flex: 1; border: 0; background: none; outline: none; box-shadow: none; font-size: var(--t-title-2); color: var(--c-text); min-width: 0; }
+  .palette-list { max-height: 384px; padding: var(--s-3); }
+  .palette-list .cap { padding: var(--s-4) var(--s-5) var(--s-2); }
+  .pl { display: flex; align-items: center; gap: var(--s-5); height: 36px; padding: 0 var(--s-5); border-radius: var(--r-md); border: 0;
+    background: none; width: 100%; text-align: left; cursor: pointer; }
+  .pl :global(svg) { color: var(--c-text-2); }
+  .pl.on { background: var(--c-accent); color: #fff; }
+  .pl.on :global(svg), .pl.on .t3 { color: #fff; }
+  .pl.on .kbd { background: rgba(255,255,255,.2); color: #fff; }
+  .keys { margin-left: auto; display: flex; gap: var(--s-2); }
+  .none { padding: var(--s-8); text-align: center; color: var(--c-text-3); }
+</style>

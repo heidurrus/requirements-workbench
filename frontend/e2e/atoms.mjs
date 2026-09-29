@@ -27,25 +27,26 @@ const step = (name) => console.log("✓", name);
 const shot = async (name) => { if (shots) await page.screenshot({ path: join(shots, name), fullPage: true }); };
 
 await page.goto(base + "/#/atoms");
-await page.getByText("Атомов пока нет").waitFor();
+await page.getByText("Требований пока нет").waitFor();
 step("atoms screen has an empty state");
 
 await page.goto(base + "/#/sources");
 await page.locator('input[type=file]').setInputFiles(vttPath);
-await page.getByRole("button", { name: "Импортировать и суммировать" }).click();
 await page.getByText("Оператор видит историю заказов").waitFor();
 await page.getByRole("button", { name: "Извлечь требования" }).click();
-await page.getByRole("button", { name: "4 атома" }).waitFor({ timeout: 15000 });
+await page.getByRole("button", { name: "Требования из источника · 4" }).waitFor({ timeout: 15000 });
 step("extraction from the transcript screen");
 
-await page.getByRole("button", { name: "4 атома" }).click();
-await page.locator(".src-select").waitFor();
-if (!(await page.locator(".src-select option:checked").textContent()).startsWith("Созвон по карточке"))
-  throw new Error("the source filter should be set");
-await page.locator(".src-select").selectOption({ label: "Все источники" });
+await page.getByRole("button", { name: "Требования из источника · 4" }).click();
+const srcFilter = page.locator(".scope").getByRole("button", { name: "Источник", exact: true });
+await srcFilter.waitFor();
+if (!(await srcFilter.textContent()).includes("Созвон по карточке")) throw new Error("the source filter should be set");
+await srcFilter.click();
+await page.getByRole("menuitem", { name: "Все источники" }).click();
 await page.getByText("4 на ревью · принято 0 из 4").waitFor();
-await page.locator(".cf-head").getByText("Разобрать").click();          // conflicts start as one line
+await page.locator(".scope .seg").getByRole("button", { name: /^Конфликты/ }).click();          // conflicts are a filter; the card is in the inspector
 await page.locator(".conflict", { hasText: "Разные требования к сроку" }).waitFor();
+await page.locator(".scope .seg").getByRole("button", { name: /^На ревью/ }).click();
 await shot("atoms.png");
 step("atoms listed with counts and a conflict");
 
@@ -60,29 +61,34 @@ step("keyboard accept / reject / undo");
 
 // Edit a statement: the original wording stays visible.
 await page.keyboard.press("e");
-const area = page.locator(".atom textarea");
+const area = page.locator(".inspector textarea");
 await area.fill("Карточка клиента открывается за 3 секунды");
 await area.press("Enter");
 await page.getByText("Исходная формулировка:").first().waitFor();
 step("edit keeps the original wording");
 
 // Resolve the conflict by turning it into a question for the client.
-await page.locator(".conflict").getByRole("button", { name: "В вопрос" }).click();
-await page.getByText("ждёт ответа заказчика").waitFor();
-await page.getByRole("button", { name: /^вопросы/ }).click();
+await page.locator(".scope .seg").getByRole("button", { name: /^Конфликты/ }).click();
+await page.locator(".conflict").getByRole("button", { name: "Спросить заказчика" }).click();
+await page.getByText("ждёт ответа заказчика").first().waitFor();
+await page.locator(".scope .seg").getByRole("button", { name: /^Все/ }).click();
+await page.locator(".scope").getByRole("button", { name: "Тип", exact: true }).click();
+await page.getByRole("menuitem", { name: /^Вопрос/ }).click();
 await page.locator(".atom", { hasText: "Уточнить у заказчика" }).waitFor();
 step("conflict becomes a question");
 
 // A quote opens the source at that line.
-await page.getByRole("button", { name: /^все/ }).last().click();
-await page.locator(".atom .quote", { hasText: "Хватит и пяти секунд" }).first().click();
+await page.locator(".scope").getByRole("button", { name: "Тип", exact: true }).click();
+await page.getByRole("menuitem", { name: /^Все/ }).click();
+await page.locator(".atom", { hasText: "Хватит и пяти секунд" }).first().locator(".type").click();
+await page.locator(".inspector .evidence-head").first().click();
 await page.locator(".seg-row.flash", { hasText: "Хватит и пяти секунд" }).waitFor();
 step("evidence quote jumps to the transcript line");
 
 await page.goto(base + "/#/atoms");
 await page.locator(".screen-sub", { hasText: "на ревью" }).waitFor();
 for (let i = 0; i < 6; i++) await page.keyboard.press("a");
-try { await page.getByText("Все атомы разобраны").waitFor({ timeout: 8000 }); }
+try { await page.getByText("Все требования разобраны").waitFor({ timeout: 8000 }); }
 catch (err) { await page.screenshot({ path: join(shots || tmpdir(), "atoms-fail.png"), fullPage: true }); throw err; }
 await shot("atoms-done.png");
 step("all reviewed state");

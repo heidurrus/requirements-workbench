@@ -1,6 +1,9 @@
 <script>
-  import Block from "../components/Block.svelte";
+  import { keyOf } from "../lib/keys.js";
   import Icon from "../components/Icon.svelte";
+  import Screen from "../components/Screen.svelte";
+  import Panes from "../components/Panes.svelte";
+  import PopMenu from "../components/PopMenu.svelte";
   import { explain } from "../lib/errors.js";
   import { api, pollJob } from "../lib/api.js";
   import { extractAtoms } from "../lib/atoms.js";
@@ -41,11 +44,6 @@
       if (r.broken.length) toast(t("tr.quote_broken", { n: r.broken.length }), { kind: "danger", action: t("at.open"),
                                                                                   onAction: () => go(`/atoms/atom/${r.broken[0]}`) });
     } catch (err) { toast(err.message, { kind: "danger" }); }
-  }
-  function markClass(list) {
-    if (list.some(m => m.status === "accepted")) return "m-accepted";
-    if (list.some(m => m.status === "pending")) return "m-pending";
-    return "m-rejected";
   }
   let summaryCopied = $state(false);
   async function copySummaryAsEmail() {
@@ -180,232 +178,383 @@
     source.speakers && !["email", "document"].includes(source.kind) ? t("meta.speakers", { n: source.speakers }) : null,
     source.asr_model || source.import_format]
     .filter(Boolean).join(" · ") : "");
+
+  // View: every line, or only the lines that became requirements; a search over the text.
+  let only = $state(false);
+  let find = $state("");
+  let focusIdx = $state(null);
+  let side = $state("summary");          // inspector segment: summary | speakers
+  let speed = $state(1);
+  let refine = $state(null);             // {note}: extract again, with a one-off instruction
+  const needle = $derived(find.trim().toLowerCase());
+  const markedCount = $derived(Object.keys(marks).length);
+  const lines = $derived(!source ? [] : source.segments.filter(s =>
+    (!only || marks[s.idx]) && (!needle || s.text.toLowerCase().includes(needle))));
+  const PREFIX = { functional: "FR", nfr: "NFR", question: "Q", business: "BR", risk: "RSK", current: "AS" };
+  const typeClass = { functional: "fr", nfr: "nfr", question: "q", business: "br", risk: "rsk", current: "as" };
+  $effect(() => { if (audio) audio.playbackRate = speed; });
+
+  // Quotes of the requirements made from a line, marked in its text.
+  function parts(seg) {
+    const list = (marks[seg.idx] || []).filter(m => m.status !== "rejected" && m.quote);
+    const low = seg.text.toLowerCase();
+    const spans = [];
+    for (const m of list) {
+      const i = low.indexOf(m.quote.toLowerCase());
+      if (i >= 0) spans.push([i, i + m.quote.length]);
+    }
+    if (!spans.length) return [{ t: seg.text }];
+    spans.sort((a, b) => a[0] - b[0]);
+    const out = [];
+    let at = 0;
+    for (const [a, b] of spans) {
+      if (a < at) continue;
+      if (a > at) out.push({ t: seg.text.slice(at, a) });
+      out.push({ t: seg.text.slice(a, b), m: true });
+      at = b;
+    }
+    if (at < seg.text.length) out.push({ t: seg.text.slice(at) });
+    return out;
+  }
+
+  // Requirements of this source, for the context pane.
+  let atoms = $state([]);
+  $effect(() => {
+    const sid = id;
+    app.atomsVersion; atomCount;
+    if (!sid || !app.currentProjectId) return;
+    api(`/api/projects/${app.currentProjectId}/atoms?source_id=${sid}`).then(b => { if (sid === id) atoms = b.atoms.filter(a => a.status !== "merged"); }).catch(() => {});
+  });
+
+  // Neighbouring sources: ⌥↑ / ⌥↓.
+  const ordered = $derived([...app.sources].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)));
+  function onKey(e) {
+    const key = keyOf(e);
+    if (app.route.name !== "transcript" || app.palette) return;
+    if (e.altKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      const i = ordered.findIndex(s => s.id === id);
+      const next = ordered[i + (key === "ArrowDown" ? 1 : -1)];
+      if (next) { e.preventDefault(); go(`/source/${next.id}`); }
+      return;
+    }
+    if (e.target.closest("input, textarea, select, [contenteditable], .menu")) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (key === " " && source?.audio_url) { e.preventDefault(); togglePlay(); }
+    else if (key === "/") { e.preventDefault(); document.getElementById("tr-find")?.focus(); }
+    else if (key === "Escape" && refine) refine = null;
+  }
+  function more(v) {
+    if (v === "copy") copyText();
+    else if (v === "txt") saveText(`${source.title}.txt`, source.text);
+    else if (v === "asr") retranscribe();
+    else if (v === "extract") refine = { note: "" };
+  }
+  function runRefine() {
+    const note = refine.note.trim();
+    refine = null;
+    extractAtoms(id, note || null);
+  }
+  const sub = $derived(meta + (email && (email.from || email.to) ? " · " + [email.from ? `${t("tr.email_from")}: ${email.from}` : "", email.to ? `${t("tr.email_to")}: ${email.to}` : ""].filter(Boolean).join(" · ") : ""));
 </script>
 
-<div class="screen-inner wide">
+<svelte:window onkeydown={onKey} />
+
+<Screen title={source?.title || ""} crumb={t("sources.title")} crumbPath="/sources" {sub} inspector={source?.status === "ready" ? "source" : ""}>
+  {#snippet heading()}
+    {#if source && editingTitle}
+      <!-- svelte-ignore a11y_autofocus -->
+      <input class="input title-input" bind:value={titleDraft} autofocus onblur={saveTitle} aria-label={t("tr.edit_title")}
+             onkeydown={e => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") editingTitle = false; }} />
+    {:else}
+      <h1 class="screen-title"><button class="tb-crumb" onclick={() => go("/sources")}>{t("sources.title")}</button><span class="tb-crumb">{" › "}</span>{#if source}<button
+          class="title-btn" title={t("tr.edit_title")} onclick={() => { editingTitle = true; titleDraft = source.title; }}>{source.title}</button>{/if}</h1>
+    {/if}
+  {/snippet}
+  {#snippet actions()}
+    {#if source}
+      {#if source.status === "ready"}
+        <PopMenu cls="btn ghost" text={t("tr.more")} ariaLabel={t("tr.more")} align="right" onpick={more}
+                 items={[{ value: "copy", label: copied ? t("tr.copied") : t("tr.copy_text"), icon: "copy" },
+                         { value: "txt", label: t("tr.save_txt"), icon: "download" },
+                         ...(atomCount ? [{ sep: true }, { value: "extract", label: t("tr.extract_again"), icon: "refresh", disabled: !!app.extracting[id] }] : []),
+                         ...(source.audio_url ? [{ sep: true }, { value: "asr", label: t("tr.asr_again"), icon: "wave" }] : [])]} />
+        <button class="btn" class:primary={!summaryText && !atomCount} onclick={summarize} disabled={summarizing}>
+          {#if summarizing}<span class="spinner"></span>{:else}<Icon name="spark" size={14} />{/if}
+          {summaryText ? t("tr.resummarize") : t("tr.summarize")}
+        </button>
+        {#if app.extracting[id]}
+          <button class="btn primary" disabled><span class="spinner"></span> {app.extracting[id].message || t("src.st.extracting")}</button>
+        {:else if atomCount}
+          <button class="btn primary" onclick={() => go(`/atoms/source/${id}`)}>{t("tr.to_atoms", { n: atomCount })} <Icon name="arrow" size={14} /></button>
+        {:else}
+          <button class="btn" class:primary={!!summaryText} onclick={() => extractAtoms(id)}>{t("at.extract")}</button>
+        {/if}
+      {:else if source.audio_url && source.status !== "processing"}
+        <button class="btn primary" onclick={retranscribe}>{t("tr.transcribe")}</button>
+      {/if}
+    {/if}
+  {/snippet}
+
   {#if !id}
-    <div class="empty panel"><p>{t("tr.none")}</p>
-      <button class="btn" style="margin-top: var(--s-3)" onclick={() => go("/sources")}>{t("tr.back")}</button></div>
+    <div class="empty"><p>{t("tr.none")}</p>
+      <button class="btn" onclick={() => go("/sources")}>{t("tr.back")}</button></div>
   {:else if loadError}
-    <div class="note danger">{loadError}</div>
+    <div class="pad"><div class="banner danger"><Icon name="warn" /><span class="grow">{loadError}</span>
+      <button class="btn sm" onclick={load}>{t("ov.retry")}</button></div></div>
   {:else if source}
-    <header class="screen-head">
-      <div class="head-main">
-        <button class="btn btn-ghost icon-btn back" onclick={() => go("/sources")} aria-label={t("tr.back")} title={t("tr.back")}>
-          <Icon name="back" />
-        </button>
-        <div class="head-txt">
-          {#if editingTitle}
-            <!-- svelte-ignore a11y_autofocus -->
-            <input class="input title-input" bind:value={titleDraft} autofocus onblur={saveTitle} aria-label={t("tr.edit_title")}
-                   onkeydown={e => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") editingTitle = false; }} />
-          {:else}
-            <h1 class="screen-title">
-              <button class="title-btn" title={t("tr.edit_title")} onclick={() => { titleDraft = source.title; editingTitle = true; }}>
-                {source.title} <span class="pen"><Icon name="pencil" size={12} /></span>
-              </button>
-            </h1>
-          {/if}
-          <p class="screen-sub">{meta}{#if email && (email.from || email.to)}{" · "}{#if email.from}{t("tr.email_from")}: {email.from}{/if}{email.from && email.to ? " · " : ""}{#if email.to}{t("tr.email_to")}: {email.to}{/if}{/if}</p>
-        </div>
-      </div>
-      <div class="actions">
-        {#if source.audio_url && source.status !== "processing"}
-          <button class="btn btn-ghost" onclick={retranscribe}>{source.status === "ready" ? t("tr.retranscribe") : t("tr.transcribe")}</button>
-        {/if}
-        {#if source.status === "ready"}
-          <button class="btn icon-btn" onclick={copyText} aria-label={copied ? t("tr.copied") : t("tr.copy")} title={copied ? t("tr.copied") : t("tr.copy")}>
-            <Icon name={copied ? "check" : "copy"} /></button>
-          <button class="btn icon-btn" onclick={() => saveText(`${source.title}.txt`, source.text)} aria-label={t("tr.export")} title={t("tr.export")}>
-            <Icon name="download" /></button>
-          <span class="tb-sep"></span>
-          <button class="btn" class:btn-primary={!summaryText && !atomCount} onclick={summarize} disabled={summarizing}>
-            {#if summarizing}<span class="spinner"></span>{/if}{summaryText ? t("tr.resummarize") : t("tr.summarize")}
-          </button>
-          <button class="btn" class:btn-primary={!!summaryText || !!atomCount} onclick={() => atomCount ? go(`/atoms/source/${id}`) : extractAtoms(id)}
-                  disabled={!!app.extracting[id]} title={atomCount ? "" : t("at.extract")}>
-            {#if app.extracting[id]}<span class="spinner"></span> {app.extracting[id].message}
-            {:else if atomCount}{t("at.count", { n: atomCount })} <Icon name="arrow" size={14} />
-            {:else}{t("at.extract")}{/if}
-          </button>
-        {/if}
-      </div>
-    </header>
-
-    {#if source.status === "processing"}
-      <p class="note"><span class="spinner"></span> {t("tr.processing")}</p>
-    {:else if source.status === "recorded"}
-      <p class="note warn">{t("tr.recorded")}</p>
-    {:else if source.status === "failed"}
-      <p class="note danger">{t("tr.failed", { error: source.error || "" })}</p>
-    {/if}
-
     {#if source.audio_url}
-      <div class="player card">
-        <audio bind:this={audio} src={source.audio_url} preload="metadata"
-               ontimeupdate={() => (now = audio.currentTime)} onloadedmetadata={() => (duration = audio.duration)}
-               onplay={() => (playing = true)} onpause={() => (playing = false)}></audio>
-        <button class="btn btn-primary icon-btn" onclick={togglePlay} aria-label={playing ? t("tr.pause") : t("tr.play")}>
-          <Icon name={playing ? "pause" : "play"} />
-        </button>
-        <span class="mono num">{fmtTime(now)}</span>
-        <input class="scrub" type="range" min="0" max={duration || 0} step="0.1" value={now}
-               oninput={e => { audio.currentTime = Number(e.currentTarget.value); }} aria-label="Seek" />
-        <span class="mono faint">{fmtTime(duration)}</span>
-      </div>
+      <audio bind:this={audio} src={source.audio_url} preload="metadata"
+             ontimeupdate={() => (now = audio.currentTime)} onloadedmetadata={() => (duration = audio.duration)}
+             onplay={() => (playing = true)} onpause={() => (playing = false)}></audio>
     {/if}
-
-    {#if source.status === "ready"}
-      <div class="layout">
-        <div class="stack main-col">
-          {#if speakerOrder.length && !isText}
-            <Block id="tr-speakers" title={t("tr.speakers")} meta={String(speakerOrder.length)}>
-              <p class="hint" style="margin-bottom: var(--s-3)">{t("tr.speaker_hint")}</p>
-              <div class="speakers">
-                {#each speakerOrder as label (label)}
-                  <label class="speaker">
-                    <span class="spk {speakerClass(label, speakerOrder)}">{speakerDisplay(label, null, t)}</span>
-                    <input class="input" bind:value={names[label]} placeholder={speakerDisplay(label, null, t)}
-                           onblur={() => renameSpeaker(label)} onkeydown={e => e.key === "Enter" && e.currentTarget.blur()} />
-                  </label>
-                {/each}
-              </div>
-            </Block>
+    {#if source.status !== "ready"}
+      <div class="pad">
+        {#if source.status === "processing"}
+          <div class="banner info"><span class="spinner"></span><span class="grow">
+            {app.jobs[id]?.message || t("tr.processing")}{#if app.jobs[id]} · {Math.round(app.jobs[id].progress || 0)}%{#if app.jobs[id].eta} · {app.jobs[id].eta}{/if}{/if}
+            · {t("tr.keep_working")}</span></div>
+          <div class="skeleton">{#each [72, 90, 64, 84, 58, 88, 70] as w, i (i)}<i style="width: {w}%"></i>{/each}</div>
+        {:else if source.status === "recorded"}
+          <div class="banner warn"><Icon name="clock" /><span class="grow">{t("tr.recorded")}</span></div>
+        {:else if source.status === "failed"}
+          <div class="banner danger"><Icon name="warn" /><span class="grow">{t("tr.failed", { error: source.error || "" })}</span></div>
+        {/if}
+      </div>
+    {:else}
+      <Panes screen="source">
+        <div class="scope">
+          <span class="block-title cap">{blockTitle}</span>
+          {#if markedCount}
+            <div class="seg" role="group" aria-label={t("tr.view")}>
+              <button aria-pressed={!only} onclick={() => (only = false)}>{isText ? t("tr.all_paras") : t("tr.all_lines")}</button>
+              <button aria-pressed={only} onclick={() => (only = true)}>{t("tr.only_marked")}<span class="n">{markedCount}</span></button>
+            </div>
           {/if}
+          <span class="t3 num opt">{isText ? t("meta.paragraphs", { n: source.segments.length }) : t("meta.segments", { n: source.segments.length })}</span>
+          <span class="grow"></span>
+          <label class="search">
+            <Icon name="search" size={14} />
+            <input id="tr-find" type="search" bind:value={find} placeholder={t("tr.find")} aria-label={t("tr.find")}
+                   onkeydown={e => { if (e.key === "Escape") { find = ""; e.currentTarget.blur(); } }} />
+            <span class="kbd">/</span>
+          </label>
+          {#if !isText}
+            <button class="btn ghost" disabled={focusIdx == null} title={t("tr.correct_tip")}
+                    onclick={() => { const s = source.segments.find(x => x.idx === focusIdx); if (s) editSeg = { idx: s.idx, text: s.text }; }}>
+              <Icon name="pencil" size={14} /> {t("tr.correct")}</button>
+          {/if}
+        </div>
 
-          <Block id="tr-transcript" title={blockTitle}
-                 meta={isText ? t("meta.paragraphs", { n: source.segments.length }) : t("meta.segments", { n: source.segments.length })}>
-            {#if !source.segments.length}
-              <p class="muted">{t("tr.no_segments")}</p>
-            {:else}
-              <div class="segments" class:prose={isText}>
-                {#each source.segments as seg (seg.idx)}
+        <div class="pane-body scroll">
+          {#if !source.segments.length}
+            <div class="empty"><p>{t("tr.no_segments")}</p></div>
+          {:else if !lines.length}
+            <div class="empty"><p>{t("tr.none_found")}</p>
+              <button class="btn" onclick={() => { find = ""; only = false; }}>{t("at.show_all")}</button></div>
+          {:else}
+            <div class="transcript" class:text={isText}>
+              {#each lines as seg (seg.idx)}
+                {@const m = marks[seg.idx]}
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <div class="seg-line" class:seg-row={!isText} class:para={isText} class:playing={seg.idx === activeIdx} class:flash={seg.idx === flashIdx}
+                     class:focus={seg.idx === focusIdx} id="seg-{seg.idx}" onclick={() => (focusIdx = seg.idx)}
+                     ondblclick={() => !isText && (editSeg = { idx: seg.idx, text: seg.text })}>
                   {#if isText}
-                    <p class="para" id="seg-{seg.idx}" class:flash={seg.idx === flashIdx}>{seg.text}</p>
+                    <span class="time mono t3 num">{seg.idx + 1}</span>
                   {:else}
-                  {@const m = marks[seg.idx]}
-                  <div class="seg-row {m ? markClass(m) : ''}" class:active={seg.idx === activeIdx} class:flash={seg.idx === flashIdx} id="seg-{seg.idx}">
                     <div class="seg-meta">
                       {#if seg.start != null}
-                        <button class="time" disabled={!source.audio_url} onclick={() => seek(seg.start)}>{fmtTime(seg.start)}</button>
-                      {/if}
-                      {#if seg.speaker}<span class="spk {speakerClass(seg.speaker, speakerOrder)}" title={speakerDisplay(seg.speaker, seg.speaker_name, t)}>{speakerDisplay(seg.speaker, seg.speaker_name, t)}</span>{/if}
+                        <button class="time mono" disabled={!source.audio_url} onclick={e => { e.stopPropagation(); seek(seg.start); }}
+                                title={source.audio_url ? t("tr.play_from") : ""}>{fmtTime(seg.start)}</button>
+                      {:else}<span></span>{/if}
+                      {#if seg.speaker}<span class="spk {speakerClass(seg.speaker, speakerOrder)}" title={speakerDisplay(seg.speaker, seg.speaker_name, t)}><span class="trunc">{speakerDisplay(seg.speaker, seg.speaker_name, t)}</span></span>{:else}<span></span>{/if}
                     </div>
-                    <div class="seg-text">
-                      {#if editSeg?.idx === seg.idx}
-                        <!-- svelte-ignore a11y_autofocus -->
-                        <textarea class="input seg-edit" rows="2" bind:value={editSeg.text} autofocus aria-label={t("tr.correct")}
-                                  onkeydown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveSegment(); }
-                                                    if (e.key === "Escape") editSeg = null; }}></textarea>
-                        <span class="hint">{t("tr.correct_hint")}</span>
-                      {:else}
-                        <p>{seg.text}{#if seg.corrected} <span class="tag outline" title={t("tr.corrected_hint")}>{t("tr.corrected")}</span>{/if}</p>
-                        {#if m}
-                          <p class="marks">{#each m as a (a.atom_id)}<button class="mark-chip {a.status}" title={a.statement}
-                              onclick={() => go(`/atoms/atom/${a.atom_id}`)}>{t("at.type." + a.type)} · {a.statement.slice(0, 48)}{a.statement.length > 48 ? "…" : ""}</button>{/each}</p>
-                        {/if}
+                  {/if}
+                  <div class="seg-text">
+                    {#if editSeg?.idx === seg.idx}
+                      <!-- svelte-ignore a11y_autofocus -->
+                      <textarea class="input seg-edit" rows="3" bind:value={editSeg.text} autofocus aria-label={t("tr.correct")}
+                                onclick={e => e.stopPropagation()}
+                                onkeydown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveSegment(); }
+                                                  if (e.key === "Escape") editSeg = null; }}></textarea>
+                      <div class="actions">
+                        <button class="btn sm primary" onclick={saveSegment}>{t("at.save")} <span class="kbd">↵</span></button>
+                        <button class="btn sm ghost" onclick={() => (editSeg = null)}>{t("at.cancel")} <span class="kbd">esc</span></button>
+                        <span class="hint">{t("tr.correct_note")}</span>
+                      </div>
+                    {:else}
+                      <p>{#each parts(seg) as part, k (k)}{#if part.m}<mark>{part.t}</mark>{:else}{part.t}{/if}{/each}{#if seg.corrected} <span class="badge" title={t("tr.corrected_hint")}>{t("tr.corrected")}</span>{/if}</p>
+                      {#if m}
+                        <div class="seg-atoms">{#each m as a (a.atom_id)}<button class="seg-atom" class:rejected={a.status === "rejected"} title={a.statement}
+                            onclick={e => { e.stopPropagation(); go(`/atoms/atom/${a.atom_id}`); }}><span class="type {typeClass[a.type]}">{PREFIX[a.type]}</span><span class="trunc">{a.statement}</span></button>{/each}</div>
                       {/if}
-                    </div>
-                    {#if editSeg?.idx !== seg.idx}
-                      <span class="row-actions seg-acts"><button class="btn btn-ghost btn-sm icon-btn" aria-label={t("tr.correct")} title={t("tr.correct")}
-                              onclick={() => (editSeg = { idx: seg.idx, text: seg.text })}><Icon name="pencil" size={12} /></button></span>
                     {/if}
                   </div>
-                  {/if}
-                {/each}
-              </div>
-            {/if}
-          </Block>
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
 
-        <div class="side-col">
-          <Block id="tr-summary" title={t("tr.summary")} meta={summaryMeta}>
-            {#if summaryText}
-              <div class="md">{@html renderMarkdown(summaryText)}</div>
-              {#if !summarizing}
-                <button class="btn btn-sm recap" onclick={copySummaryAsEmail}>
-                  <Icon name={summaryCopied ? "check" : "mail"} size={14} /> {summaryCopied ? t("tr.copied") : t("tr.recap")}</button>
+        {#if source.audio_url}
+          <div class="player">
+            <button class="play" onclick={togglePlay} aria-label={playing ? t("tr.pause") : t("tr.play")} title="{playing ? t('tr.pause') : t('tr.play')} · Space">
+              <Icon name={playing ? "pause" : "play"} /></button>
+            <span class="mono num">{fmtTime(now)}</span>
+            <input class="scrub" type="range" min="0" max={duration || 0} step="0.1" value={now} style="--p: {duration ? 100 * now / duration : 0}%"
+                   oninput={e => { audio.currentTime = Number(e.currentTarget.value); }} aria-label={t("tr.seek")} />
+            <span class="mono num t3">{fmtTime(duration)}</span>
+            <span class="up"><PopMenu value={speed} ariaLabel={t("tr.speed")} align="right"
+                     items={[0.75, 1, 1.25, 1.5, 2].map(v => ({ value: v, label: String(v).replace(".", app.lang === "ru" ? "," : ".") + "×" }))}
+                     onpick={v => (speed = v)} /></span>
+          </div>
+        {/if}
+
+        {#snippet inspector()}
+          <div class="pane-head">
+            <div class="seg" role="tablist">
+              <button role="tab" aria-selected={side === "summary"} onclick={() => (side = "summary")}>{t("tr.summary")}</button>
+              {#if speakerOrder.length && !isText}
+                <button role="tab" aria-selected={side === "speakers"} onclick={() => (side = "speakers")}>{t("tr.speakers")}<span class="n">{speakerOrder.length}</span></button>
               {/if}
-            {:else if !summarizing && !summaryError}
-              <p class="muted">{t("tr.no_summary")}</p>
+            </div>
+            <span class="grow"></span>
+            {#if side === "summary" && summaryText && !summarizing}
+              <button class="btn sm ghost" onclick={copySummaryAsEmail}>
+                <Icon name={summaryCopied ? "check" : "mail"} size={14} /> {summaryCopied ? t("tr.copied") : t("tr.recap")}</button>
             {/if}
-            {#if summarizing && !summaryText}<p class="hint"><span class="spinner"></span> {t("tr.writing", { s: tick })}</p>{/if}
-            {#if summaryError}
-              <div class="banner danger err-banner"><span class="grow">{summaryError.message}</span>
-                {#if summaryError.setup}<button class="btn btn-sm" onclick={() => go("/settings")}>{t("err.open_settings")}</button>{/if}</div>
-            {/if}
-          </Block>
-        </div>
-      </div>
+          </div>
+          <div class="pane-body scroll">
+            <div class="insp-body">
+              {#if side === "speakers"}
+                <p class="hint">{t("tr.speaker_hint")}</p>
+                <div class="speakers">
+                  {#each speakerOrder as label (label)}
+                    <label class="speaker">
+                      <span class="spk {speakerClass(label, speakerOrder)}"><span class="trunc">{speakerDisplay(label, null, t)}</span></span>
+                      <input class="input" bind:value={names[label]} placeholder={t("tr.speaker_name")}
+                             onblur={() => renameSpeaker(label)} onkeydown={e => e.key === "Enter" && e.currentTarget.blur()} />
+                    </label>
+                  {/each}
+                </div>
+              {:else}
+                {#if summaryError}
+                  <div class="banner danger"><Icon name="warn" /><span class="grow">{summaryError.message}</span>
+                    {#if summaryError.setup}<button class="btn sm" onclick={() => go("/settings")}>{t("err.open_settings")}</button>{/if}</div>
+                {/if}
+                {#if summaryText}
+                  <div class="md">{@html renderMarkdown(summaryText)}</div>
+                  {#if summaryMeta}<p class="hint">{summaryMeta}</p>{/if}
+                {:else if summarizing}
+                  <p class="hint"><span class="spinner"></span> {t("tr.writing", { s: tick })}</p>
+                {:else if !summaryError}
+                  <div class="empty small"><p>{t("tr.no_summary")}</p>
+                    <button class="btn" onclick={summarize}><Icon name="spark" size={14} /> {t("tr.summarize")}</button></div>
+                {/if}
+              {/if}
+            </div>
+          </div>
+        {/snippet}
+
+        {#snippet context()}
+          <div class="pane-head"><h2 class="grow trunc">{t("tr.ctx")}</h2><span class="t3 num">{atoms.length}</span></div>
+          <div class="pane-body scroll">
+            {#each atoms as a (a.id)}
+              <button class="ctx-row" class:rejected={a.status === "rejected"} onclick={() => a.evidence[0] && showSegment(a.evidence.find(e => e.source_id === id)?.segment_idx)}
+                      ondblclick={() => go(`/atoms/atom/${a.id}`)}>
+                <span class="type {typeClass[a.type]}">{a.rid || PREFIX[a.type]}</span>
+                <span class="grow">{a.statement}</span>
+                {#if a.status === "accepted"}<span class="status ok"><Icon name="check" size={12} /></span>{/if}
+              </button>
+            {:else}
+              <p class="ctx-none">{t("src.atoms_none")}</p>
+            {/each}
+          </div>
+        {/snippet}
+      </Panes>
     {/if}
   {/if}
-</div>
+</Screen>
+
+{#if refine}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scrim" onclick={e => e.target === e.currentTarget && (refine = null)}>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="refine-h">
+      <h2 id="refine-h">{t("tr.extract_again_q")}</h2>
+      <p>{t("at.reextract_hint")}</p>
+      <div class="field">
+        <label class="label" for="refine-note">{t("tr.refine_label")}</label>
+        <!-- svelte-ignore a11y_autofocus -->
+        <textarea class="input" id="refine-note" rows="3" bind:value={refine.note} autofocus placeholder={t("ai.refine_ph.extract")}></textarea>
+      </div>
+      <div class="acts">
+        <button class="btn" onclick={() => (refine = null)}>{t("at.cancel")}</button>
+        <button class="btn primary" onclick={runRefine}>{t("tr.extract_again_yes")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
-  .head-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: var(--sp-4); }
-  .head-txt { min-width: 0; flex: 1; }
-  .back { flex: none; margin-left: -6px; }
-  .screen-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .title-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; text-align: left; max-width: 100%; }
-  .title-btn .pen { color: var(--text-3); opacity: 0; display: inline-block; vertical-align: middle; transition: opacity var(--t-fast); }
-  .title-btn:hover .pen, .title-btn:focus-visible .pen { opacity: 1; }
-  .title-input { font: 600 var(--fs-15)/20px var(--font-display); max-width: 520px; }
-  .screen-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tb-sep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 var(--sp-2); }
+  audio { display: none; }
+  .pad { padding: var(--s-6) var(--gutter); display: grid; gap: var(--s-6); }
+  .skeleton { display: grid; gap: var(--s-5); max-width: 72ch; }
+  .skeleton i { height: 12px; border-radius: var(--r-xs); background: var(--c-fill-2); animation: breathe 1.6s ease-in-out infinite; }
+  @keyframes breathe { 50% { opacity: .45; } }
+  .title-input { font: var(--w-semibold) var(--t-title-3)/var(--lh-title-3) var(--font-display); width: min(520px, 40vw); height: 24px; }
+  .title-btn:hover { color: var(--c-accent-text); }
+  .search { width: clamp(160px, 22cqw, 300px); }
+  .search .kbd { background: none; }
 
-  .player { display: flex; align-items: center; gap: var(--sp-5); margin-bottom: var(--sp-6); padding: var(--sp-4) var(--sp-5);
-    position: sticky; top: calc(var(--toolbar) + var(--sp-2)); z-index: 10; }
-  .player .icon-btn { border-radius: 50%; width: 32px; height: 32px; }
-  .scrub { flex: 1; min-width: 80px; accent-color: var(--accent); }
-  .layout { display: grid; gap: var(--sp-8); grid-template-columns: minmax(0, 1fr) 380px; align-items: start; }
-  @media (min-width: 1400px) { .layout { grid-template-columns: minmax(0, 1.25fr) minmax(400px, 1fr); } }
-  /* Sticky, but never taller than the window: a long summary scrolls inside its column. */
-  .side-col { position: sticky; top: calc(var(--toolbar) + var(--sp-4));
-    max-height: calc(100vh - var(--toolbar) - var(--sp-8)); overflow-y: auto; overscroll-behavior: contain;
-    border-radius: var(--r-lg); scrollbar-width: thin; }
-  .side-col :global(details.block > summary) { position: sticky; top: 0; z-index: 1; background: var(--surface); }
-  @media (max-width: 1120px) {
-    .layout { grid-template-columns: 1fr; }
-    .side-col { position: static; order: -1; max-height: none; overflow: visible; }
-  }
-
-  .speakers { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
-  .speaker { display: flex; align-items: center; gap: var(--sp-4); }
-  .spk { display: inline-flex; align-items: center; gap: 6px; height: 20px; font-size: var(--fs-12); font-weight: 600; min-width: 0;
-    white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; flex: none; }
-  .spk::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
-
-  .segments { display: flex; flex-direction: column; margin: 0 calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6)); }
-  .seg-row { display: grid; grid-template-columns: 56px 120px minmax(0, 1fr); gap: var(--sp-5); padding: var(--sp-5) var(--sp-6);
-    border-top: 1px solid var(--line); scroll-margin: 120px; font-size: var(--fs-14); line-height: 20px; }
-  .seg-row.active { background: var(--accent-bg); }
-  .seg-row { position: relative; grid-template-columns: 56px 120px minmax(0, 1fr) auto; }
-  .seg-row.m-accepted { box-shadow: inset 3px 0 0 var(--ok); }
-  .seg-row.m-pending { box-shadow: inset 3px 0 0 var(--accent); }
-  .seg-row.m-rejected { box-shadow: inset 3px 0 0 var(--line-control); }
-  .marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .mark-chip { border: 0; border-radius: var(--r-full); padding: 1px 8px; font: 500 var(--fs-11)/18px var(--font); cursor: pointer;
-    background: var(--accent-bg); color: var(--accent); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mark-chip.accepted { background: var(--ok-bg); color: var(--ok); }
-  .mark-chip.rejected { background: var(--surface-2); color: var(--text-3); text-decoration: line-through; }
-  .seg-edit { height: auto; font-size: var(--fs-14); line-height: 20px; resize: vertical; }
-  .seg-acts { align-self: start; }
-  .recap { margin-top: var(--sp-5); }
-  .seg-row:last-child { border-radius: 0 0 var(--r-lg) var(--r-lg); }
+  .transcript { padding: var(--s-6) 0 var(--s-11); }
+  .seg-line { display: grid; grid-template-columns: 52px minmax(80px, 148px) minmax(0, 72ch); gap: var(--s-5); padding: var(--s-4) var(--gutter);
+    position: relative; transition: background var(--d-fast); scroll-margin: 80px 0; }
+  .seg-line.para { grid-template-columns: 36px minmax(0, 80ch); }
   .seg-meta { display: contents; }
-  .time { border: 0; background: none; padding: 0; font: 12px/20px var(--mono); color: var(--text-3); cursor: pointer; text-align: left; align-self: start; }
-  .time:hover:not(:disabled) { color: var(--accent); }
+  .seg-line:hover { background: var(--c-fill-1); }
+  .seg-line.focus { background: var(--c-fill-2); }
+  .seg-line.playing { background: var(--c-accent-tint); }
+  .seg-line.playing::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c-accent); }
+  .seg-line.flash { animation: flash 2.4s ease-out; }
+  @keyframes flash { 0%, 40% { background: var(--c-mark); } }
+  .time { border: 0; background: none; padding: 1px 0 0; color: var(--c-text-3); cursor: pointer; text-align: left; height: 22px; font-variant-numeric: tabular-nums; }
+  .time:hover:not(:disabled) { color: var(--c-accent-text); }
   .time:disabled { cursor: default; }
-  .seg-text { min-width: 0; grid-column: 3; }
-  .prose { max-width: 72ch; margin: 0; }
-  @media (min-width: 1400px) { .prose { max-width: 100ch; } }
-  .para { font-size: var(--fs-15); line-height: 24px; margin: 0 0 var(--sp-5); scroll-margin: 120px; border-radius: var(--r-sm); }
-  .para:last-child { margin-bottom: 0; }
-  .err-banner { align-items: center; flex-wrap: wrap; }
-  .grow { flex: 1; min-width: 0; }
-  .flash { background: var(--mark) !important; transition: background .6s ease; }
-  @media (max-width: 600px) {
-    .seg-row { grid-template-columns: 56px minmax(0, 1fr); }
-    .seg-text { grid-column: 1 / -1; }
+  .spk { display: inline-flex; align-items: center; gap: var(--s-3); font-weight: var(--w-medium); height: 22px; min-width: 0; }
+  .spk::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+  .seg-text { min-width: 0; }
+  .seg-text p { font: var(--w-regular) var(--t-item)/22px var(--font); text-wrap: pretty; }
+  .para .seg-text p { font-size: var(--t-read); line-height: var(--lh-read); }
+  .seg-edit { font: var(--w-regular) var(--t-item)/22px var(--font); }
+  .seg-text .actions { margin-top: var(--s-3); }
+  .seg-atoms { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-3); }
+  .seg-atom { display: inline-flex; align-items: center; gap: var(--s-3); height: 22px; padding: 0 var(--s-4); border: 0; border-radius: var(--r-sm);
+    background: var(--c-fill-1); font-size: var(--t-foot); color: var(--c-text-2); max-width: min(100%, 52ch); cursor: pointer; }
+  .seg-atom:hover { background: var(--c-fill-3); color: var(--c-text); }
+  .seg-atom.rejected .trunc { text-decoration: line-through; color: var(--c-text-3); }
+  @container ws (max-width: 1000px) {
+    .seg-line.seg-row { grid-template-columns: 52px minmax(0, 1fr); row-gap: 0; }
+    .seg-row .spk { grid-column: 2; } .seg-row .seg-text { grid-column: 2; } .seg-row .time { grid-row: 1 / span 2; }
   }
+
+  .player { display: flex; align-items: center; gap: var(--s-5); height: 52px; padding: 0 var(--gutter); border-top: 1px solid var(--c-line);
+    background: var(--c-toolbar); -webkit-backdrop-filter: var(--blur-toolbar); backdrop-filter: var(--blur-toolbar); flex: none; }
+  .play { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--c-text); color: var(--c-content); display: grid; place-items: center;
+    flex: none; cursor: pointer; transition: transform var(--d-instant); }
+  .play:active { transform: scale(.94); }
+  .scrub { flex: 1; min-width: 80px; appearance: none; -webkit-appearance: none; height: 4px; border-radius: var(--r-full); cursor: pointer;
+    background: linear-gradient(90deg, var(--c-accent) var(--p), var(--c-fill-3) var(--p)); }
+  .scrub::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 0 0.5px rgba(0,0,0,.2), 0 1px 3px rgba(0,0,0,.3); }
+  .up :global(.menu) { top: auto; bottom: calc(100% + 8px); min-width: 120px; }
+
+  .speakers { display: grid; gap: var(--s-5); grid-template-columns: minmax(0, 1fr); }
+  .speaker { display: grid; grid-template-columns: minmax(80px, 120px) minmax(0, 1fr); gap: var(--s-4); align-items: center; }
+  .empty.small { padding: var(--s-9) 0; }
+  .empty.small p { font-size: var(--t-body); }
+  .ctx-row { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; gap: var(--s-4); padding: var(--s-4) var(--s-6); border: 0; background: none; width: 100%;
+    text-align: left; border-bottom: 1px solid var(--c-line); cursor: pointer; line-height: 20px; align-items: start; }
+  .ctx-row:hover { background: var(--c-fill-1); }
+  .ctx-row.rejected .grow { text-decoration: line-through; color: var(--c-text-3); }
+  .ctx-none { padding: var(--s-9) var(--s-7); color: var(--c-text-3); text-align: center; }
 </style>

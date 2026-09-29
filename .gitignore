@@ -14,3 +14,6 @@ build/
 packaging/.cache/
 .DS_Store
 frontend/node_modules/
+
+# regenerable prototype screenshots
+docs/design/prototype/shots/

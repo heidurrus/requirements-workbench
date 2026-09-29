@@ -2,7 +2,7 @@
 name: find-duplicates
 title: {ru: "Дубли и конфликты", en: "Duplicates and conflicts"}
 description:
-  ru: "Сравнивает новые атомы с уже собранными — находит дубли и противоречия между источниками."
+  ru: "Сравнивает новые требования с уже собранными: находит дубли и противоречия между источниками."
   en: "Compares new atoms with the ones already collected and finds duplicates and contradictions between sources."
 stage: dedup
 version: 1

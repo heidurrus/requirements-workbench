@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.0.0 (2026-09-29): New interface
+
+The whole interface is rebuilt from a new design (`docs/design/redesign.md`, prototype in `docs/design/prototype/`). The pipeline, the data and the API are the same.
+
+- **Panes instead of one scrolling page.** Every screen is a toolbar plus panes that scroll on their own: content, an inspector for the selected item and, on wide windows (workspace from 1800 px), a context pane with the source. Pane widths are proportions of the window, so a large monitor shows more information, not more empty space.
+- **Sidebar shows the state of the pipeline in words**: "75 на ревью", "устарел", "11 историй", "5 из 14", each with a stage ring. Recent sources and all documents are one click away. Running jobs show in a card at the bottom.
+- **New Overview screen**: the one next step, the pipeline, what waits for the client, requirements by type, what changed since last time.
+- **Select, then act.** Row actions are no longer bare icons: the inspector has labelled buttons with their keys printed on them (Принять A, Отклонить X, Править E).
+- **Requirements** (were "Атомы"): conflicts are a filter and a card in the inspector; editing happens in the inspector; the type is a dot and a code (FR-12, BR-3).
+- **Sources**: a table with a preview; the whole window takes dropped files and imports them at once; recording continues while you work on other screens, with a pill on every screen.
+- **Source**: transcript, summary and the source's requirements side by side; quotes are marked in the text; search; a player bar with speed.
+- **Documents**: contents and versions on the left, the page in the middle, Качество / Изменения / Сведения on the right; `[` and `]` walk the findings.
+- **Backlog** (was "Декомпозиция"): one line per item; the story, its criteria and INVEST findings are in the inspector.
+- **Export**: one place for Jira, Word, the traceability table and the letter to the client.
+- **⌘K** finds any screen, source, document, requirement or command.
+- **Shortcuts work on the Russian keyboard layout.**
+- "Атом" is now "требование" everywhere in the interface.
+- Small API addition: `GET /api/projects/<id>/atoms` returns `rid`, the ID a requirement already has in documents.
+
 ## 3.3.3 (2026-09-29): Wide windows
 
 - **Source screen:** the summary panel was fixed at 340–500 px, and the transcript was capped at 72 characters per line inside a card that stretched across the window, which left a large empty area. From 1400 px up, the two panels now split the width about 55/45, and the transcript runs up to 100 characters per line.
