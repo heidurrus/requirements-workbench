@@ -526,8 +526,6 @@
             <p>{t("at.done_meta", stats)}{#if stats.open_conflicts}. {t("at.done_but_conflicts", { n: stats.open_conflicts })}{/if}</p>
             {#if stats.open_conflicts}
               <button class="btn lg primary" onclick={() => setStatus("conflicts")}>{t("at.resolve_conflicts")}</button>
-            {:else}
-              <button class="btn lg primary" onclick={() => go("/document")}>{t("doc.build_cta")} <Icon name="arrow" size={14} /></button>
             {/if}
           </div>
         {:else}

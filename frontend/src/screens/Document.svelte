@@ -426,7 +426,6 @@
             <h3>{t("doc.ready_title", { n: body.relevant })}</h3>
             <p>{t("doc.ready")}</p>
             {#if stats.pending}<p class="hint">{t("doc.pending", { n: stats.pending })}</p>{/if}
-            <button class="btn lg primary" onclick={() => runBuild("full")}>{t("doc.build")}</button>
             {#if docList && docList.documents.length > 1}
               <button class="btn ghost danger" onclick={() => (confirmDelete = doc)}>{t("doc.delete")}…</button>
             {/if}

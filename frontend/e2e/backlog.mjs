@@ -39,36 +39,37 @@ await page.getByText("Все требования разобраны").waitFor()
 await page.goto(base + "/#/document");
 await page.locator(".screen-head").getByRole("button", { name: "Собрать документ" }).click();
 await sub.filter({ hasText: "версия 1" }).waitFor({ timeout: 15000 });
-await page.getByRole("button", { name: /К декомпозиции/ }).click();
+await page.getByRole("button", { name: /К бэклогу/ }).click();
 await page.getByText("Можно собирать бэклог из документа v1").waitFor();
 step("document → decomposition");
 
 await page.getByRole("button", { name: "Собрать бэклог" }).click();
 await sub.filter({ hasText: "эпиков: 1 · историй: 2" }).waitFor({ timeout: 15000 });
 await page.locator(".epic .t", { hasText: "Работа оператора" }).waitFor();
-await page.getByText("Цель: Быстрее обслуживать звонки").waitFor();
-await page.locator(".story .acs b", { hasText: "Дано" }).first().waitFor();
-await page.locator(".story .refs .link", { hasText: /§3\.1 · FR-\d/ }).first().waitFor();
-const firstSub = page.locator(".node.sub").first();
+await page.locator(".inspector").getByText("Цель: Быстрее обслуживать звонки").waitFor();
+await page.locator(".tree .node.story").first().locator(".t").click();        // details of a story are in the inspector
+await page.locator(".inspector .acs b", { hasText: "Дано" }).first().waitFor();
+await page.locator(".inspector .refs .link", { hasText: /§3\.1 · FR-\d/ }).first().waitFor();
+const firstSub = page.locator(".tree .node.sub").first();
 if (await firstSub.locator(".inc").isChecked()) throw new Error("generated sub-tasks must start unticked");
 await firstSub.getByText("сгенерировано").waitFor();
-const nfr = page.locator(".node.nfr").first();
+const nfr = page.locator(".tree .node.nfr").first();
 if (await nfr.locator(".inc").isChecked()) throw new Error("NFR items must start unticked");
 if (shots) await page.screenshot({ path: join(shots, "backlog.png"), fullPage: true });
 step("epics, stories with criteria and FRD links; sub-tasks and NFR unticked");
 
 // Untick the epic → its stories go too.
-await page.locator(".node.epic > .row-line .inc").uncheck();
+await page.locator(".tree .node.epic > .row-line .inc").uncheck();
 await sub.filter({ hasText: "к выгрузке отмечено: 0" }).waitFor();          // sub-tasks and NFRs start unticked anyway
-await page.locator(".node.epic > .row-line .inc").check();
+await page.locator(".tree .node.epic > .row-line .inc").check();
 step("unticking an epic unticks its stories");
 
 // Edit a story: text + a new criterion; it gets pinned.
-const story = page.locator(".node.story").first();
-await story.locator("> .row-line").hover();
-await story.locator("> .row-line").getByRole("button", { name: "Править" }).click();
+await page.locator(".tree .node.story").first().locator(".t").click();
+const story = page.locator(".inspector");
+await story.getByRole("button", { name: "Править" }).click();
 await story.locator("textarea").fill("Как старший смены, я хочу видеть историю заказов, чтобы разбирать жалобы");
-await story.getByRole("button", { name: "Критерий" }).click();
+await story.getByRole("button", { name: "Добавить критерий" }).click();
 await story.locator(".ac-edit").last().locator("input").nth(2).fill("история показана за 12 месяцев");
 await story.getByRole("button", { name: "Сохранить" }).click();
 await story.getByText("изменено").first().waitFor();
@@ -81,14 +82,16 @@ await page.locator(".invest").getByRole("button", { name: "Применить" }
 await page.getByText("Текст истории обновлён").waitFor();
 step("INVEST check with a suggested fix applied");
 
-await nfr.getByRole("button", { name: /В критерии/ }).first().click();
+await nfr.locator(".t").click();
+await page.locator(".inspector").getByRole("button", { name: /В критерии/ }).first().click();
 await page.getByText(/Перенесено в критерии/).waitFor();
-if (await page.locator(".node.nfr").count() !== 0) throw new Error("the NFR should be moved into the story");
+if (await page.locator(".tree .node.nfr").count() !== 0) throw new Error("the NFR should be moved into the story");
 step("NFR moved into a story's criteria");
 
 await page.locator(".screen-head").getByRole("button", { name: "Пересобрать" }).click();
 await page.getByText(/Собрано \d+ истори/).waitFor({ timeout: 15000 });
-await page.getByText("история показана за 12 месяцев").waitFor();
+await page.locator(".tree .node.story").first().locator(".t").click();
+await page.locator(".inspector").getByText("история показана за 12 месяцев").waitFor();
 step("rebuild keeps the edited story");
 
 await browser.close();

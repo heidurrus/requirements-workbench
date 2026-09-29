@@ -83,13 +83,13 @@
         <Sources />
       {:else if app.route.name === "document"}
         <DocumentScreen />
+      {:else if app.route.name === "backlog"}
+        <Backlog />
       {:else if app.route.name === "transcript"}
         {#key app.route.id}<Transcript id={app.route.id} autoSummarize={app.route.summarize} focusSeg={app.route.seg} />{/key}
       {:else}
         <div class="legacy scroll">
-          {#if app.route.name === "backlog"}
-            <Backlog />
-          {:else if app.route.name === "export"}
+          {#if app.route.name === "export"}
             <Export />
           {:else if app.route.name === "skills"}
             <Skills />
