@@ -69,11 +69,13 @@
   const sourceFilter = $derived(app.route.source || null);
   const sourceFilterTitle = $derived(app.sources.find(s => s.id === sourceFilter)?.title || "");
   const needle = $derived(search.trim().toLowerCase());
-  const filtered = $derived(atoms.filter(a =>
-    (statusFilter === "all" || (statusFilter === "conflicts" ? a.conflicts.length > 0 : a.status === statusFilter)) &&
-    (typeFilter === "all" || a.type === typeFilter) &&
+  const byStatus = (a, f) => f === "all" || (f === "conflicts" ? a.conflicts.length > 0 : a.status === f);
+  // Source and search narrow everything; the status and type counts are taken inside them, so a count
+  // always equals the number of rows that choice will show.
+  const scoped = $derived(atoms.filter(a =>
     (!sourceFilter || a.evidence.some(e => e.source_id === sourceFilter)) &&
     (!needle || a.statement.toLowerCase().includes(needle) || a.evidence.some(e => e.quote.toLowerCase().includes(needle)))));
+  const filtered = $derived(scoped.filter(a => byStatus(a, statusFilter) && (typeFilter === "all" || a.type === typeFilter)));
   // Grouping (PM-18): by source or speaker; the list order follows the groups so J/K walk them in order.
   const groups = $derived.by(() => {
     if (groupBy === "none") return [{ key: "", title: "", items: filtered }];
@@ -376,8 +378,17 @@
   const REASONS = ["not_requirement", "duplicate", "out_of_scope", "wrong", "other"];
   const PRIOS = ["must", "should", "could", "wont"];
   const openQuestions = $derived(atoms.filter(a => a.type === "question" && a.status !== "rejected" && a.q_state !== "answered").length);
-  const count = (key, value) => atoms.filter(a => a[key] === value).length;
-  const statusCount = f => (f === "all" ? atoms.length : f === "conflicts" ? inConflict : count("status", f));
+  const statusCount = f => scoped.filter(a => byStatus(a, f) && (typeFilter === "all" || a.type === typeFilter)).length;
+  const typeCount = ty => scoped.filter(a => byStatus(a, statusFilter) && a.type === ty).length;
+  const narrowed = $derived([
+    sourceFilter ? t("at.nf.source", { title: sourceFilterTitle || "…" }) : "",
+    typeFilter !== "all" ? t("at.nf.type", { type: t("at.full." + typeFilter) }) : "",
+    needle ? t("at.nf.search", { q: search.trim() }) : "",
+    statusFilter !== "all" ? t("at.nf.status", { status: t("at.s." + statusFilter) }) : ""].filter(Boolean));
+  function showAll() {
+    setStatus("all"); typeFilter = "all"; search = "";
+    if (sourceFilter) go("/atoms");
+  }
   const focusedConflicts = $derived(focused ? conflicts.filter(c => focused.conflicts.some(x => x.id === c.id)) : []);
   const focusedEv = $derived(focused?.evidence[0] || null);
 
@@ -424,14 +435,14 @@
           {#each STATUSES as f (f)}
             {#if f !== "conflicts" || inConflict || statusFilter === "conflicts"}
               <button class="pill" aria-pressed={statusFilter === f} onclick={() => setStatus(f)}>
-                {t("at.s." + f)}<span class="n" class:danger={f === "conflicts" && inConflict}>{statusCount(f)}</span>
+                {t("at.s." + f)}<span class="n" class:danger={f === "conflicts" && statusCount(f)}>{statusCount(f)}</span>
               </button>
             {/if}
           {/each}
         </div>
         <PopMenu label={t("insp.type")} value={typeFilter} ariaLabel={t("insp.type")}
                  items={[{ value: "all", label: t("at.s.all") }, { sep: true },
-                         ...ALL_TYPES.map(ty => ({ value: ty, label: t("at.full." + ty), hint: String(count("type", ty)) }))]}
+                         ...ALL_TYPES.map(ty => ({ value: ty, label: t("at.full." + ty), hint: String(typeCount(ty)) }))]}
                  onpick={v => (typeFilter = v)} />
         {#if sourcesWithAtoms.length > 1 || sourceFilter}
           <PopMenu label={t("at.source")} value={sourceFilter || ""} ariaLabel={t("at.source")}
@@ -531,8 +542,9 @@
             {/if}
           </div>
         {:else}
-          <div class="empty"><p>{t("at.none_filtered")}</p>
-            <button class="btn" onclick={() => { setStatus("all"); typeFilter = "all"; search = ""; }}>{t("at.show_all")}</button></div>
+          <div class="empty"><h3>{t("at.none_filtered")}</h3>
+            <p>{narrowed.join(" · ")}</p>
+            <button class="btn lg primary" onclick={showAll}>{t("at.show_all_n", { n: atoms.length })}</button></div>
         {/if}
       {:else}
         <div class="rows" class:selecting={checkedVisible.length > 0}>
