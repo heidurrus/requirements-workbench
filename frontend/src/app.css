@@ -95,6 +95,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 .pane + .pane { border-left: 1px solid var(--c-line); }
 .pane.secondary { background: var(--c-pane); }
+.pane.content { z-index: 1; }
+.pane.inspector { container-type: inline-size; container-name: insp; }
+@container insp (max-width: 400px) { .pane-foot .btn > svg { display: none; } }
 .pane-head { display: flex; align-items: center; gap: var(--s-4); height: var(--h-scope); padding: 0 var(--s-6); flex: none;
   border-bottom: 1px solid var(--c-line); min-width: 0; }
 .pane-head h2 { font: var(--w-semibold) var(--t-body)/var(--lh-body) var(--font); }
@@ -102,7 +105,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .pane-foot { display: flex; gap: var(--s-4); padding: var(--s-5) var(--s-7); border-top: 1px solid var(--c-line);
   background: var(--c-pane); flex: none; flex-wrap: wrap; align-items: center; }
 .scope { display: flex; align-items: center; gap: var(--s-4); min-height: var(--h-scope); padding: var(--s-3) var(--gutter); flex: none;
-  border-bottom: 1px solid var(--c-line); min-width: 0; }
+  border-bottom: 1px solid var(--c-line); min-width: 0; flex-wrap: wrap; }
 .scope .search { min-width: 140px; }
 
 .pane.inspector, .pane.context, .pane.outline { display: none; }

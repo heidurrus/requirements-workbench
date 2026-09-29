@@ -7,6 +7,13 @@
         ariaLabel = "", chevron = "updown", disabled = false } = $props();
   let open = $state(false);
   let root = $state(null);
+  let flip = $state(false);              // the menu would leave its pane on the right: hang it from the right edge
+  $effect(() => {
+    if (!open) { flip = false; return; }
+    const m = root?.querySelector(".menu");
+    const pane = root?.closest(".pane, .toolbar, .sheet") || document.body;
+    if (m && m.getBoundingClientRect().right > pane.getBoundingClientRect().right - 8) flip = true;
+  });
   const current = $derived(items.find(i => i.value === value));
 
   function pick(item) {
@@ -37,7 +44,7 @@
     {#if chevron}<Icon name={chevron} size={12} />{/if}
   </button>
   {#if open}
-    <div class="menu" class:right={align === "right"} role="menu">
+    <div class="menu" class:right={align === "right" || flip} role="menu">
       {#each items as item, i (i)}
         {#if item.sep}<hr />
         {:else if item.heading}<div class="menu-label">{item.heading}</div>

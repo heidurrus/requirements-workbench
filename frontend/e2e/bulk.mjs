@@ -58,9 +58,12 @@ const checks = page.locator(".atom .row-check");
 await checks.nth(0).click();
 await checks.nth(2).click({ modifiers: ["Shift"] });
 await selected.filter({ hasText: "Выбрано: 3" }).waitFor();
-await page.locator(".bulkbar select.type-select").selectOption("question");
+await page.locator(".bulkbar").getByRole("button", { name: "Сменить тип…" }).click();
+await page.locator(".bulkbar").getByRole("menuitem", { name: "Вопрос" }).click();
 await page.getByText("Изменено 3 атома").waitFor();
-await page.locator(".pill", { hasText: "вопросы" }).filter({ hasText: "3" }).waitFor();
+await page.locator(".scope").getByRole("button", { name: "Тип", exact: true }).click();
+await page.getByRole("menuitem", { name: /^Вопрос/ }).filter({ hasText: "3" }).waitFor();
+await page.keyboard.press("Escape");
 step("shift-click range → change type for 3");
 
 // Keyboard: space toggles, Esc clears, ⌘A selects all.
@@ -75,9 +78,10 @@ await page.keyboard.press("Escape");
 step("keyboard: space, Esc, ⌘A");
 
 // One source only: pick it, select all, reject.
-await page.locator(".src-select").selectOption({ label: "Письмо (2)" });
-await page.locator(".atom").nth(1).waitFor();
-if (await page.locator(".atom").count() !== 2) throw new Error("source filter should show 2 atoms");
+await page.locator(".scope").getByRole("button", { name: "Источник", exact: true }).click();
+await page.getByRole("menuitem", { name: /^Письмо/ }).click();
+await page.waitForFunction(() => document.querySelectorAll(".atom").length === 2, null, { timeout: 5000 })
+  .catch(() => { throw new Error("source filter should show 2 atoms"); });
 await page.locator(".check-all input").check();
 await page.locator(".bulkbar").getByRole("button", { name: "Отклонить" }).click();
 await sub.filter({ hasText: "4 на ревью · принято 0 из 6" }).waitFor();
@@ -85,11 +89,12 @@ if (shots) await page.screenshot({ path: join(shots, "bulk.png"), fullPage: true
 step("source filter → reject everything from one source");
 
 // Delete: one atom by its button, then the rest by selection; undo brings them back.
-await page.locator(".src-select").selectOption({ label: "Все источники" });
+await page.locator(".scope").getByRole("button", { name: "Источник", exact: true }).click();
+await page.getByRole("menuitem", { name: "Все источники" }).click();
+await page.locator(".scope .seg").getByRole("button", { name: /^Все/ }).click();
 await sub.filter({ hasText: "принято 0 из 6" }).waitFor();
-const firstAtom = page.locator(".atom").first();
-await firstAtom.hover();
-await firstAtom.getByRole("button", { name: "Удалить" }).click();
+await page.locator(".atom .type").first().click();
+await page.locator(".inspector").getByRole("button", { name: "Удалить требование" }).click();
 await page.getByRole("status").getByText("Удалён 1 атом").waitFor();
 await sub.filter({ hasText: "из 5" }).waitFor();
 await page.getByRole("status").getByRole("button", { name: "Отменить" }).click();

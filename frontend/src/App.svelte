@@ -76,12 +76,12 @@
     <main class="main">
       {#if app.route.name === "overview"}
         <Overview />
+      {:else if app.route.name === "atoms"}
+        <Atoms />
       {:else}
         <div class="legacy scroll">
           {#if app.route.name === "transcript"}
             {#key app.route.id}<Transcript id={app.route.id} autoSummarize={app.route.summarize} focusSeg={app.route.seg} />{/key}
-          {:else if app.route.name === "atoms"}
-            <Atoms />
           {:else if app.route.name === "document"}
             <DocumentScreen />
           {:else if app.route.name === "backlog"}

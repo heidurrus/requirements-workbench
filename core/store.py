@@ -1137,6 +1137,14 @@ class Store:
             self._audit(c, "document", document_id, "edit", {k: before[k] for k in changes}, changes)
         return self.get_document(document_id)
 
+    def known_requirement_ids(self, project_id):
+        """IDs already given to atoms ({atom_id: {prefix: "FR-3"}}); gives out nothing new, so it is safe for lists."""
+        out = {}
+        with self._conn() as c:
+            for r in c.execute("SELECT atom_id, prefix, number FROM requirement_ids WHERE project_id = ?", (project_id,)):
+                out.setdefault(r["atom_id"], {})[r["prefix"]] = f"{r['prefix']}-{r['number']}"
+        return out
+
     def requirement_ids(self, project_id, atoms):
         """Stable IDs (FR-n, NFR-n, Q-n) per atom and type; numbers are never reused (BR-14)."""
         prefix_of = ATOM_PREFIX
