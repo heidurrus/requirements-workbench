@@ -1281,6 +1281,37 @@ def api_add_ba_atom(project_id):
     return _store_call(add)
 
 
+@app.route("/api/projects/<project_id>/atoms/reclassify", methods=["POST"])
+def api_reclassify_atoms(project_id):
+    """Let the AI re-type existing atoms (business / risk / current state were added in 3.3); applied at once,
+    with the previous types returned for undo."""
+    try:
+        project = library.get_project(project_id)
+    except StoreError as e:
+        return jsonify({"error": str(e)}), 404
+    prefs, api_key, problem = _ai_prefs(project)
+    if problem:
+        return problem
+    job_id = jobs.create()
+    jobs.set_progress(job_id, 0, "Reading the source…")
+
+    def run():
+        from core import atoms as atoms_mod
+        try:
+            changes = atoms_mod.reclassify(library, project_id, prefs, api_key, OLLAMA_URL, skillset=_skillset(project_id),
+                                           progress=lambda d, t, m: jobs.set_progress(job_id, int(100 * d / max(t, 1)), m))
+            if changes:
+                library.bulk_update_atoms(project_id, [{"id": c["id"], "type": c["to"]} for c in changes])
+            library.audit_event("project", project_id, "reclassify_atoms", after={"changed": len(changes)})
+            jobs.finish(job_id, {"changes": changes, "stats": library.atom_stats(project_id)})
+        except SummaryError as e:
+            jobs.fail(job_id, e)
+        except Exception as e:  # unexpected: keep the message, don't crash the worker
+            jobs.fail(job_id, f"Reclassifying failed: {e}")
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
 @app.route("/api/projects/<project_id>/atoms/bulk", methods=["POST"])
 def api_bulk_atoms(project_id):
     """Accept / reject / return to review / retype many atoms at once (items = [{id, status?, type?}])."""

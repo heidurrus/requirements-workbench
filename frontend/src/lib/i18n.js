@@ -835,6 +835,13 @@ const ru = {
   "bl.from_docs": "Из документов",
   "doc.no_relevant_title": "Для этого документа пока нет атомов",
   "doc.no_relevant": "Он собирается из атомов типов: {types}. Смените тип подходящих атомов на экране «Атомы», добавьте свои или извлеките требования заново — извлечение теперь находит и эти типы.",
+  "at.rc.button": "Уточнить типы",
+  "at.rc.hint": "ИИ перечитает атомы и поменяет тип там, где лучше подходит бизнес-требование, риск или текущее состояние. Формулировки, цитаты и решения ревью не меняются; можно отменить.",
+  "at.rc.running": "Уточняю типы…",
+  "at.rc.done": ["Тип изменён у {n} атома", "Тип изменён у {n} атомов", "Тип изменён у {n} атомов"],
+  "at.rc.none": "Типы и так подходят — ничего не изменено",
+  "at.rc.banner_title": "Атомы извлечены до новых типов.",
+  "at.rc.banner": "Бизнес-требования, риски и факты о текущем процессе сейчас записаны как функциональные или NFR, поэтому BRD, реестр рисков и As-Is пустые. ИИ может переразметить типы, не трогая формулировки.",
 };
 
 const en = {
@@ -1671,6 +1678,13 @@ const en = {
   "bl.from_docs": "From the documents",
   "doc.no_relevant_title": "No atoms for this document yet",
   "doc.no_relevant": "It is built from atoms of these types: {types}. Retype matching atoms on the Atoms screen, add your own, or extract again: extraction now finds these types too.",
+  "at.rc.button": "Reclassify types",
+  "at.rc.hint": "The AI re-reads the atoms and changes the type where a business requirement, a risk or a current-state fact fits better. Wording, quotes and review decisions stay; you can undo.",
+  "at.rc.running": "Reclassifying…",
+  "at.rc.done": ["{n} atom got a new type", "{n} atoms got a new type"],
+  "at.rc.none": "The types already fit — nothing changed",
+  "at.rc.banner_title": "These atoms were extracted before the new types.",
+  "at.rc.banner": "Business requirements, risks and current-state facts are filed as functional or NFR, so the BRD, the risk register and the As-Is come out empty. The AI can re-type them without touching the wording.",
 };
 
 export const DICTS = { ru, en };

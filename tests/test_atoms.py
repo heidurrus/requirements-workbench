@@ -420,3 +420,16 @@ def test_api_delete_and_restore(client, lib):
     assert client.post(f"/api/projects/{pid}/atoms/delete", json={"ids": []}).status_code == 400
     r = client.post(f"/api/projects/{pid}/atoms/restore", json={"ids": [a, b]}).get_json()
     assert r["restored"] == [a, b] and r["stats"]["total"] == 2
+
+
+def test_reclassify_suggests_new_types_and_applies_them(client, app_module, tmp_path, monkeypatch):
+    lib = Store(root=str(tmp_path / "lib2"), user="ba")
+    monkeypatch.setattr(app_module, "library", lib)
+    pid, a, b = _two_atoms(lib)
+    fake = fake_llm({"items": [{"id": "A1", "type": "business"}, {"id": "A2", "type": "nfr"}, {"id": "A9", "type": "risk"}]})
+    changes = atoms_mod.reclassify(lib, pid, PREFS, "k", "u", complete=fake)
+    assert [(c["id"], c["to"]) for c in changes] == [(a, "business")], "unchanged and unknown IDs are ignored"
+    assert "[nfr]" not in fake.calls[0]["user"], "the old type would anchor the model"
+    assert "business" in str(fake.calls[0]["schema"])
+    rid = lib.requirement_ids(pid, [dict(lib.get_atom(a), type="business")])[a]
+    assert rid.startswith("BR-")

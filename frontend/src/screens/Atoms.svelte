@@ -3,7 +3,8 @@
   import Icon from "../components/Icon.svelte";
   import OpenItems from "../components/OpenItems.svelte";
   import AtomInspector from "../components/AtomInspector.svelte";
-  import { api } from "../lib/api.js";
+  import { api, pollJob } from "../lib/api.js";
+  import { explain } from "../lib/errors.js";
   import { extractAtoms } from "../lib/atoms.js";
   import { fmtTime, speakerDisplay } from "../lib/format.js";
   import { app, t, go, toast, loadSources, writePref } from "../lib/state.svelte.js";
@@ -266,6 +267,30 @@
     try { await patch(atom, { reject_reason: reason || "" }); } catch (err) { toast(err.message, { kind: "danger" }); }
   }
 
+  // Re-type existing atoms with the AI (business / risk / as-is appeared in 3.3), one undo for all.
+  let reclassifying = $state(null);          // {progress, message}
+  const hasNewTypes = $derived(atoms.some(a => ["business", "risk", "current"].includes(a.type)));
+  let reclassifyHidden = $state(false);
+  async function reclassify() {
+    reclassifying = { progress: 0, message: "" };
+    try {
+      const { job_id } = await api(`/api/projects/${app.currentProjectId}/atoms/reclassify`, { method: "POST" });
+      const job = await pollJob(job_id, j => (reclassifying = { progress: j.progress || 0, message: j.progress_msg || "" }));
+      const changes = job.result.changes;
+      await load();
+      if (!changes.length) { toast(t("at.rc.none")); return; }
+      const by = {};
+      for (const c of changes) by[c.to] = (by[c.to] || 0) + 1;
+      toast(t("at.rc.done", { n: changes.length }) + ": " + Object.entries(by).map(([k, n]) => `${t("at.f." + k)} ${n}`).join(" · "),
+            { action: t("at.undo"), ms: 20000, onAction: async () => {
+              await bulkSend(changes.map(c => ({ id: c.id, type: c.from })));
+            } });
+    } catch (err) {
+      const e = explain(err);
+      toast(e.message, { kind: "danger", ...(e.setup ? { action: t("err.open_settings"), onAction: () => go("/settings") } : {}) });
+    } finally { reclassifying = null; }
+  }
+
   // ＋ Атом: the BA's own requirement (PM-16)
   let adding = $state(null);
   async function addAtom() {
@@ -385,6 +410,10 @@
       </p>
     </div>
     <div class="actions">
+      {#if atoms.length}
+        <button class="btn btn-ghost" onclick={reclassify} disabled={!!reclassifying} title={t("at.rc.hint")}>
+          {#if reclassifying}<span class="spinner"></span> {reclassifying.message || t("at.rc.running")}{:else}<Icon name="bolt" size={14} /> {t("at.rc.button")}{/if}</button>
+      {/if}
       <button class="btn" onclick={() => { tab = "atoms"; adding = { type: "functional", statement: "", note: "" }; }}>
         <Icon name="plus" size={14} /> {t("at.add")}</button>
       {#if stats && stats.accepted && stats.pending}
@@ -463,6 +492,15 @@
         </div>
       {/if}
     </section>
+  {/if}
+
+  {#if atoms.length >= 5 && !hasNewTypes && !reclassifyHidden && tab === "atoms"}
+    <div class="banner info rule">
+      <Icon name="info" />
+      <div class="grow"><b>{t("at.rc.banner_title")}</b> {t("at.rc.banner")}</div>
+      <button class="btn btn-sm btn-primary" onclick={reclassify} disabled={!!reclassifying}>{t("at.rc.button")}</button>
+      <button class="btn btn-sm btn-ghost icon-btn" aria-label={t("at.hide")} title={t("at.hide")} onclick={() => (reclassifyHidden = true)}><Icon name="close" size={14} /></button>
+    </div>
   {/if}
 
   {#each shownSuggestions as sg (sg.id)}

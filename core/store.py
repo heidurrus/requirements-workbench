@@ -188,6 +188,8 @@ class Store:
             for col in cols:
                 if col.split()[0] not in have:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
+        # 3.2: "FRD" became the SRS document type; old default titles follow.
+        c.execute("UPDATE documents SET title = 'SRS — ' || substr(title, 7) WHERE title LIKE 'FRD — %' AND kind IS NULL")
 
     # ── plumbing ─────────────────────────────────────────────────────────────
     @contextmanager
