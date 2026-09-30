@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.0.2 (2026-09-30): Source screen opened empty
+
+- **Source:** when a requirement had two quotes on the same transcript line, the screen failed to render and showed neither the transcript nor the summary. A line now lists each requirement once, and the page no longer depends on the IDs being unique.
+
 ## 4.0.1 (2026-09-30): Filter counts match the list
 
 - **Requirements:** the counts on "На ревью / Принятые / Отклонённые / Конфликты / Все" and in the type menu ignored the source filter and the search, so a tab could say 77 and show nothing. Each count is now the number of rows that choice shows.

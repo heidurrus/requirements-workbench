@@ -385,7 +385,7 @@
                     {:else}
                       <p>{#each parts(seg) as part, k (k)}{#if part.m}<mark>{part.t}</mark>{:else}{part.t}{/if}{/each}{#if seg.corrected} <span class="badge" title={t("tr.corrected_hint")}>{t("tr.corrected")}</span>{/if}</p>
                       {#if m}
-                        <div class="seg-atoms">{#each m as a (a.atom_id)}<button class="seg-atom" class:rejected={a.status === "rejected"} title={a.statement}
+                        <div class="seg-atoms">{#each m as a, k (a.atom_id + ":" + k)}<button class="seg-atom" class:rejected={a.status === "rejected"} title={a.statement}
                             onclick={e => { e.stopPropagation(); go(`/atoms/atom/${a.atom_id}`); }}><span class="type {typeClass[a.type]}">{PREFIX[a.type]}</span><span class="trunc">{a.statement}</span></button>{/each}</div>
                       {/if}
                     {/if}
