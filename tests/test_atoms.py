@@ -433,3 +433,13 @@ def test_reclassify_suggests_new_types_and_applies_them(client, app_module, tmp_
     assert "business" in str(fake.calls[0]["schema"])
     rid = lib.requirement_ids(pid, [dict(lib.get_atom(a), type="business")])[a]
     assert rid.startswith("BR-")
+
+
+def test_atom_marks_list_an_atom_once_per_line_even_with_two_quotes(store):
+    sid = make_source(store)
+    pid = store.current_project()["id"]
+    [a] = store.add_atoms(pid, [{"type": "nfr", "statement": "2 секунды", "evidence": [
+        {"source_id": sid, "segment_idx": 1, "quote": "двух секунд"},
+        {"source_id": sid, "segment_idx": 1, "quote": "не дольше"}]}])   # two quotes on one line
+    marks = store.atom_marks(sid)
+    assert [m["atom_id"] for m in marks[1]].count(a) == 1

@@ -475,9 +475,11 @@ class Store:
             rows = c.execute("""SELECT e.segment_idx, e.quote, a.id, a.status, a.type, a.statement FROM evidence e JOIN atoms a ON a.id = e.atom_id
                                 WHERE e.source_id = ? AND a.deleted_at IS NULL AND a.status != 'merged'""", (source_id,)).fetchall()
         out = {}
+        seen = set()                      # an atom with two quotes on one line is marked once
         for r in rows:
-            if r["segment_idx"] is None:
+            if r["segment_idx"] is None or (r["segment_idx"], r["id"]) in seen:
                 continue
+            seen.add((r["segment_idx"], r["id"]))
             out.setdefault(r["segment_idx"], []).append({"atom_id": r["id"], "status": r["status"], "type": r["type"],
                                                          "statement": r["statement"], "quote": r["quote"]})
         return out
